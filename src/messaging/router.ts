@@ -460,6 +460,8 @@ interface ScopeRerunSpec {
   /** This turn's own classification — what the sticky prior is built from. */
   baseGroups: string[];
   isCodingTask: boolean;
+  /** The channel's restricted tool list applied: a re-run never widens it. */
+  restricted: boolean;
 }
 
 /** In-memory ring buffer of recent exchanges per channel for thread continuity. */
@@ -1308,12 +1310,18 @@ export class MessageRouter {
 
   /**
    * Background-agent spawn (BACKGROUND_AGENT_RE). Returns true whenever the
-   * trigger matched (spawned, capped, empty task, or errored — all handled).
+   * trigger matched on an owner channel (spawned, capped, empty task, or
+   * errored — all handled).
    */
   private async interceptBackgroundAgentSpawn(
     msg: IncomingMessage,
     tk: string,
   ): Promise<boolean> {
+    // A restricted channel does not start a background agent: the message
+    // continues as a normal turn with the channel's restricted tool list.
+    if (!isOwnerChannel(msg.channel, this.channels.get(msg.channel)?.mode)) {
+      return false;
+    }
     // Background agents: "lanza un agente", "investiga en background"
     if (BACKGROUND_AGENT_RE.test(msg.text)) {
       try {
@@ -2712,6 +2720,7 @@ export class MessageRouter {
         activeGroups: [...activeGroups],
         baseGroups: [...baseGroups],
         isCodingTask,
+        restricted: override.restricted,
       },
     });
 
@@ -4119,7 +4128,8 @@ export class MessageRouter {
    * Usability Phase 1.2 gate for every chat delivery path (completed AND
    * blocked/needs_context). First scope ask on a chat turn → widen + silent
    * re-run (returns null: deliver nothing); a miss on the re-run itself, a
-   * hallucinated ask, or a background-agent reply (no rerunSpec — R1 audit
+   * hallucinated ask, a restricted channel's ask for a tool outside its
+   * list, or a background-agent reply (no rerunSpec — R1 audit
    * W4) → one honest line; anything else → the text unchanged.
    */
   private resolveScopeAsk(
@@ -4139,8 +4149,11 @@ export class MessageRouter {
         miss.strong,
       );
       if (outcome === "rerun") return null;
-      // No scope group supplies the requested tool: nothing to widen.
-      if (outcome === "no_group") return scopeMissFallbackLine("no_rerun");
+      // No scope group supplies the requested tool, or the channel's tool
+      // list is restricted: nothing to widen.
+      if (outcome === "no_group" || outcome === "restricted") {
+        return scopeMissFallbackLine("no_rerun");
+      }
       return text;
     }
     if (miss && miss.strong) {
@@ -4282,14 +4295,15 @@ export class MessageRouter {
    * thread's sticky scope and resubmit the SAME turn once. Returns true when
    * a re-run was submitted (the caller must then NOT deliver the ask).
    * Returns false when no group supplies the tool (nothing to widen) or the
-   * resubmission throws — the caller delivers the honest fallback line.
+   * resubmission throws — the caller delivers the honest fallback line. A
+   * restricted spec asking for a tool outside its list is not re-run either.
    */
   private rerunWithWiderScope(
     taskId: string,
     pending: PendingReply,
     requestedTools: string[],
     strongAsk: boolean,
-  ): "rerun" | "no_group" | "deliver_as_is" {
+  ): "rerun" | "no_group" | "restricted" | "deliver_as_is" {
     const spec = pending.rerunSpec;
     if (!spec) return "no_group";
     const options = this.scopeOptions();
@@ -4297,6 +4311,15 @@ export class MessageRouter {
     // widening cannot help, and attributing an always-on tool to a group
     // would resolve to every group (173/216 tools).
     const missing = requestedTools.filter((t) => !spec.tools.includes(t));
+    // A restricted channel's tool list is never widened by a re-run.
+    if (spec.restricted && missing.length > 0) {
+      emitTraceEvent({
+        taskId,
+        name: "scope.rerun_decided",
+        attrs: { decision: "restricted", missing: missing.length, groups: 0 },
+      });
+      return "restricted";
+    }
     const newGroups = new Set<string>();
     for (const tool of missing) {
       // Narrowest group that supplies the tool (groupsForTool sorts by size).

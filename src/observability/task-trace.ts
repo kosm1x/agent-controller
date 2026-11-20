@@ -130,7 +130,7 @@ export type TraceEventName =
   | "reply.empty_fallback"
   // A confirmation card was stored for the operator's next message ({items, continuation})
   | "confirmation.card_stored"
-  // The scope-ask gate's choice for the reply ({decision: rerun | no_group | deliver_as_is, missing, groups})
+  // The scope-ask gate's choice for the reply ({decision: rerun | no_group | restricted | deliver_as_is, missing, groups})
   | "scope.rerun_decided"
   // The wider-scope re-run of this task was submitted (on the first task)
   | "scope.rerun_submitted"

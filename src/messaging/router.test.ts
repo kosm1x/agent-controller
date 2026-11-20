@@ -427,8 +427,13 @@ import {
   scopeMissFallbackLine,
   SCOPE_RERUN_NOTICE,
   groupsForTool,
+  detectScopeMiss,
 } from "./scope-miss.js";
-import { registerProjectScopeGroups, _resetProjectScopeGroups } from "./scope.js";
+import {
+  registerProjectScopeGroups,
+  _resetProjectScopeGroups,
+  COMMUNITY_EMAIL_TOOLS,
+} from "./scope.js";
 import { currentExecutionContext } from "../inference/execution-context.js";
 import { currentRunTaskId } from "../tools/rule-of-two.js";
 import { listXAccounts } from "../lib/x-poster/config.js";
@@ -10937,6 +10942,313 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     } finally {
       dbAll.mockReset().mockImplementation(() => []);
     }
+  });
+});
+
+describe("a restricted channel keeps its restricted tool list", () => {
+  let router: MessageRouter;
+  let sent: OutgoingMessage[];
+  const CHANNEL = "email:comunidades";
+  const SENDER = "alice@example.com";
+  const tk = threadKey(CHANNEL, SENDER, undefined, "community-manager");
+  // The header the email adapter puts before every body on this mailbox.
+  const HEADER = `[Cuenta: comunidades (comunidades@example.org) | Modo: community-manager | De: ${SENDER}]`;
+  const ASK =
+    '`tweet_post` no está en el scope activo. Necesito que me lo actives con "usa tweet_post" para publicar.';
+  // A gated tool every unrestricted list carries and the restricted list never does.
+  const CARD_TOOL = "jarvis_file_delete";
+  const AGENT_SQL = "spawn_type='user-background'";
+
+  const say = (body: string) =>
+    router.handleInbound({
+      channel: CHANNEL as never,
+      from: SENDER,
+      text: `${HEADER}\n${body}`,
+      timestamp: new Date(),
+    });
+  const complete = (taskId: string, result: string) =>
+    findHandler("task.completed")!({
+      data: { task_id: taskId, agent_id: "fast", result, duration_ms: 1 },
+    });
+  const queueTask = (taskId: string) =>
+    vi.mocked(submitTask).mockResolvedValueOnce({
+      taskId,
+      agentType: "fast",
+      classification: { score: 1, reason: "t", explicit: false },
+    });
+  const calls = () => vi.mocked(submitTask).mock.calls.map(([s]) => s);
+  const settle = async () => {
+    await vi.advanceTimersByTimeAsync(0);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await Promise.allSettled([...(router as any).gateInflight]);
+  };
+  const expectRestricted = (tools: string[] | undefined) => {
+    expect(tools?.length).toBeGreaterThan(0);
+    for (const t of tools!) expect(COMMUNITY_EMAIL_TOOLS).toContain(t);
+  };
+  const agentSqlPrepared = () =>
+    [...dbAll.mock.calls, ...dbGetBySql.mock.calls].some(([sql]) =>
+      String(sql).includes(AGENT_SQL),
+    );
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    vi.mocked(submitTask).mockReset();
+    dbStatusGet.mockReset().mockReturnValue(undefined);
+    _resetPendingConfirmationsForTests();
+    subscribers.length = 0;
+    const { gateCommunityReply } = await import("./community-reply-gate.js");
+    vi.mocked(gateCommunityReply).mockReset().mockResolvedValue({
+      verdict: "pass",
+      critique: "",
+      latencyMs: 5,
+      error: false,
+    });
+    router = new MessageRouter();
+    sent = [];
+    router.registerChannel({
+      name: CHANNEL,
+      mode: "community-manager" as const,
+      sentMessages: sent,
+      start: vi.fn().mockResolvedValue(undefined),
+      send: vi.fn().mockImplementation(async (msg: OutgoingMessage) => {
+        sent.push(msg);
+        return "id";
+      }),
+      onMessage: vi.fn(),
+      stop: vi.fn().mockResolvedValue(undefined),
+      isConnected: () => true,
+    } as never);
+    router.startEventListeners();
+  });
+
+  afterEach(() => {
+    dbStatusGet.mockReset().mockReturnValue(undefined);
+    _resetPendingConfirmationsForTests();
+    vi.useRealTimers();
+  });
+
+  it("a restricted channel's tool list is never widened by a re-run: one submit, the honest line through the reply gate", async () => {
+    queueTask("r-main");
+    queueTask("r-rerun");
+    await say("¿qué opinan del modelo de negocio de una cooperativa de café?");
+    expectRestricted(calls()[0].tools);
+    complete("r-main", ASK);
+    await settle();
+
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expect(tracedEvents("scope.rerun_decided")).toEqual([
+      {
+        taskId: "r-main",
+        name: "scope.rerun_decided",
+        attrs: { decision: "restricted", missing: 1, groups: 0 },
+      },
+    ]);
+    expect(tracedEvents("scope.rerun_submitted")).toEqual([]);
+    const line = scopeMissFallbackLine("no_rerun");
+    const { gateCommunityReply } = await import("./community-reply-gate.js");
+    expect(vi.mocked(gateCommunityReply)).toHaveBeenCalledWith(line);
+    expect(sent.map((m) => m.text)).toEqual([line]);
+    expect(sent[0].to).toBe(SENDER);
+  });
+
+  it("a restricted channel's refused ask leaves the thread's stored scope as it was", async () => {
+    const { classifyScopeGroups } = await import("./scope-classifier.js");
+    vi.mocked(classifyScopeGroups)
+      .mockResolvedValueOnce(new Set(["intel"]))
+      .mockResolvedValueOnce(new Set());
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    queueTask("s-1");
+    queueTask("s-2");
+    queueTask("s-3");
+    await say("dame el panorama de precios del café en la región este mes");
+    complete("s-1", ASK);
+    await settle();
+    // An empty classification inherits the stored scope, so this turn stores it again.
+    await say("y compáralo con el trimestre anterior, con las mismas fuentes");
+    const stored = log.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.startsWith("[router] Stored prior scope"))
+      .map((l) => l.match(/: \[([^\]]*)\]/)?.[1]);
+    log.mockRestore();
+    expect(stored).toEqual(["intel", "intel"]);
+  });
+
+  it("a restricted channel does not start a background agent: the message is one restricted turn", async () => {
+    dbStatusGet.mockReturnValue({ cnt: 0 }); // running background agents
+    queueTask("b-1");
+    await say("lanza un agente e investiga el tráfico del sitio del evento");
+    dbStatusGet.mockReturnValue(undefined);
+    await settle();
+
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const [sub] = calls();
+    expect(sub.spawnType).toBeUndefined();
+    expect(sub.tags).not.toContain("background-agent");
+    expectRestricted(sub.tools);
+    expect(agentSqlPrepared()).toBe(false);
+    expect(sent).toEqual([]);
+  });
+
+  it("a restricted channel's «agentes» body is not the agent list: the message is one restricted turn", async () => {
+    queueTask("l-1");
+    await say("agentes");
+    await settle();
+
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expectRestricted(calls()[0].tools);
+    expect(agentSqlPrepared()).toBe(false);
+    expect(sent).toEqual([]);
+  });
+
+  it("a restricted channel's «cancela agente» body is not the agent cancel: the message is one restricted turn", async () => {
+    queueTask("k-1");
+    await say("cancela agente");
+    await settle();
+
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expectRestricted(calls()[0].tools);
+    expect(agentSqlPrepared()).toBe(false);
+    expect(sent).toEqual([]);
+  });
+
+  it("after restricted turns no confirmation is pending for the sender's thread", async () => {
+    queueTask("c-1");
+    queueTask("c-2");
+    await say("¿qué opinan del modelo de negocio de una cooperativa de café?");
+    complete("c-1", ASK);
+    await settle();
+    dbStatusGet.mockReturnValue({ cnt: 0 }); // running background agents
+    queueTask("c-3");
+    queueTask("c-4");
+    await say("lanza un agente e investiga el tráfico del sitio del evento");
+    dbStatusGet.mockReturnValue(undefined);
+    await settle();
+
+    // A run can only ask to confirm a tool it was given: every run that was
+    // given the gated tool ends asking for it.
+    const runs = await Promise.all(
+      vi.mocked(submitTask).mock.results.map(async (r, i) => ({
+        taskId: ((await r.value) as { taskId: string }).taskId,
+        tools: calls()[i].tools ?? [],
+      })),
+    );
+    expect(runs.length).toBeGreaterThan(0);
+    for (const run of runs) {
+      if (!run.tools.includes(CARD_TOOL)) continue;
+      dbStatusGet.mockReturnValue({
+        status: "completed",
+        output: JSON.stringify({
+          text: "x",
+          toolCalls: [],
+          pendingConfirmation: {
+            toolName: CARD_TOOL,
+            args: { path: "notas/demo.md" },
+          },
+        }),
+      });
+      complete(run.taskId, "Voy a borrar notas/demo.md. ¿Procedo?");
+      dbStatusGet.mockReturnValue(undefined);
+      await settle();
+    }
+    expect(getPendingConfirmation(tk)).toBeNull();
+  });
+
+  it("a restricted channel's weak mention of an outside tool is not re-run either", async () => {
+    // A scope mention that names an outside tool without asking for it.
+    const WEAK =
+      "Publicar en redes con `tweet_post` queda fuera del scope de este buzón; aquí respondo consultas generales.";
+    expect(detectScopeMiss(WEAK, ["tweet_post"])).toMatchObject({
+      requestedTools: ["tweet_post"],
+      strong: false,
+    });
+    queueTask("w-main");
+    queueTask("w-rerun");
+    await say("¿qué opinan del modelo de negocio de una cooperativa de café?");
+    complete("w-main", WEAK);
+    await settle();
+
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expect(tracedEvents("scope.rerun_decided")).toEqual([
+      {
+        taskId: "w-main",
+        name: "scope.rerun_decided",
+        attrs: { decision: "restricted", missing: 1, groups: 0 },
+      },
+    ]);
+    const line = scopeMissFallbackLine("no_rerun");
+    const { gateCommunityReply } = await import("./community-reply-gate.js");
+    expect(vi.mocked(gateCommunityReply)).toHaveBeenCalledWith(line);
+    expect(sent.map((m) => m.text)).toEqual([line]);
+  });
+
+  describe("an email channel with no declared mode is restricted", () => {
+    const NO_MODE = "email:sinmodo";
+    const UNREGISTERED = "email:sinadaptador";
+    const OTHER = "bob@example.com";
+    let noModeSent: OutgoingMessage[];
+
+    const sayOn = (channel: string, body: string) =>
+      router.handleInbound({
+        channel: channel as never,
+        from: OTHER,
+        text: `[Cuenta: x (x@example.org) | Asunto: consulta]\n${body}`,
+        timestamp: new Date(),
+      });
+
+    beforeEach(() => {
+      noModeSent = [];
+      router.registerChannel({
+        name: NO_MODE,
+        sentMessages: noModeSent,
+        start: vi.fn().mockResolvedValue(undefined),
+        send: vi.fn().mockImplementation(async (msg: OutgoingMessage) => {
+          noModeSent.push(msg);
+          return "id";
+        }),
+        onMessage: vi.fn(),
+        stop: vi.fn().mockResolvedValue(undefined),
+        isConnected: () => true,
+      } as never);
+    });
+
+    for (const channel of [NO_MODE, UNREGISTERED]) {
+      it(`an email channel with no declared mode is restricted: no background agent (${channel})`, async () => {
+        dbStatusGet.mockReturnValue({ cnt: 0 }); // running background agents
+        queueTask("n-1");
+        await sayOn(channel, "lanza un agente e investiga el tráfico del sitio del evento");
+        dbStatusGet.mockReturnValue(undefined);
+        await settle();
+
+        expect(submitTask).toHaveBeenCalledTimes(1);
+        const [sub] = calls();
+        expect(sub.spawnType).toBeUndefined();
+        expect(sub.tags).not.toContain("background-agent");
+        expectRestricted(sub.tools);
+        expect(agentSqlPrepared()).toBe(false);
+      });
+    }
+
+    it("an email channel with no declared mode is restricted: its tool list is never widened by a re-run", async () => {
+      queueTask("m-main");
+      queueTask("m-rerun");
+      await sayOn(NO_MODE, "¿qué opinan del modelo de negocio de una cooperativa de café?");
+      expectRestricted(calls()[0].tools);
+      complete("m-main", ASK);
+      await settle();
+
+      expect(submitTask).toHaveBeenCalledTimes(1);
+      expect(tracedEvents("scope.rerun_decided")).toEqual([
+        {
+          taskId: "m-main",
+          name: "scope.rerun_decided",
+          attrs: { decision: "restricted", missing: 1, groups: 0 },
+        },
+      ]);
+      const line = scopeMissFallbackLine("no_rerun");
+      expect(noModeSent.map((m) => m.text)).toEqual([line]);
+    });
   });
 });
 
