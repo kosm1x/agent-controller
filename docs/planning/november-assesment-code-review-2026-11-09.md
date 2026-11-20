@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-20 22:20 UTC — A1 is DONE `2c105bcc` (queue 4hb): the system-prompt builder is its own module on the protected list; the router is at 4,888 lines. The pure moves of batch 7 are done (D2, C2, B1, B2, A3, A1); D3 is not yet done. Wait list unchanged: A2, A4, B3, C1, F1, D1. Next: the three open checks (4gm, 4gp, 4gr), then the batch leftovers and batch 10.**
+
 **Status 2026-11-20 21:28 UTC — A3 is DONE: second half `856b90cb` (queue 4ha), first half `d6e90da3`. The router is at 5,119 lines. Next: A1 (the router's prompt builder; model-visible strings byte-identical as the done-check). Wait list unchanged: A2, A4, B3, C1, F1, D1.**
 
 **Status 2026-11-20 20:33 UTC — the build of a task is recorded when it starts `b382d2de` (queue 4gz; committed, not deployed). Next: A3 second half (builder brief written: the critical-data safety net and the per-message scope helpers leave the router as two new protected modules), then A1.**
