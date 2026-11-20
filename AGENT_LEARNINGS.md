@@ -136,3 +136,9 @@
 - **Mistake:** the search for comments the change made untrue was declared complete twice and was not (a second builder found two more, the reviewer two more) → search the BEHAVIOUR in every spelling (the function name, "database init", "set-up", "on open", "first boot") under `src scripts`, and have the reviewer repeat it.
 - **Avoid:** adding a text column to a table that is read whole (`SELECT *` behind a getter used by routes and tools) — the new text can surface where the model or a client sees it; a separate table has no readers.
 - **Better:** before fixing a "record is missing for kind X" gap by writing the existing record for X too, list every reader of that table: here a prompt block, skill proposals, classifier signals and a retry rule all read it, so storage went to its own table.
+
+## 2026-11-20 — Completion facts
+- **Mistake:** titled the piece "every finished task" while the row was written on one terminal path only → hold the TITLE against the reviewer's list of uncovered ends before writing the commit message; a title is a claim.
+- **Mistake:** wrote that a fault in the numbers check can only cause a wrong mark → list every consumer of a module by name (the write gate enforces) before stating what its faults can do.
+- **Avoid:** recording a fact at each END of a flow (a dozen exits) when it is known at the START — one write at the start has no path to a missing row.
+- **Better:** when a guard refuses my staging of a file, hand the operator the one line and prepare the next briefs meanwhile; a helper script that commits must carry the guard's check itself, because the guard reads typed commands only.

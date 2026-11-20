@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-20 20:05 UTC — DEPLOYED: build `ce115c37` is live since 2026-11-20 19:58 UTC with schema 18 (queue 4gx). The only commit after the live build is the other session's digest, which the service does not load. Next: the build of a task recorded at its start, then A3 second half (inventory done: all eight helpers free of router state, two new modules), A1.**
+
 **Status 2026-11-20 18:56 UTC — the concern text and the build of tasks that end the normal way are kept `8d70e6ae` (queue 4gw; one new table, schema head 18, not deployed). Next: A3 second half, A1.**
 
 **Status 2026-11-20 18:00 UTC — DEPLOYED: build `bd9efc51` is live since 2026-11-20 17:58 UTC (queue 4gu); every structure piece committed so far is in it. Next: the concern text and the build id of every finished task are kept (one new table), then A3 second half, A1.**
