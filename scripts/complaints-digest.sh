@@ -36,10 +36,10 @@ trap 'rm -f "$errf"' EXIT
 # (e.g. -json) before the fixed flags' `--` and the path.
 sqlite_ro() {
   /usr/bin/sqlite3 -init /dev/null -safe -readonly -bail "$@" -- "$DB" 2>"$errf" && return
-  # Some errors (e.g. "file is not a database") go to stdout; the caller never
-  # echoes captured output, which could hold task text after a mid-stream failure.
-  reason="$(head -n 1 "$errf")"
-  echo "complaints-digest: sqlite3 failed on $DB: ${reason:-(no message on stderr)}" >&2
+  # The caller never echoes captured output, which could hold task text after
+  # a mid-stream failure. The first call (a plain SELECT) reports an unreadable
+  # database on stderr, so the reason is there.
+  echo "complaints-digest: sqlite3 failed on $DB: $(head -n 1 "$errf")" >&2
   return 1
 }
 # Databases before schema 18 have no task_completion_facts: ask first, and

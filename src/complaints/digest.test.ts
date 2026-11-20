@@ -262,10 +262,51 @@ describe("builds (rows from the task_completion_facts SQL)", () => {
     const rs = runs("C.F", { reply_tail: "tail", build: null });
     rs[0].build = "abc1234";
     const text = renderDigest(buildDigest(rs, OPTS));
-    expect(text).toContain("  builds, oldest first: abc1234\n");
+    expect(text).toContain("  builds, oldest first: abc1234 1 run / 1 concern · no build 2 runs / 0 concern\n");
     expect(text).toContain(`    2026-11-03 ${rs[2].task_id.slice(0, 8)} @- [reply] tail\n`);
     expect(text).toContain(`    2026-11-01 ${rs[0].task_id.slice(0, 8)} @abc1234 [reply] tail\n`);
     expect(renderDigest(buildDigest(runs("C", { build: null }), OPTS))).toContain("  builds, oldest first: none recorded\n");
+  });
+});
+
+describe("builds: runs and concerns per build, over the strip's runs", () => {
+  // 9 runs, last 7 counted: zzz (2, outside the strip), aaa . C C C, bbb F C, no build C.
+  const rows = () => {
+    const rs = runs("CC.CCCFCC");
+    ["zzz", "zzz", "aaa", "aaa", "aaa", "aaa", "bbb", "bbb", null].forEach((b, i) => (rs[i].build = b));
+    return rs;
+  };
+
+  it("counts the strip's runs per build; a run outside --last N is not counted; a failed run is not a concern", () => {
+    const t = only(rows());
+    expect(t.strip).toBe(".CCCFCC");
+    expect(t.builds).toEqual(["aaa", "bbb"]);
+    expect(t.buildRuns).toEqual([
+      { build: "aaa", runs: 4, concern: 3 },
+      { build: "bbb", runs: 2, concern: 1 },
+      { build: null, runs: 1, concern: 1 },
+    ]);
+    expect(renderDigest(buildDigest(rows(), OPTS))).toContain(
+      "  builds, oldest first: aaa 4 runs / 3 concern · bbb 2 runs / 1 concern · no build 1 run / 1 concern\n",
+    );
+  });
+
+  it("the no-build item comes last even when its runs are the oldest", () => {
+    const rs = runs("C.C");
+    [null, "aaa", "bbb"].forEach((b, i) => (rs[i].build = b));
+    expect(only(rs).buildRuns).toEqual([
+      { build: "aaa", runs: 1, concern: 0 },
+      { build: "bbb", runs: 1, concern: 1 },
+      { build: null, runs: 1, concern: 1 },
+    ]);
+  });
+
+  it("no build on any counted run: none recorded in the text, the counts still in JSON", () => {
+    const rs = runs("C.");
+    rs.forEach((r) => (r.build = null));
+    const d = buildDigest(rs, OPTS);
+    expect(d.types[0].buildRuns).toEqual([{ build: null, runs: 2, concern: 1 }]);
+    expect(renderDigest(d)).toContain("  builds, oldest first: none recorded\n");
   });
 });
 

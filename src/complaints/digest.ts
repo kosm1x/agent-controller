@@ -76,8 +76,20 @@ export interface TypeDigest {
   /** Profile of calls attempted (tool.called events), not of tools that ran. */
   tools: { cleanRuns: number; concernRuns: number; diffs: ToolDiff[] };
   evidence: Evidence[];
-  /** Distinct builds among the runs, oldest first; only when rows carry builds. */
+  /**
+   * Distinct builds among the strip's runs (the last N), oldest first; only
+   * when rows carry builds.
+   */
   builds?: string[];
+  /** Per build, the strip's runs on it and how many show C; unknown build (null) last. */
+  buildRuns?: BuildRuns[];
+}
+
+export interface BuildRuns {
+  build: string | null;
+  runs: number;
+  /** Runs whose strip character is C (ended with concerns; failed is F, not counted). */
+  concern: number;
 }
 
 export interface Digest {
@@ -162,6 +174,21 @@ function mean(rows: TaskRow[], counts: Map<TaskRow, Record<string, number>>, too
 
 const round2 = (x: number): number => Math.round(x * 100) / 100;
 
+/** The strip's runs grouped by build, first appearance first; the no-build group last. */
+function buildRuns(lastRuns: TaskRow[]): BuildRuns[] {
+  const groups = new Map<string | null, BuildRuns>();
+  for (const r of lastRuns) {
+    const build = r.build ? r.build : null;
+    const g = groups.get(build) ?? { build, runs: 0, concern: 0 };
+    g.runs++;
+    if (stripChar(r.status) === "C") g.concern++;
+    groups.set(build, g);
+  }
+  const none = groups.get(null);
+  groups.delete(null);
+  return none ? [...groups.values(), none] : [...groups.values()];
+}
+
 function digestType(key: string, runs: TaskRow[], opts: DigestOptions, facts: boolean): TypeDigest {
   const lastRuns = runs.slice(-opts.last);
   const complaintsLastN = lastRuns.filter(isComplaint).length;
@@ -215,8 +242,13 @@ function digestType(key: string, runs: TaskRow[], opts: DigestOptions, facts: bo
       diffs: diffs.map(({ tool, clean: c, concern: k }) => ({ tool, clean: c, concern: k })),
     },
     evidence: runs.filter(isComplaint).slice(-3).reverse().map((r) => evidence(r, facts)),
-    ...(facts ? { builds: [...new Set(runs.flatMap((r) => (r.build ? [r.build] : [])))] } : {}),
+    ...(facts ? factsFields(lastRuns) : {}),
   };
+}
+
+function factsFields(lastRuns: TaskRow[]): Pick<TypeDigest, "builds" | "buildRuns"> {
+  const per = buildRuns(lastRuns);
+  return { builds: per.flatMap((b) => (b.build === null ? [] : [b.build])), buildRuns: per };
 }
 
 export function buildDigest(rows: TaskRow[], opts: DigestOptions): Digest {
@@ -254,7 +286,10 @@ export function renderDigest(d: Digest): string {
     let line = `  unverified figures: ${u.runsWithUnverified}/${u.runsWithAudit} audited runs`;
     if (u.recurring.length > 0) line += `; recurring: ${u.recurring.map((f) => `${JSON.stringify(f.figure)} x${f.runs}`).join(", ")}`;
     out.push(line);
-    if (t.builds) out.push(`  builds, oldest first: ${t.builds.length > 0 ? t.builds.join(" ") : "none recorded"}`);
+    if (t.builds && t.buildRuns) {
+      const items = t.buildRuns.map((b) => `${b.build ?? "no build"} ${b.runs} run${b.runs === 1 ? "" : "s"} / ${b.concern} concern`);
+      out.push(`  builds, oldest first: ${t.builds.length > 0 ? items.join(" · ") : "none recorded"}`);
+    }
     if (t.tools.diffs.length > 0) {
       out.push(`  tools, mean calls attempted per run (clean n=${t.tools.cleanRuns} / concern n=${t.tools.concernRuns}):`);
       for (const x of t.tools.diffs) out.push(`    ${x.tool} ${fmt(x.clean)} / ${fmt(x.concern)}`);

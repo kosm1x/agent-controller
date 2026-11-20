@@ -256,6 +256,12 @@ describe("task_completion_facts (schema 18 on), and databases without it", () =>
     const before = byKey(run("no-table", true));
     const t = facts["ritual:fx-builds"];
     expect(t.builds).toEqual(["bbb2222", "aaa1111", "ccc3333"]);
+    expect(t.buildRuns).toEqual([
+      { build: "bbb2222", runs: 2, concern: 0 },
+      { build: "aaa1111", runs: 1, concern: 1 },
+      { build: "ccc3333", runs: 1, concern: 0 },
+      { build: null, runs: 1, concern: 0 },
+    ]);
     expect(t.evidence.map((e) => [e.date, e.id, e.source, e.text, e.build])).toEqual([
       ["2026-11-15", "fx-b5", "reply", "thrown", null],
       ["2026-11-12", "fx-b2", "concern", "concern b2", "aaa1111"],
@@ -274,11 +280,22 @@ describe("task_completion_facts (schema 18 on), and databases without it", () =>
   it("text output: the build after each evidence run id, and one builds line per type", () => {
     const out = run("facts", false);
     expect(out).toContain("\nritual:fx-builds  fx-builds\n");
-    expect(out).toContain("  builds, oldest first: bbb2222 aaa1111 ccc3333\n");
+    expect(out).toContain(
+      "  builds, oldest first: bbb2222 2 runs / 0 concern · aaa1111 1 run / 1 concern · ccc3333 1 run / 0 concern · no build 1 run / 0 concern\n",
+    );
     expect(out).toContain("    2026-11-15 fx-b5 @- [reply] thrown\n");
     expect(out).toContain("    2026-11-12 fx-b2 @aaa1111 [concern] concern b2\n");
     expect(out).toContain("    2026-11-10 fx-pref @aaa1111 [concern] facts text\n");
     expect(out.match(/^ {2}builds, oldest first: none recorded$/gm)).toHaveLength(6);
+  }, 60_000);
+
+  it("--last 3: the builds line counts only the strip's 3 runs (aaa1111 drops out)", () => {
+    const path = join(dir, "facts-last.db");
+    buildDb(path, "facts");
+    const r = wrapper(["--db", path, "--now", NOW, "--last", "3", "--min", "1", "--type", "ritual:fx-builds"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("  last 3: [.?F]");
+    expect(r.stdout).toContain("  builds, oldest first: bbb2222 1 run / 0 concern · ccc3333 1 run / 0 concern · no build 1 run / 0 concern\n");
   }, 60_000);
 
   it("a database without the table: exit 0, the same text and JSON as the tool before the change", () => {
@@ -290,7 +307,7 @@ describe("task_completion_facts (schema 18 on), and databases without it", () =>
     expect(hash(json)).toBe(BEFORE_JSON_SHA);
   }, 60_000);
 
-  it("JSON keys: the existing ones are unchanged; the facts table adds only builds and evidence build", () => {
+  it("JSON keys: the existing ones are unchanged; the facts table adds only builds, buildRuns and evidence build", () => {
     const keys = (stdout: string) => {
       const d = JSON.parse(stdout) as Digest;
       const t = d.types.find((x) => x.key === "ritual:fx-builds");
@@ -305,7 +322,7 @@ describe("task_completion_facts (schema 18 on), and databases without it", () =>
     };
     const old = { top: ["days", "last", "min", "now", "types"], unverified: ["recurring", "runsWithAudit", "runsWithUnverified"], tools: ["cleanRuns", "concernRuns", "diffs"] };
     expect(keys(run("no-table", true))).toEqual({ ...old, type: TYPE_KEYS, evidence: EVIDENCE_KEYS });
-    expect(keys(run("facts", true))).toEqual({ ...old, type: [...TYPE_KEYS, "builds"].sort(), evidence: [...EVIDENCE_KEYS, "build"].sort() });
+    expect(keys(run("facts", true))).toEqual({ ...old, type: [...TYPE_KEYS, "buildRuns", "builds"].sort(), evidence: [...EVIDENCE_KEYS, "build"].sort() });
   }, 60_000);
 
   it("every sqlite3 call in the wrapper keeps -init /dev/null -safe -readonly -bail and -- before the path", () => {
