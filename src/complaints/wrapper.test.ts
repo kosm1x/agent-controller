@@ -56,6 +56,19 @@ const FACT_TASKS: [string, string, string, string, string, string | null][] = [
   ["fx-b4", "running", "2026-11-14 12:00:00", '{"ritualId":"fx-builds"}', "{}", null],
   ["fx-b5", "failed", "2026-11-15 12:00:00", '{"ritualId":"fx-builds"}', "{}", "thrown"],
   ["fx-old", "completed_with_concerns", "2026-10-01 12:00:00", '{"ritualId":"fx-old"}', "{}", null],
+  // fx-tools: 3 clean runs with 3 exa calls, 3 concern runs with 1, so the tool profile prints.
+  ...[1, 2, 3, 4, 5, 6].map((i): [string, string, string, string, string, string | null] => [
+    `fx-t${i}`,
+    i <= 3 ? "completed" : "completed_with_concerns",
+    `2026-11-0${i} 12:00:00`,
+    '{"ritualId":"fx-tools"}',
+    i <= 3 ? "{}" : '{"text":"tools reply"}',
+    null,
+  ]),
+];
+// task_id, calls of tool "exa" (tool.called trace events)
+const FACT_TRACE: [string, number][] = [
+  ["fx-t1", 3], ["fx-t2", 3], ["fx-t3", 3], ["fx-t4", 1], ["fx-t5", 1], ["fx-t6", 1],
 ];
 // task_id, concern_detail
 const FACT_OUTCOMES: [string, string][] = [
@@ -81,8 +94,9 @@ const FACTS_CREATED: Record<string, string> = { "fx-old": MID };
 
 /**
  * "base": the original fixture, no facts table. "facts": plus FACT_TASKS,
- * their outcomes and the task_completion_facts table. "no-table": the same
- * tasks and outcomes as "facts" on a database without that table.
+ * their outcomes and trace events, and the task_completion_facts table.
+ * "no-table": the same tasks, outcomes and events as "facts" on a database
+ * without that table.
  */
 function buildDb(path: string, variant: "base" | "facts" | "no-table" = "base"): void {
   const tasks = variant === "base" ? TASKS : [...TASKS, ...FACT_TASKS];
@@ -91,6 +105,9 @@ function buildDb(path: string, variant: "base" | "facts" | "no-table" = "base"):
   );
   if (variant !== "base") {
     for (const o of FACT_OUTCOMES) inserts.push(`INSERT INTO task_outcomes (task_id, concern_detail) VALUES (${o.map(lit).join(", ")});`);
+    for (const [id, n] of FACT_TRACE) {
+      for (let i = 0; i < n; i++) inserts.push(`INSERT INTO task_trace_events (task_id, name, tool) VALUES (${lit(id)}, 'tool.called', 'exa');`);
+    }
   }
   if (variant === "facts") {
     inserts.push(`CREATE TABLE task_completion_facts (task_id TEXT PRIMARY KEY, build TEXT, concern_detail TEXT,
@@ -192,6 +209,26 @@ describe("complaints-digest.sh over a fixture database", () => {
     expect(r.stderr.trim()).toMatch(/^complaints-digest: sqlite3 failed on .*notes\.txt: .*file is not a database/);
   }, 60_000);
 
+  it("flags are checked before any sqlite3 call: a bad flag exits 2 on a valid, a refused and a non-database --db", () => {
+    const bad = ["--days", "abc", "--now", NOW];
+    const valid = wrapper(["--db", db, ...bad]);
+    expect([valid.status, valid.stdout, valid.stderr.trim()]).toEqual([2, "", "complaints-digest: --days must be an integer"]);
+    // sqlite3 would exit 1 on this one (see the -readonly test below), so 2 shows it never ran.
+    const uriDir = join(dir, "uri-flags");
+    mkdirSync(uriDir);
+    buildDb(join(uriDir, "fixture.db"));
+    writeFileSync(join(uriDir, "file:fixture.db?mode=rw"), "");
+    expect(wrapper(["--db", "file:fixture.db?mode=rw", "--now", NOW], process.env, uriDir).status).toBe(1);
+    const refused = wrapper(["--db", "file:fixture.db?mode=rw", ...bad], process.env, uriDir);
+    expect([refused.status, refused.stdout, refused.stderr.trim()]).toEqual([2, "", "complaints-digest: --days must be an integer"]);
+    const notDb = join(dir, "flags-notes.txt");
+    writeFileSync(notDb, "this is not a database\n".repeat(64));
+    expect(wrapper(["--db", notDb, ...bad]).status).toBe(2);
+    const good = wrapper(["--db", notDb, "--now", NOW]);
+    expect(good.status).toBe(1);
+    expect(good.stderr).toContain("file is not a database");
+  }, 60_000);
+
   it("-readonly is in force: a --db URI asking for read-write is refused, with no digest", () => {
     const uriDir = join(dir, "uri");
     mkdirSync(uriDir);
@@ -224,9 +261,10 @@ describe("complaints-digest.sh over a fixture database", () => {
 
 describe("task_completion_facts (schema 18 on), and databases without it", () => {
   // Output of the unmodified tool (commit 835a686c) on the "no-table" fixture
-  // with --now NOW, text and --json: sha256 of stdout.
-  const BEFORE_TEXT_SHA = "a52ef51ae6f33fec65bb53eef62b7b71814f95ce26c521784cbd4245fcb444a9";
-  const BEFORE_JSON_SHA = "9d8a9dd73efb1edf24319e40f3cb33a2f34c8f1cc833d6160bf27839add44caa";
+  // with --now NOW, text and --json: sha256 of stdout. The text differs in one
+  // line only, the tool profile label ("calls" became "calls attempted").
+  const BEFORE_TEXT_SHA = "e09fd233a74c5bc1bc582f8658abda98066a30e42d7fd5a7b2bd1c9cbbb1a500";
+  const BEFORE_JSON_SHA = "a6de4dbbcd8a91fc086c8c45a016af814afd80983d2861af88aaf36dc45df329";
   const TYPE_KEYS = ["complaintsLastN", "concerns", "evidence", "failed", "key", "name", "runs", "strip", "tooFewRuns", "tools", "trigger", "unverified"];
   const EVIDENCE_KEYS = ["date", "id", "source", "text"];
   const hash = (s: string): string => createHash("sha256").update(s).digest("hex");
@@ -257,10 +295,10 @@ describe("task_completion_facts (schema 18 on), and databases without it", () =>
     const t = facts["ritual:fx-builds"];
     expect(t.builds).toEqual(["bbb2222", "aaa1111", "ccc3333"]);
     expect(t.buildRuns).toEqual([
-      { build: "bbb2222", runs: 2, concern: 0 },
-      { build: "aaa1111", runs: 1, concern: 1 },
-      { build: "ccc3333", runs: 1, concern: 0 },
-      { build: null, runs: 1, concern: 0 },
+      { build: "bbb2222", runs: 2, concern: 0, failed: 0 },
+      { build: "aaa1111", runs: 1, concern: 1, failed: 0 },
+      { build: "ccc3333", runs: 1, concern: 0, failed: 0 },
+      { build: null, runs: 1, concern: 0, failed: 1 },
     ]);
     expect(t.evidence.map((e) => [e.date, e.id, e.source, e.text, e.build])).toEqual([
       ["2026-11-15", "fx-b5", "reply", "thrown", null],
@@ -281,12 +319,12 @@ describe("task_completion_facts (schema 18 on), and databases without it", () =>
     const out = run("facts", false);
     expect(out).toContain("\nritual:fx-builds  fx-builds\n");
     expect(out).toContain(
-      "  builds, oldest first: bbb2222 2 runs / 0 concern · aaa1111 1 run / 1 concern · ccc3333 1 run / 0 concern · no build 1 run / 0 concern\n",
+      "  builds, oldest first: bbb2222 2 runs / 0 concern / 0 failed · aaa1111 1 run / 1 concern / 0 failed · ccc3333 1 run / 0 concern / 0 failed · no build 1 run / 0 concern / 1 failed\n",
     );
     expect(out).toContain("    2026-11-15 fx-b5 @- [reply] thrown\n");
     expect(out).toContain("    2026-11-12 fx-b2 @aaa1111 [concern] concern b2\n");
     expect(out).toContain("    2026-11-10 fx-pref @aaa1111 [concern] facts text\n");
-    expect(out.match(/^ {2}builds, oldest first: none recorded$/gm)).toHaveLength(6);
+    expect(out.match(/^ {2}builds, oldest first: none recorded$/gm)).toHaveLength(7);
   }, 60_000);
 
   it("--last 3: the builds line counts only the strip's 3 runs (aaa1111 drops out)", () => {
@@ -295,16 +333,20 @@ describe("task_completion_facts (schema 18 on), and databases without it", () =>
     const r = wrapper(["--db", path, "--now", NOW, "--last", "3", "--min", "1", "--type", "ritual:fx-builds"]);
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain("  last 3: [.?F]");
-    expect(r.stdout).toContain("  builds, oldest first: bbb2222 1 run / 0 concern · ccc3333 1 run / 0 concern · no build 1 run / 0 concern\n");
+    expect(r.stdout).toContain(
+      "  builds, oldest first: bbb2222 1 run / 0 concern / 0 failed · ccc3333 1 run / 0 concern / 0 failed · no build 1 run / 0 concern / 1 failed\n",
+    );
   }, 60_000);
 
-  it("a database without the table: exit 0, the same text and JSON as the tool before the change", () => {
+  it("a database without the table: exit 0, JSON byte-identical to the tool before the change, text but for the tools label", () => {
     const text = run("no-table", false);
     const json = run("no-table", true);
     expect(text).not.toMatch(/builds, oldest first| @/);
     expect(text).toContain("    2026-11-10 fx-pref [concern] outcome text\n");
-    expect(hash(text)).toBe(BEFORE_TEXT_SHA);
     expect(hash(json)).toBe(BEFORE_JSON_SHA);
+    const label = /^ {2}tools, mean calls attempted per run \(clean n=3 \/ concern n=3\):$/gm;
+    expect(text.match(label)).toHaveLength(1);
+    expect(hash(text.replace(label, "  tools, mean calls per run (clean n=3 / concern n=3):"))).toBe(BEFORE_TEXT_SHA);
   }, 60_000);
 
   it("JSON keys: the existing ones are unchanged; the facts table adds only builds, buildRuns and evidence build", () => {
@@ -325,16 +367,28 @@ describe("task_completion_facts (schema 18 on), and databases without it", () =>
     expect(keys(run("facts", true))).toEqual({ ...old, type: [...TYPE_KEYS, "buildRuns", "builds"].sort(), evidence: [...EVIDENCE_KEYS, "build"].sort() });
   }, 60_000);
 
-  it("every sqlite3 call in the wrapper keeps -init /dev/null -safe -readonly -bail and -- before the path", () => {
-    const calls = readFileSync(WRAPPER, "utf8")
+  it("sqlite3 runs in one pinned form: one call line, two literal modes, two call sites, no other option", () => {
+    const code = readFileSync(WRAPPER, "utf8")
       .split("\n")
-      .filter((l) => !l.trim().startsWith("#"))
-      .map((l) => l.replace("complaints-digest: sqlite3 failed", ""))
-      .filter((l) => /sqlite3/.test(l));
-    expect(calls.length).toBeGreaterThan(0);
-    for (const l of calls) {
-      expect(l).toContain("/usr/bin/sqlite3 -init /dev/null -safe -readonly -bail ");
-      expect(l).toMatch(/ -- "\$DB"/);
-    }
+      .map((l) => l.trim())
+      .filter((l) => !l.startsWith("#"))
+      .map((l) => l.replace("complaints-digest: sqlite3 failed", "").replace("complaints-digest: sqlite_ro takes", ""));
+    // The only sqlite3 command line, exactly: any option outside this set is red.
+    expect(code.filter((l) => /sqlite3/.test(l))).toEqual([
+      '/usr/bin/sqlite3 -init /dev/null -safe -readonly -bail "$mode" -- "$DB" 2>"$errf" && return',
+    ]);
+    // $mode is only ever one of these two literals.
+    expect(code.filter((l) => /\bmode\b/.test(l) && !/sqlite3/.test(l))).toEqual([
+      "local mode",
+      "list) mode=-list ;;",
+      "json) mode=-json ;;",
+    ]);
+    // The function takes exactly one word (case "$*"), and its call sites name a mode and nothing else.
+    expect(code.filter((l) => /sqlite_ro/.test(l)).map((l) => l.replace(/<<<".*"\)"/, '<<<"…")"'))).toEqual([
+      "sqlite_ro() {",
+      'facts="$(sqlite_ro list <<<"…")" || exit 1',
+      'rows="$(sqlite_ro json <<<"…")" || exit 1',
+    ]);
+    expect(code).toContain('case "$*" in');
   });
 });

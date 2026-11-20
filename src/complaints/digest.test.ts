@@ -262,14 +262,14 @@ describe("builds (rows from the task_completion_facts SQL)", () => {
     const rs = runs("C.F", { reply_tail: "tail", build: null });
     rs[0].build = "abc1234";
     const text = renderDigest(buildDigest(rs, OPTS));
-    expect(text).toContain("  builds, oldest first: abc1234 1 run / 1 concern · no build 2 runs / 0 concern\n");
+    expect(text).toContain("  builds, oldest first: abc1234 1 run / 1 concern / 0 failed · no build 2 runs / 0 concern / 1 failed\n");
     expect(text).toContain(`    2026-11-03 ${rs[2].task_id.slice(0, 8)} @- [reply] tail\n`);
     expect(text).toContain(`    2026-11-01 ${rs[0].task_id.slice(0, 8)} @abc1234 [reply] tail\n`);
     expect(renderDigest(buildDigest(runs("C", { build: null }), OPTS))).toContain("  builds, oldest first: none recorded\n");
   });
 });
 
-describe("builds: runs and concerns per build, over the strip's runs", () => {
+describe("builds: runs, concerns and failed per build, over the strip's runs", () => {
   // 9 runs, last 7 counted: zzz (2, outside the strip), aaa . C C C, bbb F C, no build C.
   const rows = () => {
     const rs = runs("CC.CCCFCC");
@@ -277,17 +277,17 @@ describe("builds: runs and concerns per build, over the strip's runs", () => {
     return rs;
   };
 
-  it("counts the strip's runs per build; a run outside --last N is not counted; a failed run is not a concern", () => {
+  it("counts the strip's runs per build; a run outside --last N is not counted; F is failed, not concern", () => {
     const t = only(rows());
     expect(t.strip).toBe(".CCCFCC");
     expect(t.builds).toEqual(["aaa", "bbb"]);
     expect(t.buildRuns).toEqual([
-      { build: "aaa", runs: 4, concern: 3 },
-      { build: "bbb", runs: 2, concern: 1 },
-      { build: null, runs: 1, concern: 1 },
+      { build: "aaa", runs: 4, concern: 3, failed: 0 },
+      { build: "bbb", runs: 2, concern: 1, failed: 1 },
+      { build: null, runs: 1, concern: 1, failed: 0 },
     ]);
     expect(renderDigest(buildDigest(rows(), OPTS))).toContain(
-      "  builds, oldest first: aaa 4 runs / 3 concern · bbb 2 runs / 1 concern · no build 1 run / 1 concern\n",
+      "  builds, oldest first: aaa 4 runs / 3 concern / 0 failed · bbb 2 runs / 1 concern / 1 failed · no build 1 run / 1 concern / 0 failed\n",
     );
   });
 
@@ -295,9 +295,9 @@ describe("builds: runs and concerns per build, over the strip's runs", () => {
     const rs = runs("C.C");
     [null, "aaa", "bbb"].forEach((b, i) => (rs[i].build = b));
     expect(only(rs).buildRuns).toEqual([
-      { build: "aaa", runs: 1, concern: 0 },
-      { build: "bbb", runs: 1, concern: 1 },
-      { build: null, runs: 1, concern: 1 },
+      { build: "aaa", runs: 1, concern: 0, failed: 0 },
+      { build: "bbb", runs: 1, concern: 1, failed: 0 },
+      { build: null, runs: 1, concern: 1, failed: 0 },
     ]);
   });
 
@@ -305,8 +305,56 @@ describe("builds: runs and concerns per build, over the strip's runs", () => {
     const rs = runs("C.");
     rs.forEach((r) => (r.build = null));
     const d = buildDigest(rs, OPTS);
-    expect(d.types[0].buildRuns).toEqual([{ build: null, runs: 2, concern: 1 }]);
+    expect(d.types[0].buildRuns).toEqual([{ build: null, runs: 2, concern: 1, failed: 0 }]);
     expect(renderDigest(d)).toContain("  builds, oldest first: none recorded\n");
+  });
+
+  it("over the strip's runs, concern + failed per build sums to the strip's complaints count", () => {
+    const statuses = ".CF?";
+    let s = 11;
+    const rand = (n: number) => (s = (s * 1103515245 + 12345) % 2147483648) % n;
+    for (let k = 0; k < 40; k++) {
+      const rs = runs(Array.from({ length: 1 + rand(12) }, () => statuses[rand(4)]).join(""));
+      rs.forEach((r) => (r.build = ["aaa", "bbb", null, ""][rand(4)]));
+      const t = only(rs);
+      const per = t.buildRuns ?? [];
+      expect(per.reduce((n, b) => n + b.concern + b.failed, 0)).toBe(t.complaintsLastN);
+      expect(per.reduce((n, b) => n + b.runs, 0)).toBe(t.strip.length);
+    }
+  });
+
+  it("an empty-string build is no build: @- in the text, null in JSON, grouped under no build", () => {
+    const rs = runs("CC");
+    rs[0].build = "";
+    rs[1].build = null;
+    const d = buildDigest(rs, OPTS);
+    expect(d.types[0].evidence.map((e) => e.build)).toEqual([null, null]);
+    expect(d.types[0].buildRuns).toEqual([{ build: null, runs: 2, concern: 2, failed: 0 }]);
+    expect(renderDigest(d)).toContain(`    2026-11-01 ${rs[0].task_id.slice(0, 8)} @- [reply] \n`);
+  });
+
+  it("a whitespace-only build is no build", () => {
+    const rs = runs("C.");
+    rs[0].build = " \t\n ";
+    rs[1].build = "aaa";
+    const t = only(rs);
+    expect(t.evidence.map((e) => e.build)).toEqual([null]);
+    expect(t.buildRuns).toEqual([
+      { build: "aaa", runs: 1, concern: 0, failed: 0 },
+      { build: null, runs: 1, concern: 1, failed: 0 },
+    ]);
+  });
+
+  it("a build is whitespace-collapsed like concern text: a newline in it does not break a line", () => {
+    const rs = runs("C");
+    rs[0].build = " abc\n123  x ";
+    const d = buildDigest(rs, OPTS);
+    expect(d.types[0].evidence[0].build).toBe("abc 123 x");
+    expect(d.types[0].builds).toEqual(["abc 123 x"]);
+    const text = renderDigest(d);
+    expect(text).toContain("  builds, oldest first: abc 123 x 1 run / 1 concern / 0 failed\n");
+    expect(text).toContain(`    2026-11-01 ${rs[0].task_id.slice(0, 8)} @abc 123 x [reply] \n`);
+    expect(text).not.toMatch(/abc\n/);
   });
 });
 

@@ -54,7 +54,7 @@ export interface Evidence {
   id: string;
   source: "concern" | "reply";
   text: string;
-  /** The run's build (null when unknown); only when rows carry builds. */
+  /** The run's build (null when unknown, empty or blank); only when rows carry builds. */
   build?: string | null;
 }
 
@@ -81,15 +81,17 @@ export interface TypeDigest {
    * when rows carry builds.
    */
   builds?: string[];
-  /** Per build, the strip's runs on it and how many show C; unknown build (null) last. */
+  /** Per build, the strip's runs on it and how many show C and F; unknown build (null) last. */
   buildRuns?: BuildRuns[];
 }
 
 export interface BuildRuns {
   build: string | null;
   runs: number;
-  /** Runs whose strip character is C (ended with concerns; failed is F, not counted). */
+  /** Runs whose strip character is C (ended with concerns). */
   concern: number;
+  /** Runs whose strip character is F (failed). concern + failed = the strip's complaints. */
+  failed: number;
 }
 
 export interface Digest {
@@ -156,11 +158,13 @@ function localDate(createdAt: string): string {
 }
 
 const collapse = (s: string): string => s.replace(/\s+/g, " ").trim();
+/** A run's build as shown: whitespace-collapsed; null, empty or blank is no build. */
+const buildOf = (r: TaskRow): string | null => collapse(r.build ?? "") || null;
 const chars = (s: string): string[] => Array.from(s);
 
 function evidence(r: TaskRow, facts: boolean): Evidence {
   const base = { date: localDate(r.created_at), id: r.task_id.slice(0, 8) };
-  const build = facts ? { build: r.build ?? null } : {};
+  const build = facts ? { build: buildOf(r) } : {};
   const concern = collapse(r.concern_detail ?? "");
   if (concern) return { ...base, source: "concern", text: chars(concern).slice(0, 500).join(""), ...build };
   return { ...base, source: "reply", text: chars(collapse(r.reply_tail ?? "")).slice(-500).join(""), ...build };
@@ -178,10 +182,12 @@ const round2 = (x: number): number => Math.round(x * 100) / 100;
 function buildRuns(lastRuns: TaskRow[]): BuildRuns[] {
   const groups = new Map<string | null, BuildRuns>();
   for (const r of lastRuns) {
-    const build = r.build ? r.build : null;
-    const g = groups.get(build) ?? { build, runs: 0, concern: 0 };
+    const build = buildOf(r);
+    const g = groups.get(build) ?? { build, runs: 0, concern: 0, failed: 0 };
     g.runs++;
-    if (stripChar(r.status) === "C") g.concern++;
+    const c = stripChar(r.status);
+    if (c === "C") g.concern++;
+    if (c === "F") g.failed++;
     groups.set(build, g);
   }
   const none = groups.get(null);
@@ -287,7 +293,9 @@ export function renderDigest(d: Digest): string {
     if (u.recurring.length > 0) line += `; recurring: ${u.recurring.map((f) => `${JSON.stringify(f.figure)} x${f.runs}`).join(", ")}`;
     out.push(line);
     if (t.builds && t.buildRuns) {
-      const items = t.buildRuns.map((b) => `${b.build ?? "no build"} ${b.runs} run${b.runs === 1 ? "" : "s"} / ${b.concern} concern`);
+      const items = t.buildRuns.map(
+        (b) => `${b.build ?? "no build"} ${b.runs} run${b.runs === 1 ? "" : "s"} / ${b.concern} concern / ${b.failed} failed`,
+      );
       out.push(`  builds, oldest first: ${t.builds.length > 0 ? items.join(" · ") : "none recorded"}`);
     }
     if (t.tools.diffs.length > 0) {
