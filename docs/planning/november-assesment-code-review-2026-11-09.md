@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-21 11:49 UTC — batch 10 piece 5 COMMITTED `89be39e8` (queue 4hw; not deployed, ships with the batch): the apply tool refuses, before any write, a modify or remove it cannot apply and a proposal with an unknown type, and it matches the proposal name exactly (an empty or ambiguous name is refused). One parameter description of the propose tool corrected. Review: pass with warnings; three surviving faults closed by one more case. Next: the knowledge-base ingest file.**
+
 **Status 2026-11-21 11:18 UTC — batch 10 piece 4 COMMITTED `7f2c164b` (queue 4hv; not deployed, ships with the batch): ten failure returns of the apply, backup and logs tools are error objects; the deploy tool's description says what the tool does. The propose tool's three refusals were cut after the review (the retry leg would have replaced a truthful refusal) and move to the protected-files piece. Review: fail on the cut part, pass with warnings after the cut. Next: a small piece on two faults of the apply tool recorded in 4hv.**
 
 **Status 2026-11-21 10:29 UTC — batch 10 piece 3 COMMITTED `7d4ccfeb` (queue 4hu; not deployed, ships with the batch): four "could not start" returns of the two paper-trading rebalance tools are error objects; nothing-to-trade and the stale-price abort stay plain. A sweep of every tool handler by script changed the batch plan (two sites the inventory missed, one new piece). Review passed after a tests-only fold. Next: the directives tools and the host-management tools.**
