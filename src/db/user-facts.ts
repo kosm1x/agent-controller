@@ -767,8 +767,9 @@ function formatFactSections(
  *
  * STABLE — `formatStableUserFactsBlock()`: the ALWAYS_INJECT_CATEGORIES
  * facts (personal, contact, preferences — core identity). Never reads the
- * message, so it is byte-identical across turns until a row changes; the
- * router places it in the cached (stable) half of the system prompt.
+ * message, so it is byte-identical across turns until a row changes;
+ * `buildJarvisSystemPrompt` places it in the cached (stable) half of the
+ * system prompt.
  *
  * VARIABLE — `formatRelevantUserFactsBlock(message)`: every other category,
  * scored by keyword overlap with the current message, top-N up to the
