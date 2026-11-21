@@ -164,7 +164,7 @@ const TESTS: TestCase[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// System prompt (mirrors router.ts)
+// System prompt (a fixed text in this script, not built by buildJarvisSystemPrompt)
 // ---------------------------------------------------------------------------
 
 const SYSTEM_PROMPT = `Eres Jarvis, el asistente estratégico personal de Fede (Federico). Habla en español mexicano, conciso y orientado a la acción.

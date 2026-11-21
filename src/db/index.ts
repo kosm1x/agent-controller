@@ -284,7 +284,6 @@ function setUpDatabase(_db: Database.Database): void {
     )
   `);
 
-  // Self-tuning tables (v2.27)
   // v5.0: Jarvis internal file system — persistent knowledge base
   _db.exec(`CREATE TABLE IF NOT EXISTS jarvis_files (
     id          TEXT PRIMARY KEY,

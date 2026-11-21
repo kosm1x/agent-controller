@@ -724,7 +724,7 @@ describe("fastRunner.execute() — integration (R-4)", () => {
           runId: `run-stable-${i}`,
           title: "Test task",
           description: "Identity preamble###CACHE_BREAK###variable suffix",
-          // length=2 → triggers `needsPrecedent` at fast-runner.ts:739
+          // length=2 → triggers `needsPrecedent` in `fastRunnerBranches.execute`
           // and exercises the precedent leg of the Promise.all
           conversationHistory: [
             { role: "user", content: "first turn" },
@@ -1219,12 +1219,14 @@ describe("fastRunner.execute() — integration (R-4)", () => {
       });
 
       const retryMsg = getRetryMessage();
-      // The truncation is at .slice(0, 150) per fast-runner.ts:1462. The
-      // retry message should contain at most 150 chars of the error text
+      // The truncation is the `.slice(0, 150)` of each tool error in the
+      // retry message (fast-runner.ts `permanentLines` / `transientLines`).
+      // The retry message should contain at most 150 chars of the error text
       // plus the classification suffix.
       expect(retryMsg).toContain("TIMEOUT");
       // Audit W1 fix: tight bind to the 150-char contract. The surviving
-      // x-run after both truncations (200 at line 1302 → 150 at line 1469)
+      // x-run after both truncations (200 when `failedToolCalls` stores it →
+      // 150 in the retry message)
       // is ≤141 chars. Any cut looser than slice(0, 160) would have ≥151
       // x's and fail this assertion.
       expect(retryMsg).not.toContain("x".repeat(151));

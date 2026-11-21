@@ -538,9 +538,10 @@ export function applyCommunityChannelScopeOverride(args: {
 /**
  * Pure-greeting/acknowledgment messages that should NOT inherit scope from
  * prior turns. Topic closers, not follow-ups. Used by both the regex-fallback
- * inheritance branch (scopeToolsForMessage) and the router's empty-classifier
- * inheritance branch (decideActiveGroups). Hoisted to file scope 2026-04-26
- * so both call sites apply the same filter (was previously inline-only).
+ * inheritance branch (scopeToolsForMessage) and the empty-classifier
+ * inheritance branch of message-scope.ts (decideActiveGroups). Hoisted to
+ * file scope 2026-04-26 so both call sites apply the same filter (was
+ * previously inline-only).
  */
 export const CONVERSATIONAL_PATTERN =
   /^(ok|bueno|gracias|thanks|sí|si|no|vale|listo|perfecto|claro|entiendo|de acuerdo|genial|excelente|ya|bien|cool|nice)([.,!?\s]+(ok|bueno|gracias|thanks|sí|si|no|vale|listo|perfecto|claro|entiendo|genial|excelente|ya|bien|cool|nice))*[.,!?\s]*$/i;

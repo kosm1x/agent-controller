@@ -1,6 +1,7 @@
 /**
  * OpenAI-compatible provider machinery — the INFERENCE_PRIMARY_PROVIDER=openai
- * path, moved verbatim from adapter.ts (efficiency-refactor Phase 4.2).
+ * path (moved verbatim from adapter.ts, efficiency-refactor Phase 4.2); it also
+ * serves the SDK last line (below).
  *
  * Adapted from NanoClaw's production inference adapter. Raw fetch() to any
  * OpenAI-compatible /v1/chat/completions endpoint. Zero vendor SDK.

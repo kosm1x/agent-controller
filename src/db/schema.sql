@@ -23,8 +23,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   completed_at   TEXT,
   -- 2026-05-23 (queue #231): per-sub-task retry counter. Set to 0 on the
   -- original task; incremented when the dispatcher re-submits the same work
-  -- as a fresh task (either via _isRequiredToolRetry at dispatcher.ts:466
-  -- or via swarm-runner's per-sub-task retry policy when
+  -- as a fresh task (either via the required-tool retry in the dispatcher's
+  -- `dispatchWithSlot` (`_isRequiredToolRetry`) or via swarm-runner's
+  -- per-sub-task retry policy when
   -- SWARM_SUBTASK_RETRY_ENABLED=true). The retry-policy classifier caps at
   -- MAX_RETRIES_PER_GOAL=1, so any task with retry_count>=1 is the LAST
   -- attempt — no further retries fire even if its failure class is retryable.

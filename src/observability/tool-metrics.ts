@@ -2,7 +2,7 @@
  * Per-tool execution metrics — call count, success/failure, latency.
  *
  * In-memory rolling window (last 100 entries per tool). Exposed via /health.
- * Pattern mirrors providerMetrics in inference/adapter.ts.
+ * Pattern mirrors providerMetrics in inference/provider-metrics.ts.
  */
 
 interface ToolEntry {

@@ -647,7 +647,10 @@ export async function inferWithTools(
   contextPressure: number;
   compactionApplied?: { level: CompactionLevel; removedCount: number };
   /** Surfaced under claude-sdk routing (2026-05-10) so callers can plumb
-   * actualModel into runner tokenUsage; undefined on the OpenAI HTTP path. */
+   * actualModel into runner tokenUsage. Set by the claude-sdk shim and by
+   * the SDK last line with the fallback model id; `inferWithToolsViaOpenAi`
+   * leaves it undefined, so it stays unset under
+   * INFERENCE_PRIMARY_PROVIDER=openai. */
   model?: string;
   /** SDK-reported total_cost_usd. Populated by the claude-sdk shim;
    * undefined on the OpenAI HTTP path (dispatcher falls back to

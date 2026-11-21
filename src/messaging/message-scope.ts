@@ -27,29 +27,6 @@ import {
 import { currentRunTaskId } from "../tools/rule-of-two.js";
 import { looksLikeScopeAsk } from "./scope-miss.js";
 
-/**
- * Scope tools to only groups relevant to the current conversation context.
- * Scans the current message + last 3 conversation turns for keyword signals.
- * Always includes core + misc. Activates other groups on demand.
- *
- * Typical reduction: 49 → 15-25 tools = ~5-8K fewer tokens.
- */
-/**
- * Three-way decision for which scope groups to activate. Source of bug class
- * `feedback_classifier_empty_vs_null.md`: prior code collapsed `null` and
- * `empty Set` into the same regex-fallback branch, but they mean different
- * things. The classifier explicitly returns `[]` (→ empty Set) for short
- * follow-ups like "dale", "procede", "continúa" per its own rules; that's a
- * signal to inherit prior scope, not to fall back to regex which can pick
- * the wrong group from prior-turn FPs.
- *
- *   semantic non-empty → use semantic ("semantic")
- *   semantic empty + conversational message → regex_empty (don't inherit
- *     scope onto a topic-closer like "gracias" — qa-audit W2)
- *   semantic empty + prior scope present → inherit prior ("inherited")
- *   semantic empty + no prior → regex_empty
- *   semantic null/undefined → regex fallback ("regex")
- */
 export type ScopeSource = "semantic" | "inherited" | "regex" | "regex_empty";
 
 /** Phase 3: the user's message + recent user turns join the evidence corpus. */
@@ -72,6 +49,23 @@ export function recordUserEvidence(
   }
 }
 
+/**
+ * Three-way decision for which scope groups to activate. Earlier code
+ * collapsed `null` and `empty Set` into the same regex-fallback branch, but
+ * they mean different
+ * things. The classifier explicitly returns `[]` (→ empty Set) for short
+ * follow-ups like "dale", "procede", "continúa" per its own rules; that's a
+ * signal to inherit prior scope, not to fall back to regex which can pick
+ * the wrong group from prior-turn FPs.
+ *
+ *   semantic non-empty → use semantic, unioned with the prior scope when
+ *     `sticky` and the message is not conversational ("semantic")
+ *   semantic empty + conversational message → regex_empty (don't inherit
+ *     scope onto a topic-closer like "gracias")
+ *   semantic empty + prior scope present → inherit prior ("inherited")
+ *   semantic empty + no prior → regex_empty
+ *   semantic null/undefined → regex fallback ("regex")
+ */
 export function decideActiveGroups(
   semanticGroups: Set<string> | null | undefined,
   priorScope: Set<string> | undefined,
@@ -131,6 +125,11 @@ export function decideActiveGroups(
   };
 }
 
+/**
+ * Scope tools to the groups the current message and recent turns activate:
+ * `decideActiveGroups` picks the groups, scope.ts `scopeToolsForMessage`
+ * builds the tool list.
+ */
 export function scopeToolsForMessage(
   currentMessage: string,
   conversationHistory: ConversationTurn[],

@@ -26,18 +26,18 @@ interface DetectedCredential {
 function detectCriticalData(text: string): DetectedCredential[] {
   const results: DetectedCredential[] = [];
 
-  // Google API keys: AIzaSy...
+  // Google API key: `googleApiKey` → fact key `google_api_key`
   const googleApiKey = text.match(/\b(AIzaSy[A-Za-z0-9_-]{33})\b/);
   if (googleApiKey) {
     results.push({ key: "google_api_key", value: googleApiKey[1] });
   }
 
-  // GA4 Measurement IDs: G-XXXXXXXXXX (with or without G- prefix)
+  // GA4 measurement ID: `ga4Full` → fact key `ga4_measurement_id`
   const ga4Full = text.match(/\b(G-[A-Z0-9]{8,12})\b/);
   if (ga4Full) {
     results.push({ key: "ga4_measurement_id", value: ga4Full[1] });
   }
-  // Measurement/Msrmnt ID without G- prefix
+  // GA4 measurement ID: `ga4Labeled` → fact key `ga4_measurement_id`
   if (!ga4Full) {
     const ga4Labeled = text.match(
       /(?:m(?:e(?:asure)?)?s?rmnt|measurement)\s*id\s*[:\s]*([A-Z0-9]{8,12})\b/i,
@@ -50,13 +50,13 @@ function detectCriticalData(text: string): DetectedCredential[] {
     }
   }
 
-  // GA4 Stream IDs: long numeric (10+ digits, preceded by "stream" context)
+  // GA4 stream ID: `streamId` → fact key `ga4_stream_id`
   const streamId = text.match(/(?:stream\s*(?:id)?)\s*[:\s]*(\d{10,15})/i);
   if (streamId) {
     results.push({ key: "ga4_stream_id", value: streamId[1] });
   }
 
-  // Generic API keys/tokens: explicit label + value patterns
+  // Labeled API key or token: `labeledSecret` → fact key `api_credential`
   const labeledSecret = text.match(
     /(?:api[_ ]?key|token|secret)\s*[:\s=]+\s*["']?([A-Za-z0-9_\-.]{20,})/i,
   );
@@ -64,7 +64,7 @@ function detectCriticalData(text: string): DetectedCredential[] {
     results.push({ key: "api_credential", value: labeledSecret[1] });
   }
 
-  // Passwords: label + value (allows special chars)
+  // Labeled password: `labeledPassword` → fact key `password`
   const labeledPassword = text.match(
     /(?:password|contraseña|pswd|pwd|pass)\s*[:\s=]+\s*["']?(\S{8,})/i,
   );
@@ -72,7 +72,7 @@ function detectCriticalData(text: string): DetectedCredential[] {
     results.push({ key: "password", value: labeledPassword[1] });
   }
 
-  // Login/username: label + value
+  // Labeled login: `labeledLogin` → fact key `login`
   const labeledLogin = text.match(
     /(?:login|user(?:name)?|usuario)\s*[:\s=]+\s*["']?(\S{3,})/i,
   );
@@ -80,7 +80,7 @@ function detectCriticalData(text: string): DetectedCredential[] {
     results.push({ key: "login", value: labeledLogin[1] });
   }
 
-  // WP Application Passwords: 4-char groups separated by spaces (e.g. "BtZU tFsT EUhC l2z5 No4B F4aU")
+  // WordPress application password: `wpAppPass` → fact key `wp_app_password`
   const wpAppPass = text.match(
     /(?:app(?:lication)?\s*pass(?:word)?|contraseña\s*de\s*aplicación)[^:=\n]*[:\s=]+\s*["']?([A-Za-z0-9]{4}(?:\s+[A-Za-z0-9]{4}){4,})/i,
   );
@@ -88,7 +88,7 @@ function detectCriticalData(text: string): DetectedCredential[] {
     results.push({ key: "wp_app_password", value: wpAppPass[1] });
   }
 
-  // FTP host: ftp://... or sftp://...
+  // FTP host: `ftpHost` → fact key `ftp_host`
   const ftpHost = text.match(
     /(?:ftp|sftp)\s*(?:host)?\s*[:\s=]*\s*((?:s?ftp:\/\/)?[\d.]+|(?:s?ftp:\/\/)?[\w.-]+\.\w{2,})/i,
   );

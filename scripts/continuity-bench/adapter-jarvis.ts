@@ -1046,7 +1046,7 @@ export class JarvisAdapter {
 
 /**
  * Which of the three system-prompt blocks survive the production budget loop
- * (router.ts buildJarvisSystemPrompt: P4 relevant facts + enrichment first,
+ * (system-prompt.ts buildJarvisSystemPrompt: P4 relevant facts + enrichment first,
  * then P3, then P2 whose last entry is the profile). Called as is, with the
  * smallest tool scope (CORE_TOOLS, fewest P3 sections — the optimistic case)
  * and the owner-channel flag the operator's chat carries.

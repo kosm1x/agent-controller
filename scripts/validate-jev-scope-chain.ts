@@ -11,7 +11,8 @@
  *      and the message itself, 150 chars each, rebuilt from the
  *      `conversations` rows that existed when the message arrived;
  *   3. the classifier prompt's RULES and annotated examples, verbatim;
- *   4. the sticky chain — the router's own `decideActiveGroups`, 45-min TTL,
+ *   4. the sticky chain — `decideActiveGroups` (message-scope.ts, which the
+ *      router reaches through `scopeToolsForMessage`), 45-min TTL,
  *      walking the thread in order, with JEV'S OWN earlier answers as the
  *      prior. Live's recorded groups are never fed into Jev's scope.
  *

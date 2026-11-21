@@ -94,7 +94,8 @@ export const LOOP_MAX_TURNS = 1_000_000;
 
 // --- Prompt size governance (CCP6) ---
 /**
- * Max tokens for the router's system prompt (sections + facts), ~48K chars.
+ * Max tokens for the system prompt `buildJarvisSystemPrompt` assembles
+ * (sections + facts), ~48K chars.
  * 2026-09-10 (reliability audit R1 / design audit D2): at 6,000 the static
  * P1+P2 sections (~4,400 tokens) exhausted the budget before any per-turn
  * data — P4 (user facts, enrichment) was dropped on 383 of 383 prompt builds

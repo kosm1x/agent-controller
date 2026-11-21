@@ -1,7 +1,7 @@
 /**
  * Model pricing configuration for cost calculation.
  *
- * Defaults cover DashScope models (primary cost driver).
+ * Defaults: `DEFAULT_PRICING`, per-model rates in USD per 1K tokens.
  * `loadPricingOverride` can add custom models; the service does not call it.
  */
 
@@ -18,7 +18,7 @@ export interface ModelPricing {
 
 /**
  * Default pricing for known models (USD per 1K tokens).
- * Source: DashScope pricing as of 2026-03.
+ * Source of the DashScope rows: DashScope pricing as of 2026-03.
  */
 const DEFAULT_PRICING: Record<string, ModelPricing> = {
   // Qwen series

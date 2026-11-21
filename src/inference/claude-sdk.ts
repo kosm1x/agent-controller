@@ -2105,8 +2105,9 @@ function warnSeamRecordFailureOnce(err: unknown): void {
 //   - Synthesized messages[] on return is lossy compared to a full conversation
 //     log — it reconstructs a single assistant turn with all tool calls
 //     collapsed into one tool_calls array. Downstream provenance extraction
-//     (executor.ts:extractProvenance) degrades to empty on the SDK path;
-//     that is non-critical metadata, tasks still complete correctly.
+//     (`extractProvenance` in prometheus/provenance.ts) degrades to empty on
+//     the SDK path; that is non-critical metadata, tasks still complete
+//     correctly.
 //
 // ---------------------------------------------------------------------------
 

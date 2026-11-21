@@ -12,8 +12,9 @@
  * live ones, which would leak the incumbent into the candidate's score.
  *
  * `parseExchanges`, `recentContextOf` and `recentUserMessagesOf` mirror code
- * that is inline in src/messaging/router.ts (`getThreadTurns`, the
- * `recentContext` expression and the scoping wrapper). Keep them identical.
+ * in src/messaging/router.ts (`getThreadTurns`, the `recentContext`
+ * expression) and `scopeToolsForMessage` in src/messaging/message-scope.ts.
+ * Keep them identical.
  *
  * Pure: no I/O. scripts/validate-jev-scope-chain.ts does the DB and network.
  */
@@ -98,8 +99,9 @@ export function recentContextOf(
 }
 
 /**
- * router.ts scoping wrapper: what the pure scoper gets as recent messages. As
- * in the router, the current message is already the thread's last user turn.
+ * message-scope.ts `scopeToolsForMessage`: what the pure scoper gets as
+ * recent messages. As in the router, the current message is already the
+ * thread's last user turn.
  */
 export function recentUserMessagesOf(
   history: readonly Turn[],

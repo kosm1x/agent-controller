@@ -326,8 +326,9 @@ function timeLineAt(sqliteUtc: string): string {
 
 /**
  * Re-insert the cache-break marker the dispatcher stripped at persistence.
- * The router's stable half ends with figuresProvenanceSection() (last P2
- * section); stripCacheMarker replaced the marker with ONE "\n". Not found
+ * `buildJarvisSystemPrompt`'s stable half has figuresProvenanceSection() as
+ * its last P2 section (followed by the profile block when there is one);
+ * stripCacheMarker replaced the marker with ONE "\n". Not found
  * (prompt text drifted, or P2 truncated) → whole description stays stable.
  */
 function restoreSplit(desc: string): { description: string; split: boolean } {

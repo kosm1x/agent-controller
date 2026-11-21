@@ -139,7 +139,7 @@
  *   npm run eval:gate -- --run --probe-rounds=<1-5>   # rounds per probe other
  *       # than the default 3 (1 = the pre-v3 first-round-only probe)
  *   npm run eval:gate -- --run --probe-system=jarvis   # probe gets the external
- *       # Jarvis system prompt (router.ts buildExternalJarvisSystemPrompt);
+ *       # Jarvis system prompt (system-prompt.ts buildExternalJarvisSystemPrompt);
  *       # off by default — the default probe sends no system message
  *
  * EXIT CODES

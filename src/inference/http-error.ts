@@ -5,16 +5,18 @@
  * (`feedback_prometheus_upstream` April Tier-1 #1).
  *
  * Behavioral wiring (queue #232, 2026-05-28): the retry-delay path in
- * `adapter.ts` honors `Retry-After` via `resolveRetryDelay()` below — the
+ * `inferViaOpenAi` (adapter-openai.ts) honors `Retry-After` via
+ * `resolveRetryDelay()` below — the
  * server's hint wins over the exp-backoff curve, capped at
  * `MC_RETRY_AFTER_MAX_MS` (default 30s) to avoid stalls on storm-pessimistic
  * provider hints (some emit `Retry-After: 3600`).
  *
- * **Scope**: this behavior applies to the OpenAI-compatible fallback path in
- * `adapter.ts` and to direct Anthropic Messages API hits. The Claude Agent
- * SDK path (`INFERENCE_PRIMARY_PROVIDER=claude-sdk`, current prod default
- * since 2026-05-10) short-circuits before this retry loop — the SDK has its
- * own internal retry policy. Queue #232 covers the non-SDK paths.
+ * **Scope**: this behavior applies to the retry loop of `inferViaOpenAi`
+ * (adapter-openai.ts): the OpenAI-compatible providers and direct Anthropic
+ * Messages API hits. Under `INFERENCE_PRIMARY_PROVIDER=claude-sdk`, `infer()`
+ * takes the Claude Agent SDK path, which has its own internal retry policy;
+ * the SDK last line calls `inferViaOpenAi`. Queue #232 covers the non-SDK
+ * paths.
  */
 export interface RateLimitInfo {
   /** `Retry-After` parsed to milliseconds. Seconds-int and HTTP-date both supported. */

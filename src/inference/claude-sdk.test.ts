@@ -2645,7 +2645,7 @@ describe("queryClaudeSdk abort/timeout preserves usage + omits authoritative cos
     // W1 fold: the prior tests in this block exercised the natural-exit path
     // (generator returns cleanly without a result message). This one actually
     // throws inside the iterator AFTER one assistant turn, hitting the
-    // `catch (err)` block at claude-sdk.ts:620. Verifies that:
+    // `catch (err)` block of `queryClaudeSdk`'s stream loop. Verifies that:
     //   (a) the per-turn accumulator survives the throw (token counts non-zero)
     //   (b) costAuthoritative stays false (no result message ever fired)
     //   (c) streamingText is recovered as the result text

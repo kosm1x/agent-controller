@@ -13,7 +13,6 @@
  * Tools that perform write/mutate actions — if the response claims success
  * for any of these categories but the tool was never called, it's hallucinated.
  */
-/** @internal Exported for compile-time sync test only. */
 export const WRITE_TOOLS = new Set([
   // WordPress
   "wp_publish",

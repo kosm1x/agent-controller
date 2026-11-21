@@ -2,7 +2,8 @@
  * Outcome tracker — records task outcomes after completion.
  *
  * Writes structured outcomes to SQLite (for fast classifier queries)
- * and semantic summaries to Hindsight (for mental model evolution).
+ * and, when the memory backend is Hindsight, semantic summaries there (for
+ * mental model evolution).
  *
  * Also manages a 2-minute feedback window: if the user sends a follow-up
  * shortly after a response, it may indicate the response was incomplete
@@ -29,8 +30,8 @@ const feedbackWindows = new Map<string, ReturnType<typeof setTimeout>>();
 const lastCompletedTask = new Map<string, string>();
 
 /**
- * Track a completed task's outcome.
- * Called from router.handleTaskCompleted for messaging tasks.
+ * Track a messaging task's outcome when it ends. Called from the router's
+ * handlers for a task that completed, failed or was cancelled.
  */
 export function trackTaskOutcome(
   taskId: string,

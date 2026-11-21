@@ -121,8 +121,8 @@ export function ensureTuningTables(db: Database.Database): void {
       ON mined_test_cases(category);
   `);
 
-  // v7.5 additive columns — safe to re-run; wrapped in try/catch because
-  // better-sqlite3 throws on duplicate ADD COLUMN and there's no IF NOT EXISTS.
+  // v7.5 additive columns — safe to re-run: `addColumnIfMissing` probes the
+  // schema first, since SQLite has no IF NOT EXISTS on ADD COLUMN.
   addColumnIfMissing(db, "tune_experiments", "failure_source", "TEXT");
   addColumnIfMissing(db, "tune_experiments", "confidence_avg", "REAL");
 }

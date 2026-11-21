@@ -2,10 +2,9 @@
  * The cache-break marker of the Jarvis system prompt, and the helper that
  * strips it.
  *
- * A leaf module: it imports nothing. The runners, the dispatcher and the A2A
- * mapper read these names from here, so none of them has to load the message
- * router, which sits in an import cycle with the dispatcher. The router
- * re-exports both names for its existing callers.
+ * A leaf module: it imports nothing, so a module can import these names
+ * without loading the message router. The router re-exports both names for
+ * its existing callers.
  */
 
 /**

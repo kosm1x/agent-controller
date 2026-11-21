@@ -1,7 +1,9 @@
 /**
  * Tuning system database schema and CRUD operations.
  *
- * Self-creating tables: called from ensureTuningTables() at startup.
+ * Self-creating tables: at startup `initDatabase` creates them through
+ * `ensureTuningTables` in src/db/tuning-schema.ts. The wrapper
+ * `ensureTuningTables()` below is called from tests.
  */
 
 import { getDatabase } from "../db/index.js";

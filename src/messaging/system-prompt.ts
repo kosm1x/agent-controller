@@ -49,25 +49,15 @@ import { errMsg } from "../lib/err-msg.js";
  * Build the Jarvis system prompt with only the sections relevant to the
  * tools actually in scope. Prevents the LLM from attempting to use tools
  * it cannot call (e.g., browser__goto when browser tools aren't scoped).
- */
-/**
- * Rituals whose full deliverable is a long multi-chunk report. Their
- * broadcast is trimmed to a digest — the reflector's short run summary
- * (`result.content`) plus a pointer to the persisted task — instead of the
- * full artifact. Operator request 2026-07-13: the 07-12 skill-evolution
- * report landed as 5 Telegram chunks. The full report stays retrievable via
- * `mc-ctl task <task_id>` and the mc-operational memory bank (the ritual's
- * `persistResult` writes it deterministically, so the digest loses nothing).
- */
-/**
- * Build the static (byte-identical across calls) portion of the Jarvis system
- * prompt. The current date/time is deliberately NOT included here — it goes
- * into the user message via `timeContextLine()` so the SDK's prompt cache
- * hits on the system prompt. See `identitySection` comment for history.
+ *
+ * Returns the prompt as a stable half (P1 + P2) and a variable half
+ * (P3 + P4). The current date/time is deliberately NOT included here — it
+ * goes into the user message via `timeContextLine()` so the SDK's prompt
+ * cache hits on the system prompt. See `identitySection` comment for history.
  *
  * v8 S1: Returns `{ stable, variable }` so runners can place the variable
  * portion AFTER stable content (essentials, enforce-KB, always-read-KB) for
- * cache stability. See `CACHE_BREAK_MARKER` and `feedback_cache_prefix_variability.md`.
+ * cache stability. See `CACHE_BREAK_MARKER`.
  *
  * User facts are split by cache lifetime (2026-10-15): `stableProfileBlock`
  * (always-inject profile facts + active projects — byte-stable for days) is
@@ -117,8 +107,8 @@ export function buildJarvisSystemPrompt(
   if (flags.hasJarvisFiles && !external) p2.push(fileSystemSection());
   p2.push(capabilitiesSection(flags));
   // V8.1 Phase A — Conway Pattern 2 grounding. Surface the self-defining
-  // cohort (what Fede actually has live) in the stable layer so the model
-  // grounds answers in real projects/objectives. getCohort() is one indexed
+  // cohort (what the operator actually has live) in the stable layer so the
+  // model grounds answers in real projects/objectives. getCohort() is one indexed
   // SELECT on a ≤30-row table; the cohort is re-rolled once daily, so the
   // section is byte-stable within a day → prompt-cache friendly. The cohort
   // is operator-PRIVATE — cohortSection() emits it only when ownerChannel.
@@ -156,9 +146,9 @@ export function buildJarvisSystemPrompt(
   if (flags.hasWebResearch) p3.push(sourceGroundingSection());
   // v7.6 Spine 5 — surface first-party skill catalog. Filtered to skills whose
   // parent tool is in scope so we never advertise a skill the LLM cannot use
-  // (round-1 audit H1: identity-section rule "no menciones herramientas que no
-  // están en tu lista"). availableSkillsSection returns "" when the filtered
-  // list is empty so the section auto-omits cleanly.
+  // (see the rule on using only the available tools in `identitySection`).
+  // availableSkillsSection returns "" when the filtered list is empty so the
+  // section auto-omits cleanly.
   const skillsBlock = availableSkillsSection(listSkillsForTools(tools));
   if (skillsBlock) p3.push(skillsBlock);
 

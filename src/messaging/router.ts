@@ -3382,8 +3382,9 @@ export class MessageRouter {
               )
             : notice(body, rawTail);
         // Background-agent notification IS LLM-derived (summary contains LLM
-        // output); route through the gate so community-manager mailboxes get
-        // the same write-gate protection as direct LLM replies.
+        // output); route through the gate like a direct LLM reply.
+        // `interceptBackgroundAgentSpawn` starts no background agent on a
+        // non-owner channel, so on this path the write-gate is a backstop.
         this.sendLLMReplyToChannel(pending.channel, pending.to, notification);
         appendDayLog(
           "JARVIS",
