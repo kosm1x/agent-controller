@@ -8,6 +8,8 @@ import { asciiEscape, checkRow, LEDGER_DAYS, parseLedger, renderLedger, type Pre
 import { buildVerdict } from "./verdict.js";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+/** Gains rows and pasted closures over time: tests of it hold for every legal state, read at the real clock. */
+const COMMITTED = join(REPO, "docs", "planning", "predictions.jsonl");
 const NOW = "2026-11-20T18:00:00.000Z";
 const SINCE = "2026-11-15T12:00:00.000Z";
 const TYPE = "ritual:pred";
@@ -60,13 +62,32 @@ const check = (o: object, rows: TaskRow[], now = NOW, replay = false) => checkRo
 const state = (o: object, rows: TaskRow[]) => check(o, rows).state;
 
 describe("parseLedger", () => {
-  it("the committed docs/planning/predictions.jsonl parses with no problem", () => {
-    const { predictions, problems } = parseLedger(readFileSync(join(REPO, "docs", "planning", "predictions.jsonl"), "utf8"), NOW);
-    expect(problems).toEqual([]);
-    expect(predictions.map((p) => [p.id, p.runs, p.maxComplaints, p.guards.length, p.closed])).toEqual([
-      ["2", 7, 2, 2, null],
-      ["9", 7, 2, 2, null],
-    ]);
+  it("the committed docs/planning/predictions.jsonl parses with no problem at the real clock", () => {
+    expect(parseLedger(readFileSync(COMMITTED, "utf8"), new Date().toISOString()).problems).toEqual([]);
+  });
+
+  it("the committed file stays clean when a row is appended or its first started open row's closure is pasted", () => {
+    // Rows are written and closures printed at the real time `real`; `clock` is the time the file is parsed at.
+    const real = Date.now();
+    const clock = new Date(real).toISOString();
+    const lines = readFileSync(COMMITTED, "utf8").trimEnd().split("\n");
+    const { predictions } = parseLedger(`${lines.join("\n")}\n`, clock);
+    // (i) A new open row on a type no committed row uses, committed before its window opens.
+    const added = { ...BASE, id: "lifecycle-new", type: "ritual:lifecycle-new", since: new Date(real + 300_000).toISOString(), guards: [exa(1, 0)] };
+    expect(predictions.map((p) => p.id)).not.toContain(added.id);
+    expect(predictions.map((p) => p.type)).not.toContain(added.type);
+    expect(parseLedger(`${[...lines, JSON.stringify(added)].join("\n")}\n`, clock).problems).toEqual([]);
+    // (ii) A closure pasted into the first row with none whose since is not after the real time, at the
+    // latest time the parser allows it: not after the real time and under 30 days after since.
+    const open = predictions.find((p) => p.closed === null && Date.parse(p.since) <= real);
+    if (!open) return console.warn("lifecycle (ii) skipped: no committed row has started without a closure");
+    const at = Math.min(real, Date.parse(open.since) + LEDGER_DAYS * 86_400_000 - 1000);
+    const closed = { state: "CONFIRMED", checkedAt: new Date(at).toISOString(), line: "pasted" };
+    const i = open.line - 1;
+    lines[i] = `${lines[i].slice(0, -1)},"closed":${JSON.stringify(closed)}}`;
+    const pasted = parseLedger(`${lines.join("\n")}\n`, clock);
+    expect(pasted.problems).toEqual([]);
+    expect(pasted.predictions.find((p) => p.id === open.id)?.closed).toEqual(closed);
   });
 
   it("the window equals the trace retention", () => {
@@ -295,7 +316,7 @@ describe("audit folds", () => {
   });
 
   it("the committed rows are canonical, and a pasted closure keeps the row canonical and rechecks as agreeing", () => {
-    const lines = readFileSync(join(REPO, "docs", "planning", "predictions.jsonl"), "utf8").trimEnd().split("\n");
+    const lines = readFileSync(COMMITTED, "utf8").trimEnd().split("\n");
     for (const l of lines) expect(JSON.stringify(JSON.parse(l))).toBe(l);
     const rows = runs(".......");
     const raw = JSON.stringify({ ...BASE, guards: [exa(1, 0)] });
