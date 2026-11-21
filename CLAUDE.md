@@ -75,7 +75,7 @@ Tests: `src/**/*.test.ts` (vitest, colocated with source).
 Five Anthropic workflow patterns → §Agent Design Principles. Rules:
 
 - Always prefer the simplest runner that can solve the task. Never default to Prometheus when a single LLM call with tools suffices.
-- **nanoclaw is mission-control-only.** Four-layer guard; Layer 2 is HOST code → `deploy.sh`; Layer 3 runs INSIDE the container → rebuild the image.
+- **nanoclaw is mission-control-only.** Four-layer guard; Layer 2 is HOST code and Layer 3 runs INSIDE the container from the host build mounted over the image → `deploy.sh` carries both (it rebuilds the image only when the lockfile changed).
 - ACI: tool definitions are prompts. Every new tool sets all 4 hints and **MUST get a Rule-of-Two row** in `src/tools/rule-of-two.ts`. Enums over free strings; every tool `parameters` property has a `description` (it becomes the SDK schema's `.describe()` text).
 - **The day-log is the only record of work done** — NEVER `NorthStar/` or the `tasks` table. Do NOT re-wire NorthStar/tasks as a work-source. Silence ≠ stall (`stall_exempt: true`).
 - Honest done (V8.4): "Done" is a CLAIM. Route every completion path through `applyCompletionLedger` — never invent a second "done" decision. New write tool ⇒ `declareReadbackGate` hook + verifier + `readback-wiring.test.ts` case. Ledger lines only via `isLedgerLine` — never a hand-typed prefix list.
