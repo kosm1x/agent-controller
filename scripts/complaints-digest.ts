@@ -31,7 +31,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { complaintsSql } from "../src/complaints/query.js";
 import { buildDigest, renderDigest, type TaskRow } from "../src/complaints/digest.js";
-import { checkRow, LEDGER_DAYS, parseLedger, renderLedger, type Prediction } from "../src/complaints/ledger.js";
+import { asciiEscape, checkRow, LEDGER_DAYS, parseLedger, renderLedger, type Prediction } from "../src/complaints/ledger.js";
 import { buildVerdict, ISO_TIME, nowIsAfterClock, renderVerdict, TYPE_PATTERN, windowSince } from "../src/complaints/verdict.js";
 
 function fail(msg: string): never {
@@ -125,11 +125,12 @@ function readLedger(file: string): Prediction[] {
   try {
     src = readFileSync(file, "utf8");
   } catch (err) {
-    fail(`ledger ${file}: cannot be read (${(err as NodeJS.ErrnoException).code ?? "error"})`);
+    fail(`ledger ${asciiEscape(file)}: cannot be read (${(err as NodeJS.ErrnoException).code ?? "error"})`);
   }
-  const { predictions, problems } = parseLedger(src, now, replay);
+  // A closure can never be later than the real clock; a replay reads it here.
+  const { predictions, problems } = parseLedger(src, replay ? new Date().toISOString() : now);
   if (problems.length === 0) return predictions;
-  for (const p of problems) process.stderr.write(`complaints-digest: ledger ${file} line ${p.line}: ${p.reason}\n`);
+  for (const p of problems) process.stderr.write(`complaints-digest: ledger ${asciiEscape(file)} line ${p.line}: ${p.reason}\n`);
   process.exit(2);
 }
 // Read on the --print-sql call too, so a bad file stops the wrapper before sqlite3.

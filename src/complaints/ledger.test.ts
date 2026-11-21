@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TRACE_RETENTION_DAYS } from "../observability/task-trace.js";
 import type { TaskRow } from "./digest.js";
-import { checkRow, LEDGER_DAYS, parseLedger, renderLedger, type Prediction } from "./ledger.js";
+import { asciiEscape, checkRow, LEDGER_DAYS, parseLedger, renderLedger, type Prediction } from "./ledger.js";
 import { buildVerdict } from "./verdict.js";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -49,10 +49,10 @@ function runs(letters: string, calls: (number | null)[] = []): TaskRow[] {
 const BASE = { id: "a", type: TYPE, since: SINCE, maxComplaints: 2, runs: 7, change: "a change", baseline: "a baseline" };
 const exa = (min: number, maxBelow: number) => ({ tool: "exa", min, maxBelow });
 const file = (...objs: object[]): string => objs.map((o) => JSON.stringify(o)).join("\n") + "\n";
-const reasons = (src: string): string[] => parseLedger(src, NOW, false).problems.map((p) => `${p.line}: ${p.reason}`);
+const reasons = (src: string): string[] => parseLedger(src, NOW).problems.map((p) => `${p.line}: ${p.reason}`);
 
 function pred(o: object): Prediction {
-  const { predictions, problems } = parseLedger(file({ ...BASE, ...o }), NOW, false);
+  const { predictions, problems } = parseLedger(file({ ...BASE, ...o }), NOW);
   expect(problems).toEqual([]);
   return predictions[0];
 }
@@ -61,7 +61,7 @@ const state = (o: object, rows: TaskRow[]) => check(o, rows).state;
 
 describe("parseLedger", () => {
   it("the committed docs/planning/predictions.jsonl parses with no problem", () => {
-    const { predictions, problems } = parseLedger(readFileSync(join(REPO, "docs", "planning", "predictions.jsonl"), "utf8"), NOW, false);
+    const { predictions, problems } = parseLedger(readFileSync(join(REPO, "docs", "planning", "predictions.jsonl"), "utf8"), NOW);
     expect(problems).toEqual([]);
     expect(predictions.map((p) => [p.id, p.runs, p.maxComplaints, p.guards.length, p.closed])).toEqual([
       ["2", 7, 2, 2, null],
@@ -77,7 +77,7 @@ describe("parseLedger", () => {
     const src = ["{not json", "[1,2]", '{"id":"a",}', JSON.stringify({ ...BASE, id: "d", extra: 1 }), JSON.stringify({ ...BASE, id: "e" })].join("\n");
     expect(reasons(src)).toEqual(["1: not a JSON object", "2: not a JSON object", "3: not a JSON object", '4: unknown key "extra"']);
     expect(reasons("\n")).toEqual(["1: not a JSON object"]);
-    expect(parseLedger("", NOW, false).problems).toEqual([]);
+    expect(parseLedger("", NOW).problems).toEqual([]);
   });
 
   it("unknown, missing and wrongly typed keys are refused, never defaulted", () => {
@@ -101,7 +101,7 @@ describe("parseLedger", () => {
     expect(reasons(file({ ...BASE, maxComplaints: 7 }))).toEqual(['1: "maxComplaints" must be a whole number from 0 to 6 (below "runs")']);
     expect(reasons(file({ ...BASE, maxComplaints: 0, runs: 0 }))).toEqual(['1: "runs" must be a whole number from 1 to 100']);
     expect(reasons(file({ ...BASE, runs: 101 }))).toEqual(['1: "runs" must be a whole number from 1 to 100']);
-    expect(parseLedger(file({ ...BASE, maxComplaints: 6, since: "2026-11-15T12:00:00.900Z" }), NOW, false).predictions[0].since).toBe(SINCE);
+    expect(parseLedger(file({ ...BASE, maxComplaints: 6, since: "2026-11-15T12:00:00.900Z" }), NOW).predictions[0].since).toBe(SINCE);
   });
 
   it("bad guards: min 0, maxBelow >= runs, unknown guard key, 0 or 4 guards, not an object", () => {
@@ -248,7 +248,7 @@ describe("checkRow", () => {
 
   it("two files differing only in answer give byte-identical output", () => {
     const out = (answer?: string) => {
-      const { predictions } = parseLedger(file({ ...BASE, guards: [exa(1, 0)], ...(answer === undefined ? {} : { answer }) }), NOW, false);
+      const { predictions } = parseLedger(file({ ...BASE, guards: [exa(1, 0)], ...(answer === undefined ? {} : { answer }) }), NOW);
       return renderLedger("f.jsonl", NOW, predictions.map((p) => checkRow(p, runs("......."), NOW, false)), false);
     };
     expect(out("held up, see the runs")).toBe(out());
@@ -299,21 +299,21 @@ describe("audit folds", () => {
     for (const l of lines) expect(JSON.stringify(JSON.parse(l))).toBe(l);
     const rows = runs(".......");
     const raw = JSON.stringify({ ...BASE, guards: [exa(1, 0)] });
-    const c = checkRow(parseLedger(`${raw}\n`, NOW, false).predictions[0], rows, NOW, false);
+    const c = checkRow(parseLedger(`${raw}\n`, NOW).predictions[0], rows, NOW, false);
     expect(c.notes).toHaveLength(1);
     const pasted = `${raw.slice(0, -1)},${c.notes[0]}}`;
     const later = "2026-11-21T00:00:00.000Z";
-    const { predictions, problems } = parseLedger(`${pasted}\n`, later, false);
+    const { predictions, problems } = parseLedger(`${pasted}\n`, later);
     expect(problems).toEqual([]);
     expect(checkRow(predictions[0], rows, later, false).notes).toEqual([`recorded CONFIRMED at ${NOW}; recheck agrees`]);
     // Every paste offered (expired rows too) is canonical once inserted.
     const old = JSON.stringify({ ...BASE, since: "2026-10-01T00:00:00Z" });
-    const e = checkRow(parseLedger(`${old}\n`, NOW, false).predictions[0], [], NOW, false);
-    expect(parseLedger(`${old.slice(0, -1)},${e.notes[0]}}\n`, NOW, false).problems).toEqual([]);
+    const e = checkRow(parseLedger(`${old}\n`, NOW).predictions[0], [], NOW, false);
+    expect(parseLedger(`${old.slice(0, -1)},${e.notes[0]}}\n`, NOW).problems).toEqual([]);
   });
 
   it("closed.checkedAt: the ISO pattern, at or after since, under 30 days after it, not after the check", () => {
-    const must = '1: "checkedAt" in "closed" must be an ISO time at or after "since" and not later than the check: less than 30 days after "since", or at least that for EXPIRED';
+    const must = '1: "checkedAt" in "closed" must be an ISO time at or after "since" and not later than the current time: less than 30 days after "since", or at least that for EXPIRED';
     for (const t of ["2026-11-16", "yesterday", "2026-11-15T11:59:59Z", "2026-12-15T12:00:00Z", "2026-11-20T18:00:01Z"]) {
       expect([t, reasons(file({ ...BASE, ...closedAt(t) }))]).toEqual([t, [must]]);
     }
@@ -323,8 +323,8 @@ describe("audit folds", () => {
     // Just under 30 days after S is accepted when the check is later still;
     // EXPIRED is the other way round: only at or after S + 30 days.
     const late = "2026-12-20T00:00:00Z";
-    expect(parseLedger(file({ ...BASE, ...closedAt("2026-12-15T11:59:59Z") }), late, false).problems).toEqual([]);
-    expect(parseLedger(file({ ...BASE, ...closedAt("2026-12-15T12:00:00Z", "EXPIRED") }), late, false).problems).toEqual([]);
+    expect(parseLedger(file({ ...BASE, ...closedAt("2026-12-15T11:59:59Z") }), late).problems).toEqual([]);
+    expect(parseLedger(file({ ...BASE, ...closedAt("2026-12-15T12:00:00Z", "EXPIRED") }), late).problems).toEqual([]);
     expect(reasons(file({ ...BASE, ...closedAt("2026-11-16T00:00:00Z", "EXPIRED") }))).toEqual([must]);
   });
 
@@ -340,7 +340,7 @@ describe("audit folds", () => {
     expect(reasons(file({ ...BASE, ...closedAt("2026-11-16T00:00:00Z", "CONFIRMED", "one two") }))).toEqual(['1: "line" in "closed" must be single-line text']);
     expect(reasons(file({ ...BASE, ...closedAt("2026-11-16T00:00:00Z\n") }))).toHaveLength(1);
     const forged = "x\nb CONFIRMED | forged";
-    const { predictions } = parseLedger(file({ ...BASE, change: forged, baseline: forged, answer: forged }), NOW, false);
+    const { predictions } = parseLedger(file({ ...BASE, change: forged, baseline: forged, answer: forged }), NOW);
     const out = renderLedger("f", NOW, predictions.map((p) => checkRow(p, runs("......."), NOW, false)), false);
     expect(out).not.toContain("forged");
     expect(out.split("\n")).toHaveLength(4);
@@ -390,16 +390,16 @@ describe("audit folds", () => {
     expect(check(o, open, iso(86_400_000)).guards.map((g) => [g.word, g.unsettled])).toEqual([["pending", 1]]);
   });
 
-  it("no message or printed line carries raw file text: NEL, LS and RLO in a key name or any field", () => {
+  it("no message or printed line carries raw file text: NEL, LS, RLO and DEL in a key name or any field", () => {
     const printable = /^[\x20-\x7e\n]*$/;
     const ok = { state: "CONFIRMED", checkedAt: "2026-11-16T00:00:00Z", line: "x" };
-    for (const ch of ["\u0085", " ", "‮"]) {
+    for (const ch of ["\u0085", "\u2028", "\u202e", "\u007f"]) {
       const v = `a${ch}b`;
       const esc = `a\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}b`;
       expect(reasons(file({ ...BASE, [v]: 1 }))).toEqual([`1: unknown key "${esc}"`]);
       expect(reasons(file({ ...BASE, guards: [{ ...exa(1, 0), [v]: 1 }] }))).toEqual([`1: unknown key "${esc}" in guard 1`]);
       expect(reasons(file({ ...BASE, closed: { ...ok, [v]: 1 } }))).toEqual([`1: unknown key "${esc}" in "closed"`]);
-      if (ch !== "\u202e") expect(reasons(file({ ...BASE, closed: { ...ok, line: v } }))).toEqual(['1: "line" in "closed" must be single-line text']);
+      if (ch === "\u0085" || ch === "\u2028") expect(reasons(file({ ...BASE, closed: { ...ok, line: v } }))).toEqual(['1: "line" in "closed" must be single-line text']);
       const variants: object[] = [
         { ...BASE, id: v },
         { ...BASE, type: `ritual:${v}` },
@@ -414,7 +414,7 @@ describe("audit folds", () => {
       ];
       for (const o of variants) {
         for (const src of [file(o), ` ${file(o)}`]) {
-          const { predictions, problems } = parseLedger(src, NOW, false);
+          const { predictions, problems } = parseLedger(src, NOW);
           expect(predictions.length + problems.length).toBeGreaterThan(0);
           for (const p of problems) expect(p.reason).toMatch(printable);
           expect(renderLedger("f", NOW, predictions.map((p) => checkRow(p, runs("......."), NOW, false)), false)).toMatch(printable);
@@ -423,18 +423,29 @@ describe("audit folds", () => {
     }
   });
 
-  it("replay: a closure recorded after the replayed time is marked on its row, not refused; at the clock it is refused", () => {
+  it("replay: a closure after the replayed time but not after the real clock is marked, not refused; at the clock it is refused", () => {
     const o = { ...BASE, maxComplaints: 3, ...closedAt("2026-11-20T12:00:00.000Z") };
     const early = "2026-11-18T00:00:00.000Z";
-    expect(parseLedger(file(o), early, false).problems.map((p) => p.reason)).toEqual([
-      '"checkedAt" in "closed" must be an ISO time at or after "since" and not later than the check: less than 30 days after "since", or at least that for EXPIRED',
+    expect(parseLedger(file(o), early).problems.map((p) => p.reason)).toEqual([
+      '"checkedAt" in "closed" must be an ISO time at or after "since" and not later than the current time: less than 30 days after "since", or at least that for EXPIRED',
     ]);
-    const { predictions, problems } = parseLedger(file(o), early, true);
+    // In a replay the CLI passes the real clock (here NOW) as the latest time a closure may carry.
+    const { predictions, problems } = parseLedger(file(o), NOW);
     expect(problems).toEqual([]);
     const c = checkRow(predictions[0], runs("......."), early, true);
     expect([c.mismatch, c.notes]).toEqual([false, ["recorded CONFIRMED at 2026-11-20T12:00:00.000Z, after this time; not rechecked (replay)"]]);
     // Still refused in a replay: before since, or 30 days or more after it.
-    expect(parseLedger(file({ ...o, ...closedAt("2026-11-15T11:00:00Z") }), early, true).problems).toHaveLength(1);
-    expect(parseLedger(file({ ...o, ...closedAt("2026-12-15T12:00:00Z") }), early, true).problems).toHaveLength(1);
+    expect(parseLedger(file({ ...o, ...closedAt("2026-11-15T11:00:00Z") }), NOW).problems).toHaveLength(1);
+    expect(parseLedger(file({ ...o, ...closedAt("2026-12-15T12:00:00Z") }), NOW).problems).toHaveLength(1);
+    // Later than the real clock: refused in a replay too.
+    expect(parseLedger(file({ ...o, ...closedAt("2026-11-20T18:00:01Z") }), NOW).problems).toHaveLength(1);
+  });
+
+  it("the file name prints ASCII-escaped in the header; a printable ASCII name exactly as given", () => {
+    const out = renderLedger("f\n\u001b[2Jb CONFIRMED | x", NOW, [], false);
+    expect(out).toBe(`Ledger f\\u000a\\u001b[2Jb CONFIRMED | x checked at ${NOW} over the 30 days before it: 0 row(s); a guard counts a tool's calls with no did-not-run gate row (errored calls and some refusals included)\n`);
+    expect(renderLedger("docs/planning/predictions.jsonl", NOW, [], false).split(" ")[1]).toBe("docs/planning/predictions.jsonl");
+    expect(asciiEscape(' !~az09"\\')).toBe(' !~az09"\\');
   });
 });
+

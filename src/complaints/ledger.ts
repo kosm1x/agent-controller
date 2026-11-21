@@ -20,8 +20,13 @@
  * so these known cases still count: a call that errored; a placeholder
  * refusal on the first-call path (it is refused before the gate, so it leaves
  * no gate row, while the same refusal on the pending-card path does); sibling
- * calls after a turn-ending refusal (they never reach the gate); and calls
- * refused by the external-request policy.
+ * calls after a turn-ending refusal (they never reach the gate); calls
+ * refused by the external-request policy; and calls the tool registry
+ * refuses just before executing them (src/tools/registry.ts): a rendered
+ * secret placeholder in a non-read-only call it cannot turn back into a
+ * value, a `{{SECRET_X}}` or shell `$SECRET_X` reference naming no stored
+ * secret, or shell expansion in shell_exec. Those emit tool.secret_ref_refused,
+ * which is not subtracted.
  *
  * A guard is judged over the verdict's own counted runs, with the verdict's
  * unknown slots and its close rule (closeRule), except that a counted run
@@ -85,9 +90,11 @@ type Obj = Record<string, unknown>;
 const isObject = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 const whole = (v: unknown, lo: number, hi: number): boolean => Number.isInteger(v) && (v as number) >= lo && (v as number) <= hi;
 const text = (v: unknown): boolean => typeof v === "string" && v.trim() !== "";
+/** Every character outside printable ASCII as \\uXXXX; printable ASCII text is unchanged. */
+export const asciiEscape = (s: string): string =>
+  s.replace(/[^\x20-\x7e]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
 /** Quoted and ASCII-escaped: no file text reaches a message raw (no NEL, line separators or bidi controls). */
-const q = (s: string): string =>
-  JSON.stringify(s).replace(/[^\x20-\x7e]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+const q = (s: string): string => asciiEscape(JSON.stringify(s));
 
 /** Problems with an object's keys, then with each present key's value (checks: key, valid, what it must be). */
 function objectProblems(o: Obj, allowed: string[], required: string[], checks: [string, boolean, string][], where: string): string[] {
@@ -98,9 +105,13 @@ function objectProblems(o: Obj, allowed: string[], required: string[], checks: [
   ];
 }
 
-/** `now`: the check's time; at the clock (not `replay`) a recorded closure cannot be later than it. */
-export function parseLedger(src: string, now: string, replay: boolean): { predictions: Prediction[]; problems: Problem[] } {
-  const nowMs = Date.parse(now);
+/**
+ * `latest`: the latest time a recorded closure may carry: the check's time at
+ * the clock; in a replay, the real current time (a closure later than the
+ * replayed time is marked on its row by checkRow, not refused here).
+ */
+export function parseLedger(src: string, latest: string): { predictions: Prediction[]; problems: Problem[] } {
+  const latestMs = Date.parse(latest);
   const lines = src.split("\n");
   if (lines[lines.length - 1] === "") lines.pop();
   const predictions: Prediction[] = [];
@@ -121,7 +132,7 @@ export function parseLedger(src: string, now: string, replay: boolean): { predic
     const hi = runsOk ? (o.runs as number) - 1 : MAX;
     const below = runsOk ? `a whole number from 0 to ${hi} (below "runs")` : "a whole number";
     const sinceMs = isoMs(o.since);
-    const since = Number.isNaN(sinceMs) ? null : windowSince(sinceMs, nowMs, LEDGER_DAYS).since;
+    const since = Number.isNaN(sinceMs) ? null : windowSince(sinceMs, latestMs, LEDGER_DAYS).since;
     found.push(...objectProblems(o, KEYS, KEYS.slice(0, 7), [
       ["id", typeof o.id === "string" && ID.test(o.id), `text matching ${ID.source}`],
       ["type", typeof o.type === "string" && TYPE_PATTERN.test(o.type), `text matching ${TYPE_PATTERN.source}`],
@@ -149,7 +160,7 @@ export function parseLedger(src: string, now: string, replay: boolean): { predic
       const c = o.closed;
       found.push(...objectProblems(c, CLOSED_KEYS, CLOSED_KEYS, [
         ["state", (CLOSED_STATES as readonly unknown[]).includes(c.state), `a closed state: ${CLOSED_STATES.map(q).join(", ")}`],
-        ["checkedAt", recordedIn(isoMs(c.checkedAt), since, replay ? Infinity : nowMs, c.state === "EXPIRED"), `an ISO time at or after "since" and not later than the check: less than ${LEDGER_DAYS} days after "since", or at least that for EXPIRED`],
+        ["checkedAt", recordedIn(isoMs(c.checkedAt), since, latestMs, c.state === "EXPIRED"), `an ISO time at or after "since" and not later than the current time: less than ${LEDGER_DAYS} days after "since", or at least that for EXPIRED`],
         ["line", typeof c.line === "string" && !/[\r\n\u0085\u2028\u2029]/.test(c.line), "single-line text"],
       ], ` in "closed"`));
     }
@@ -211,16 +222,16 @@ const GUARD_WORD = { CONFIRMED: "holds", REFUTED: "broken", COUNTING: "pending" 
 const isoMs = (v: unknown): number => (typeof v === "string" && ISO_TIME.test(v) ? Date.parse(v) : NaN);
 
 /**
- * A recorded closure's time: not before `since` nor after `nowMs` (Infinity in
- * a replay, where a later closure is marked on its row instead), and
+ * A recorded closure's time: not before `since` nor after `latestMs` (see
+ * parseLedger), and
  * inside the row's window, where every closed state but EXPIRED is computed;
  * EXPIRED is only ever computed outside it.
  */
-function recordedIn(ms: number, since: string | null, nowMs: number, expired: boolean): boolean {
+function recordedIn(ms: number, since: string | null, latestMs: number, expired: boolean): boolean {
   if (Number.isNaN(ms)) return false;
   if (since === null) return true; // "since" is reported on its own
   const s = Date.parse(since);
-  return ms >= s && ms <= nowMs && ms < s + LEDGER_DAYS * DAY_MS !== expired;
+  return ms >= s && ms <= latestMs && ms < s + LEDGER_DAYS * DAY_MS !== expired;
 }
 
 /** `replay`: --now was given, so a recorded closure is not rechecked and none is offered. */
@@ -275,7 +286,7 @@ const paste = (state: LedgerState, now: string, line: string): string => `"close
 export function renderLedger(file: string, now: string, checks: RowCheck[], replay: boolean): string {
   const at = replay ? `replayed at ${now} (a replay, not a recheck)` : `checked at ${now}`;
   const out = [
-    `Ledger ${file} ${at} over the ${LEDGER_DAYS} days before it: ${checks.length} row(s); a guard counts a tool's calls with no did-not-run gate row (errored calls and some refusals included)`,
+    `Ledger ${asciiEscape(file)} ${at} over the ${LEDGER_DAYS} days before it: ${checks.length} row(s); a guard counts a tool's calls with no did-not-run gate row (errored calls and some refusals included)`,
   ];
   for (const c of checks) out.push(c.text, ...c.notes.map((n) => `  ${n}`));
   return `${out.join("\n")}\n`;

@@ -707,6 +707,21 @@ describe("--ledger: every prediction in a file, checked by code", () => {
     expect([r.status, r.stderr, r.stdout.split("\n").slice(2)]).toEqual([0, "", [`  recorded CONFIRMED at ${RECORDED}, after this time; not rechecked (replay)`, ""]]);
   }, 60_000);
 
+  it("a file name with a newline and ESC prints ASCII-escaped on stdout and stderr", () => {
+    const name = "odd\n\u001b[2Jb CONFIRMED | x";
+    const shown = "odd\\u000a\\u001b[2Jb CONFIRMED | x";
+    const printable = /^[\x20-\x7e\n]*$/;
+    const good = ledgerFile(`${name}.jsonl`, [ROWS.c]);
+    const r = ledger([good]);
+    expect([r.status, r.stdout.split("\n")[0].startsWith(`Ledger ${dir}/${shown}.jsonl replayed at `), r.stdout]).toEqual([0, true, expect.stringMatching(printable)]);
+    expect(r.stdout.split("\n")).toHaveLength(3);
+    const bad = ledgerFile(`${name}.bad.jsonl`, [{ ...ROWS.c, runs: 0 }]);
+    const b = ledger([bad]);
+    expect([b.status, b.stdout, b.stderr]).toEqual([2, "", `complaints-digest: ledger ${dir}/${shown}.bad.jsonl line 1: "runs" must be a whole number from 1 to 100\n`]);
+    const m = ledger([join(dir, `${name}.absent`)]);
+    expect([m.status, m.stderr]).toEqual([2, `complaints-digest: ledger ${dir}/${shown}.absent: cannot be read (ENOENT)\n`]);
+  }, 60_000);
+
   it("the --now=<time> form is a replay too: the wrapper pins no clock and sets no marker", () => {
     const f = ledgerFile("eq-form.jsonl", [ROWS.b]);
     const r = wrapper(["--db", ldb, `--now=${NOW}`, "--ledger", f]);
@@ -829,7 +844,18 @@ describe("--ledger at the clock (no --now): recorded closures are rechecked", ()
     expect([r.status, r.stdout, r.stderr]).toEqual([
       2,
       "",
-      `complaints-digest: ledger ${path} line 1: "checkedAt" in "closed" must be an ISO time at or after "since" and not later than the check: less than 30 days after "since", or at least that for EXPIRED\n`,
+      `complaints-digest: ledger ${path} line 1: "checkedAt" in "closed" must be an ISO time at or after "since" and not later than the current time: less than 30 days after "since", or at least that for EXPIRED\n`,
+    ]);
+  }, 60_000);
+
+  it("a replay with a closure dated after the real clock is a file problem too: exit 2", () => {
+    const later = new Date(sec + 86_400_000).toISOString();
+    const path = file("replay-later.jsonl", [{ ...P, closed: { ...P.closed, checkedAt: later } }]);
+    const r = wrapper(["--db", cdb, "--now", new Date(sec - 86_400_000).toISOString(), "--ledger", path]);
+    expect([r.status, r.stdout, r.stderr]).toEqual([
+      2,
+      "",
+      `complaints-digest: ledger ${path} line 1: "checkedAt" in "closed" must be an ISO time at or after "since" and not later than the current time: less than 30 days after "since", or at least that for EXPIRED\n`,
     ]);
   }, 60_000);
 
