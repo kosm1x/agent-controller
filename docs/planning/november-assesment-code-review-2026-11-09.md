@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-21 03:13 UTC — two leftover failure shapes are COMMITTED `9f9e1f4a` (queue 4hj; not yet deployed): a partly failed batch write is recorded as a failed write, and the gated layer no longer returns an empty error text. Recorded for the re-score: the places that decide whether a tool result failed still disagree on several result shapes, and the same two faults remain in other tools (listed in the queue item). Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: batch leftovers, then batch 10.**
+
 **Status 2026-11-21 02:21 UTC — the operator tool's cancel fallback fix is COMMITTED `9c91ad24` (queue 4hi): the direct write no longer rewrites a task that has ended, and a test holds the tool's lists against the service's own. Recorded for the re-score: the four ended statuses are written out by hand in several modules, with no single exported list. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: batch leftovers, then batch 10.**
 
 **Status 2026-11-21 01:36 UTC — batch 11: the third comment piece is COMMITTED `b608138a` (queue 4hh): no comment under the source and script folders names a person any more. The comment work of batch 11 on record is done; one corrected comment waits for the operator's staging command. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: the operator tool's cancel fallback (a fault reported by the peer session and verified), batch leftovers, then batch 10.**
