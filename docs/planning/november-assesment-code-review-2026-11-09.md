@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-21 10:29 UTC — batch 10 piece 3 COMMITTED `7d4ccfeb` (queue 4hu; not deployed, ships with the batch): four "could not start" returns of the two paper-trading rebalance tools are error objects; nothing-to-trade and the stale-price abort stay plain. A sweep of every tool handler by script changed the batch plan (two sites the inventory missed, one new piece). Review passed after a tests-only fold. Next: the directives tools and the host-management tools.**
+
 **Status 2026-11-21 09:32 UTC — batch 10 piece 2 COMMITTED `2edb75d9` (queue 4ht; not deployed, ships with the batch): the quote line prints the source's change percent, previous close and trading day; the signals reply names every scanned symbol's newest bar date with a marker for the stored fallback; the data layer keeps that flag on reuse. Review passed after one fold. Next: the paper-trading tools' failure shape with a sweep of the tool folder.**
 
 **Status 2026-11-21 08:41 UTC — batch 10 piece 1 COMMITTED `fb14097e` (queue 4hs; not deployed, ships with the batch): the whole-call failures of fourteen tools in five finance tool files come back as an error object with the same words; no success result changes; three backtest description passages no longer name a look-alike table. Review passed after one fold (one unguarded return got its case; three header comments reworded). The batch plan gains one piece: two further finance tool files with the same class, with a sweep of the tool folder. Batch 10 pieces left: see queue 4hr and 4hs.**
