@@ -1650,7 +1650,8 @@ export function scopeToolsForMessage(
  * the given options. Single source of truth for the "X / Y tools" log line.
  *
  * Why: the previous `fullCount` was hand-rolled arithmetic at the call site
- * (`router.ts:437`) that summed only 9 of ~30 tool groups. Adding a new group
+ * (the `Tool scope` log line, now in `scopeToolsForMessage`, message-scope.ts)
+ * that summed only 9 of ~30 tool groups. Adding a new group
  * (FINANCE / SEO / VIDEO / etc.) silently kept the denominator stale, so the
  * scope-fraction observability metric was meaningless within weeks of any new
  * group being added. This is the prompt-enhancer-leakage class — a counter

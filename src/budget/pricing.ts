@@ -2,7 +2,7 @@
  * Model pricing configuration for cost calculation.
  *
  * Defaults cover DashScope models (primary cost driver).
- * Override via BUDGET_PRICING_JSON env var for custom models.
+ * `loadPricingOverride` can add custom models; the service does not call it.
  */
 
 export interface ModelPricing {
@@ -62,13 +62,11 @@ const DEFAULT_PRICING: Record<string, ModelPricing> = {
   "deepseek-v3": { promptCostPer1k: 0.0014, completionCostPer1k: 0.0028 },
   "deepseek-v3.2": { promptCostPer1k: 0.0014, completionCostPer1k: 0.0028 },
   "deepseek-r1": { promptCostPer1k: 0.004, completionCostPer1k: 0.016 },
-  // Claude Sonnet (Anthropic) — auth'd via ~/.claude/.credentials.json under
-  // Max subscription. The SDK reports `total_cost_usd: 0` in that mode, and
-  // recordCost prefers the reported value via costUsdOverride. This entry
-  // is the fallback used only if costUsdOverride is absent; set to $0 so we
-  // don't double-book phantom API spend against the Max subscription. If a
-  // user ever routes Sonnet through metered API, override via
-  // BUDGET_PRICING_JSON with the real per-M rates.
+  // Claude (Anthropic) — auth'd via ~/.claude/.credentials.json under
+  // Max subscription. recordCost prefers the SDK-reported cost via
+  // costUsdOverride; these entries are the fallback for paths that omit it,
+  // at list rates so the ledger stays in one currency with the SDK-reported
+  // costs.
   // 2026-09-10 (logic audit F7): the SDK reports total_cost_usd at LIST rates
   // and recordCost prefers it, so the ledger is a list-price-equivalent usage
   // metric — 18,136 rows/60d carry it. Paths that omit the override (v82:*,
@@ -105,8 +103,8 @@ const FALLBACK_PRICING: ModelPricing = {
 let _pricingOverride: Record<string, ModelPricing> | null = null;
 
 /**
- * Load custom pricing from a JSON string.
- * Call once at startup if BUDGET_PRICING_JSON is set.
+ * Load custom pricing from a JSON string; `getPricing` checks it before the
+ * defaults. The service does not call it (only its tests do).
  */
 export function loadPricingOverride(json: string): void {
   try {
@@ -128,8 +126,9 @@ function stripFireworksPrefix(model: string): string {
 /** Get pricing for a model, checking overrides then defaults then fallback. */
 export function getPricing(model: string): ModelPricing {
   const normalized = stripFireworksPrefix(model);
-  // Check override first — try both raw and normalized so operators can set
-  // either form via BUDGET_PRICING_JSON.
+  // Check override first — try both raw and normalized so a key in either
+  // form matches (the map is filled only by `loadPricingOverride`, which the
+  // service does not call).
   if (_pricingOverride?.[model]) return _pricingOverride[model];
   if (_pricingOverride?.[normalized]) return _pricingOverride[normalized];
   // Check default map (try exact match, then the LONGEST matching prefix —

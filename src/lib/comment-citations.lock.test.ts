@@ -62,15 +62,6 @@ const REWRITE = "to rewrite by name";
 
 /** Sorted by file, then citation text. */
 const LEFTOVERS: readonly Entry[] = [
-  { file: "src/inference/adapter.ts", text: "sdk.d.ts:1472", note: `${REWRITE}: the SDK's exported type or option` },
-  { file: "src/inference/claude-sdk.ts", text: "adapter-openai.ts:433", note: `${REWRITE}: the OpenAI-compat adapter's function` },
-  { file: "src/inference/claude-sdk.ts", text: "adapter.ts:1679", note: `${REWRITE}: the adapter's function` },
-  { file: "src/inference/claude-sdk.ts", text: "adapter.ts:770", note: `${REWRITE}: the circuit registry's declaration` },
-  { file: "src/inference/claude-sdk.ts", text: "fast-runner.ts:1108", note: `${REWRITE}: the fast runner's function` },
-  { file: "src/inference/http-error.ts", text: "adapter.ts:953", note: `${REWRITE}: the adapter's caller that matches the status text` },
-  { file: "src/lib/v8-3/pipeline.ts", text: "registry.ts:203", note: `${REWRITE}: the registry's hand-off function` },
-  { file: "src/lib/v8-3/pipeline.ts", text: "task-executor.ts:93", note: `${REWRITE}: the task executor's hand-off function` },
-  { file: "src/messaging/scope.ts", text: "router.ts:437", note: `${REWRITE}: the router's function` },
 ];
 
 /** Production .ts files under `<root>/src` and `<root>/scripts`, as paths relative to `root` with `/`. */

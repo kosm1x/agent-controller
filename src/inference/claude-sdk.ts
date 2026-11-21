@@ -48,7 +48,8 @@ import type {
   CostLedgerAttribution,
 } from "./adapter.js";
 // Outbound secret scrub (ruling 3c, audit round 4). Shared helper lives in
-// adapter.ts; queryClaudeSdk is the SDK path's one choke point.
+// outbound-scrub.ts (re-exported by adapter.ts); queryClaudeSdk is the SDK
+// path's one choke point.
 import { scrubOutboundText, SecretScrubUnavailableError } from "./adapter.js";
 import { traceScrubUnavailable } from "../lib/secret-ref-trace.js";
 import { errMsg } from "../lib/err-msg.js";
@@ -140,14 +141,6 @@ function jsonSchemaToZodShape(
 // ---------------------------------------------------------------------------
 
 /**
- * Wrap-cache (2026-07-05 efficiency audit): tool definitions are static after
- * registration, yet every query() rebuilt ~30 tools' Zod shapes (~150 zod
- * allocations per message) through wrapTool. Keyed by Tool OBJECT identity
- * (WeakMap), so a source that re-registers a tool under the same name gets a
- * fresh wrap automatically — no invalidation policy to maintain. The handler
- * closes over the registry lookup by name, so execution behavior is identical.
- */
-/**
  * V8.5 Phase 3.2 — first-party SDK tool search. When armed, the SDK's
  * subprocess receives ENABLE_TOOL_SEARCH=true, the jarvis MCP server drops
  * its server-level `alwaysLoad: true` pin, and per-tool `alwaysLoad`
@@ -165,6 +158,14 @@ export function toolSearchEnabled(): boolean {
   return process.env.TOOL_SEARCH_ENABLED === "true";
 }
 
+/**
+ * Wrap-cache (2026-07-05 efficiency audit): tool definitions are static after
+ * registration, yet every query() rebuilt ~30 tools' Zod shapes (~150 zod
+ * allocations per message) through wrapTool. Keyed by Tool OBJECT identity
+ * (WeakMap), so a source that re-registers a tool under the same name gets a
+ * fresh wrap automatically — no invalidation policy to maintain. The handler
+ * closes over the registry lookup by name, so execution behavior is identical.
+ */
 const wrappedToolCache = new WeakMap<Tool, ReturnType<typeof wrapTool>>();
 
 /** @internal exported for the memoization contract test only. */
@@ -513,7 +514,8 @@ function wrapTool(t: Tool) {
         const result = external
           ? filterExternalToolResult(t.name, raw, args)
           : raw;
-        // Sec10 round-1 fix: parity with OpenAI adapter path (adapter.ts:1679).
+        // Sec10 round-1 fix: parity with the OpenAI-compat tool loop
+        // (`sanitizeToolResult` in `inferWithToolsViaOpenAi`, adapter-openai.ts).
         // SDK tool results were reaching Sonnet unsanitized — role markers
         // (`SYSTEM:`, `[INST]`, `<system>`) were not being defanged, so
         // prompt-injection via tool output bypassed guards on claude-sdk path.
@@ -706,8 +708,9 @@ export function buildMcpServer(
  * daily report that had shipped fine for a week. Re-attempt only with
  * cache/context tuning that accounts for the +30% footprint. The bound on THIS
  * path is the SDK compaction budget below + maxTurns; INFERENCE_MAX_TOKENS /
- * INFERENCE_CONTEXT_LIMIT govern only the dormant OpenAI-compat revert path
- * (adapter.ts), so there is no 6144 output-cap truncation risk on this engine.
+ * INFERENCE_CONTEXT_LIMIT govern only the OpenAI-compat path
+ * (adapter-openai.ts: the revert path and the SDK last line), so there is no
+ * 6144 output-cap truncation risk on this engine.
  * 2026-09-29: env-driven for the Sonnet 5.5 fast-path evaluation
  * (docs/planning/sonnet-tier-benchmark-2026-09-29.md §10 step 1).
  * SONNET_MODEL_ID (trimmed, must match /^claude-sonnet-\d/) replaces the
@@ -797,8 +800,8 @@ export async function queryClaudeSdkComplexWithFallback<T>(
   } catch (err) {
     if (benchmarkOverride?.noFallback) throw err;
     // 2026-05-13 R3-3: this abort branch is defensive belt-and-suspenders.
-    // `queryClaudeSdk` catches AbortError internally (see claude-sdk.ts catch
-    // block ~line 543) and returns a degraded `ClaudeSdkResult` whose `text`
+    // `queryClaudeSdk` catches AbortError internally (see the `catch` around
+    // the stream loop in `queryClaudeSdk`) and returns a degraded `ClaudeSdkResult` whose `text`
     // is the partial streamed content or an "Error: query aborted — …"
     // marker, so the typical production path never throws aborts up to here.
     // The guard exists for (a) integration tests that throw synthetic aborts
@@ -892,8 +895,7 @@ export interface ClaudeSdkResult {
    * via the costUsdOverride spread, writing a phantom-$0 row to cost_ledger).
    *
    * A legitimate $0 under Max-plan auth still has costAuthoritative=true.
-   * Surfaced 2026-05-23 (5 phantom-$0 rows over 14d on fast Sonnet); see
-   * feedback_sdk_phantom_zero_cost_2026_05_23.md.
+   * Surfaced 2026-05-23 (5 phantom-$0 rows over 14d on fast Sonnet).
    */
   costAuthoritative: boolean;
   durationMs: number;
@@ -1086,7 +1088,7 @@ export async function queryClaudeSdk(opts: {
     }
   }
   // Dim-4 R2 fix: claude-sdk path was unguarded since the 2026-04-22 Sonnet
-  // primary flip. The shared circuitRegistry (adapter.ts:770) only protected
+  // primary flip. The shared circuitRegistry (src/lib/circuit-breaker.ts) only protected
   // the openai path, so N consecutive Sonnet 500s each burned the full
   // SDK_TIMEOUT_MS before failing over.
   //
@@ -1414,7 +1416,7 @@ export async function queryClaudeSdk(opts: {
   };
   let costUsd = 0;
   // True once a terminal `result` message (success or error subtype) fires.
-  // The catch block at line ~580 (abort/timeout) leaves this false so the
+  // The stream loop's `catch` (abort/timeout) leaves this false so the
   // adapter knows costUsd=0 there is a "no-data" sentinel, not Max-plan $0.
   let costAuthoritative = false;
   let durationMs = 0;
@@ -1494,9 +1496,9 @@ export async function queryClaudeSdk(opts: {
         // Accumulate per-turn usage so abort/timeout paths capture partial
         // spend instead of writing $0/0-tokens to cost_ledger. The `result`
         // message at end carries the SDK's authoritative cumulative total
-        // and REPLACES this value (success branch at line ~498, error branch
-        // at line ~538) — this accumulator is only the fallback for queries
-        // that never reach a result message (catch block at ~569).
+        // and REPLACES this value (the terminal `result` message's success and
+        // error branches) — this accumulator is only the fallback for queries
+        // that never reach a result message (the stream loop's `catch`).
         //
         // Each Anthropic Message's `usage` block is per-call (per-turn),
         // not cumulative; summing across turns matches `result.usage`.
@@ -1911,7 +1913,8 @@ export async function queryClaudeSdk(opts: {
   // series and /health.providers finally reflect SDK traffic (latency
   // degradation, error storms, Sonnet→Haiku fallback rate). `success` mirrors
   // the breaker's outcome classification exactly. Mirrors the LatencyEntry
-  // shape recorded on the OpenAI-compat path (adapter-openai.ts:433/565).
+  // shape the OpenAI-compat path records (`providerMetrics.record` in
+  // `callAnthropicProvider` and `callOpenAIProvider`, adapter-openai.ts).
   // `latencyMs` approximates one model call, the unit the OpenAI-compat path
   // records; whole-run `durationMs` (all turns + tool execution) made a
   // 21-turn 129 s run a 129 s "provider latency" sample. Three cases:
@@ -2034,11 +2037,6 @@ export async function queryClaudeSdk(opts: {
 }
 
 /**
- * Rate-limited warn for seam-metering write failures. In a process without
- * the DB (eval/tuning scripts, one-off validators) EVERY call's write fails
- * identically — one warn carries the signal, 172 repeats bury the log.
- */
-/**
  * The terminal_reason values that mean "a deferred tool never ran". Pinned to
  * the SDK's TerminalReason union with `satisfies` (qa R1 W3, 0.3.245 bump):
  * tsc fails the BUILD if a future SDK renames or drops either literal, instead
@@ -2073,6 +2071,11 @@ function warnIfDeferredToolUnresolved(result: unknown): void {
   }
 }
 
+/**
+ * Rate-limited warn for seam-metering write failures. In a process without
+ * the DB (eval/tuning scripts, one-off validators) EVERY call's write fails
+ * identically — one warn carries the signal, 172 repeats bury the log.
+ */
 let seamRecordFailureWarned = false;
 function warnSeamRecordFailureOnce(err: unknown): void {
   noteWriteFailure("cost_sdk", err);
@@ -2108,13 +2111,6 @@ function warnSeamRecordFailureOnce(err: unknown): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Flatten a ChatMessage[] into the system prompt + single user prompt form
- * that queryClaudeSdk expects. Assistant and tool messages become labeled
- * blocks in the user prompt so multi-turn context (e.g. executor retry with
- * reflection) is preserved as readable history even though the SDK receives
- * it as a single turn. The system message stays separate because the SDK
- * has a dedicated field for it.
- *
  * v7.9 audit C1 follow-up: handles all three ChatContent shapes — string,
  * null, and Array<{type,text,...}> — so that non-string content (vision
  * blocks, normalized assistant arrays) is not silently erased. Unknown
@@ -2141,26 +2137,6 @@ function normalizeContent(content: unknown): string {
   return "";
 }
 
-/**
- * Flattens a ChatMessage[] history into the (systemPrompt, userPrompt) shape
- * the Claude Agent SDK accepts. Used by `queryClaudeSdkAsInfer` (openai-path
- * planner/reflector callers); the fast-runner direct path inlines the same
- * logic at fast-runner.ts:1108-1126 because it also needs to extract image
- * payloads in the same pass.
- *
- * **Precondition (cacheable:false ordering)**: when `cacheable: false` is set
- * on a system message, that text is routed to the START of `userPrompt`
- * (before any user/assistant/tool block in the original array). For inputs
- * where all system messages precede all non-system messages (the fast-runner
- * + Prometheus convention), this preserves the original ordering as
- * `stable_sys, variable_sys, user_blocks...`. For inputs that interleave
- * variable-system content mid-conversation, the relative position is LOST —
- * variable system content always lands at the head of userPrompt regardless
- * of where it sat in the input array. Callers that need mid-conversation
- * variable injection should expose the desired position explicitly (e.g.
- * by emitting the content as a `role: "user"` message instead).
- * Surfaced 2026-05-23 (qa-audit W2). Intentional for the current call sites.
- */
 /**
  * Pick the model a run should be attributed to from the SDK's per-model
  * usage map. The 0.3.x native binary includes its internal aux calls
@@ -2194,6 +2170,33 @@ export function dominantModel(
   return best;
 }
 
+/**
+ * Flatten a ChatMessage[] into the system prompt + single user prompt form
+ * that queryClaudeSdk expects. Assistant and tool messages become labeled
+ * blocks in the user prompt so multi-turn context (e.g. executor retry with
+ * reflection) is preserved as readable history even though the SDK receives
+ * it as a single turn. The system message stays separate because the SDK
+ * has a dedicated field for it.
+ *
+ * Used by `queryClaudeSdkAsInfer` and `queryClaudeSdkAsInferWithTools`.
+ * The fast-runner's SDK path does not call it: it splits system messages with
+ * `splitSystemMessagesByCache` (fast-runner.ts) and builds the user prompt in
+ * its own loop, because it also extracts image payloads in the same pass; the
+ * two are not shared code.
+ *
+ * **Precondition (cacheable:false ordering)**: when `cacheable: false` is set
+ * on a system message, that text is routed to the START of `userPrompt`
+ * (before any user/assistant/tool block in the original array). For inputs
+ * where all system messages precede all non-system messages (the fast-runner
+ * + Prometheus convention), this preserves the original ordering as
+ * `stable_sys, variable_sys, user_blocks...`. For inputs that interleave
+ * variable-system content mid-conversation, the relative position is LOST —
+ * variable system content always lands at the head of userPrompt regardless
+ * of where it sat in the input array. Callers that need mid-conversation
+ * variable injection should expose the desired position explicitly (e.g.
+ * by emitting the content as a `role: "user"` message instead).
+ * Surfaced 2026-05-23 (qa-audit W2). Intentional for the current call sites.
+ */
 export function flattenMessagesForSdk(messages: ChatMessage[]): {
   systemPrompt: string;
   userPrompt: string;
@@ -2203,7 +2206,7 @@ export function flattenMessagesForSdk(messages: ChatMessage[]): {
   // doesn't invalidate the cached systemPrompt (the SDK places one
   // cache_control marker at the end of the systemPrompt string — see the
   // ChatMessage.cacheable JSDoc). Collected separately so the order
-  // [variableSystem...] + [userBlocks...] is preserved.
+  // [...variableSystemBlocks, ...blocks] is preserved.
   // Surfaced 2026-05-22; fix shipped 2026-05-23.
   const variableSystemBlocks: string[] = [];
   const blocks: string[] = [];

@@ -13,12 +13,14 @@
  *   - Parallel tool execution via Promise.all
  *   - Model-specific guards (Qwen enable_thinking, kimi tool containment)
  *
- * DORMANT in production since the 2026-05-10 claude-sdk cutover
- * (INFERENCE_PRIMARY_PROVIDER=claude-sdk default), but this is the documented
- * revert path (/RevertInference/revert-to-openai.sh) — it must keep working
- * identically. adapter.ts delegates here from infer()/inferWithTools() when
- * the provider is not claude-sdk and re-exports this module's public symbols
- * (providerMetrics, stripThinkBlocks, …) so existing importers are unchanged.
+ * Under INFERENCE_PRIMARY_PROVIDER=claude-sdk this module also serves the SDK
+ * last line: when `sdkLastline()` is armed, adapter.ts calls `inferViaOpenAi` /
+ * `inferWithToolsViaOpenAi` pinned to the `fallback` provider after the SDK
+ * path failed. It is also the documented revert path
+ * (/RevertInference/revert-to-openai.sh) — it must keep working identically.
+ * adapter.ts delegates here from infer()/inferWithTools() when the provider is
+ * not claude-sdk, and re-exports this module's public helpers
+ * (stripThinkBlocks, …) so existing importers are unchanged.
  */
 
 import { getConfig } from "../config.js";
@@ -154,7 +156,7 @@ async function callProvider(
   // the OpenAI-compat path — every inferViaOpenAi attempt (and so every
   // inferWithToolsViaOpenAi round, compaction summary and wrap-up, which all
   // go through infer()) reaches the wire only through here. Shared scrub in
-  // adapter.ts.
+  // outbound-scrub.ts.
   try {
     request = { ...request, messages: scrubOutboundMessages(request.messages) };
   } catch (err) {
@@ -490,7 +492,8 @@ async function parseSSEStream(
 /**
  * OpenAI-compat branch of infer() — provider chain with circuit breaker,
  * degraded-skip, and retry/backoff. Moved verbatim from adapter.ts infer()
- * (Phase 4.2); reached only when INFERENCE_PRIMARY_PROVIDER != claude-sdk.
+ * (Phase 4.2); reached when INFERENCE_PRIMARY_PROVIDER != claude-sdk, and by
+ * the SDK last line (`sdkLastline`, `fallback` provider).
  */
 export async function inferViaOpenAi(
   request: InferenceRequest,
@@ -866,10 +869,6 @@ function normalizeArgAliases(args: Record<string, unknown>): void {
 }
 
 /**
- * Build a condensed conversation for wrap-up calls.
- * Keeps system + first user message + last few tool exchanges (truncated) + wrap-up instruction.
- */
-/**
  * Trim a single recent message for the wrap-up context window. Three payload
  * classes shrink: oversized `role:"tool"` content, oversized assistant
  * `content`, and oversized assistant `tool_calls[].function.arguments`.
@@ -933,7 +932,13 @@ export function truncateMessageForWrapup(
   return m;
 }
 
-/** Exported for unit tests. */
+/**
+ * Build a condensed conversation for wrap-up calls: every leading system
+ * message + the most recent user message with string content (else the first
+ * user message) + the last six
+ * messages (truncated by `truncateMessageForWrapup`) + the wrap-up
+ * instruction. Exported for unit tests.
+ */
 export function buildWrapUpContext(
   conversation: ChatMessage[],
   instruction: string,
@@ -1086,8 +1091,9 @@ export function declaredToolSetForRun(): ReadonlySet<string> | undefined {
 /**
  * OpenAI-compat branch of inferWithTools() — the multi-round tool loop with
  * doom-loop guards, graduated escalation, compaction cascade, and wrap-up.
- * Moved verbatim from adapter.ts inferWithTools() (Phase 4.2); reached only
- * when INFERENCE_PRIMARY_PROVIDER != claude-sdk.
+ * Moved verbatim from adapter.ts inferWithTools() (Phase 4.2); reached when
+ * INFERENCE_PRIMARY_PROVIDER != claude-sdk, and by the SDK last line
+ * (`inferWithToolsLastline`, `fallback` provider).
  */
 export async function inferWithToolsViaOpenAi(
   messages: ChatMessage[],

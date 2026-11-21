@@ -2,13 +2,16 @@
  * V8.3 Phase 2 — decision-pipeline skeleton.
  *
  * resolver → ODD evaluator → gate classifier → (L1-L2 confirm | L≥3 autonomous)
- * → pre-state capture → execute (no-op mock) → events. Writes the decision
- * ledger; runs a mock executor (no real side effect). Ships DORMANT: this module
- * has no call site yet — the eventual trigger seam gates on `isV83Enabled()`.
+ * → pre-state capture → execute → events. Writes the decision ledger; the
+ * executor defaults to a no-op success. Called from `recordGatedExecution`
+ * (gated-execution.ts), which passes the tool's real call as the executor; its
+ * callers reach it only when `shouldRecordGatedExecution` holds
+ * (`isV83Enabled()` and the tool's capability armed).
  *
  * Deliberately deferred to later phases (per spec §13):
- *  - real router-confirm hand-off for L1-L2 (seam: task-executor.ts:93 /
- *    registry.ts:203) — Phase 2 mocks it as a synchronous auto-approve;
+ *  - real router-confirm hand-off for L1-L2 (seam: `confirmationGate` in
+ *    task-executor.ts / `ToolRegistry.execute` in registry.ts) — Phase 2 mocks
+ *    it as a synchronous auto-approve;
  *  - SQL-inverse reversibility + real pre-state snapshot — Phase 3;
  *  - L≥3 CRITIC judgment-linkage rejection — Phase 6;
  *  - prompt-injection `interrupted` — Phase 5.

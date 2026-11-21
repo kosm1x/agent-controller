@@ -7,8 +7,12 @@
  * watchdog or the start-up orphan close keeps the build it started on. The
  * first runner concern is added when the task ends on the dispatcher's normal
  * terminal path. A task that never starts running (no runner, blocked by the
- * budget, cancelled while queued) has no row: it ran on no build. Storage
- * only: no tool, prompt or route reads this table.
+ * budget, cancelled while queued) has no row: it ran on no build. No tool,
+ * prompt or route of the service reads this table; the operator's complaints
+ * digest (scripts/complaints-digest.sh, its SQL in src/complaints/query.ts)
+ * reads it read-only for the concern text and the build, and the operator's
+ * one-off password scrub (scripts/prune-mailbox-passwords.ts) rewrites
+ * matching values in its concern text.
  */
 
 import { getDatabase } from "./index.js";

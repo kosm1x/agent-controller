@@ -2,10 +2,11 @@
  * Inference Adapter — routing entry point + shared types.
  *
  * infer()/inferWithTools() route to one of two paths:
- *   - claude-sdk hot path (INFERENCE_PRIMARY_PROVIDER=claude-sdk, the default
- *     since 2026-05-10): Sonnet primary with Haiku fallback via the Claude
- *     Agent SDK shims in claude-sdk.ts.
- *   - OpenAI-compat providers path (the documented revert path): raw fetch()
+ *   - claude-sdk hot path (INFERENCE_PRIMARY_PROVIDER=claude-sdk): Sonnet
+ *     primary with Haiku fallback via the Claude Agent SDK shims in
+ *     claude-sdk.ts.
+ *   - OpenAI-compat providers path (any other value, or unset, gives
+ *     `openai`; the documented revert path): raw fetch()
  *     to /v1/chat/completions endpoints with failover, backoff, circuit
  *     breaker, and doom-loop guards — moved verbatim to adapter-openai.ts
  *     (efficiency-refactor Phase 4.2) and re-exported here so existing
@@ -60,12 +61,13 @@ export interface ChatMessage {
    * Cache-aware routing hint for the claude-sdk path (no effect on the openai
    * HTTP path — qwen/llama have no equivalent cache primitive).
    *
-   * Only meaningful on `role: "system"` messages. The Claude Agent SDK accepts
-   * `systemPrompt` as a single string and places ONE `cache_control` marker at
-   * its end (verified against `@anthropic-ai/claude-agent-sdk` `sdk.d.ts:1472`:
-   * `systemPrompt?: string | { type: 'preset', ... }` — no multi-block surface).
-   * Any byte-drift in the concatenated systemPrompt invalidates the cached
-   * prefix for the entire ~70K block.
+   * Only meaningful on `role: "system"` messages. The Claude Agent SDK's
+   * `Options.systemPrompt` (`@anthropic-ai/claude-agent-sdk`) accepts a
+   * string, a string array (which may hold its exported
+   * `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` marker), a `custom` object or a `preset`
+   * object; `queryClaudeSdk` takes `systemPrompt` as one string and sends it as one
+   * string. Any byte-drift in the concatenated systemPrompt invalidates the
+   * cached prefix for the entire ~70K block.
    *
    * - undefined or true (default): joined into `systemPrompt`. Cross-call
    *   cacheable iff byte-stable.
@@ -76,8 +78,7 @@ export interface ChatMessage {
    *
    * Surfaced 2026-05-22 (cache_diag, commit f219340): the SDK collapses every
    * `role:"system"` message into one cache marker, erasing the fast-runner's
-   * careful 6-section stable/variable split. See
-   * `feedback_sdk_systemprompt_single_cache_block.md`.
+   * careful 6-section stable/variable split.
    */
   cacheable?: boolean;
 }
@@ -169,8 +170,10 @@ export interface InferenceResponse {
    * "claude-haiku-4-5-20251001", "claude-opus-4-7"). 2026-05-10 cutover:
    * cost_ledger attribution must read this when present, otherwise SDK-mode
    * Opus/Haiku traffic gets mislabeled as Sonnet by getModelFromTask().
-   * Populated by the claude-sdk shim from the SDK's terminal `model` field;
-   * undefined on the OpenAI path where the model is the request's model id.
+   * Populated by the claude-sdk shim from the SDK's terminal `model` field,
+   * and by the SDK last line with the fallback model id; `inferViaOpenAi`
+   * leaves it undefined, so it stays unset under
+   * INFERENCE_PRIMARY_PROVIDER=openai.
    */
   model?: string;
 }
@@ -224,7 +227,7 @@ export {
 
 /**
  * SDK last line (2026-10-23): the OpenAI-compat `fallback` provider runs only
- * after BOTH Claude SDK legs failed, only behind INFERENCE_SDK_LASTLINE_ENABLED,
+ * after the Claude SDK path failed, only behind INFERENCE_SDK_LASTLINE_ENABLED,
  * and every use is loud (a journal line at each engagement, the real model
  * in the cost ledger). Returns null whenever it is not armed.
  */
@@ -289,8 +292,7 @@ const lastlineScope = new AsyncLocalStorage<true>();
  *     automated shadow-A/B harness in the codebase today; the comparison is
  *     done by reading scope-classifier output (Set<string> of group names)
  *     under both models on
- *     the same inputs. Related: `feedback_prometheus_upstream` #8
- *     [[aux-model-routing-audit]]; a shadow harness is queued for future work.
+ *     the same inputs. A shadow harness is queued for future work.
  *   - Pre-2026-05-23 the function hardcoded SONNET_MODEL_ID for every caller.
  *     That was the OPPOSITE of the Hermes-warned "silent cheap default" — we
  *     erred toward main-model quality. The plumbing lets us downshift
@@ -300,10 +302,10 @@ const lastlineScope = new AsyncLocalStorage<true>();
  *     Sonnet leg is skipped, both attempts run on Haiku (no escalation to
  *     Sonnet — the caller opted in deliberately and a circuit-breaker open
  *     on Sonnet shouldn't pull a Haiku caller into a forbidden upgrade).
- *   - Under the legacy `INFERENCE_PRIMARY_PROVIDER=openai` path (dormant
- *     since 2026-05-10 cutover), execution falls through to `loadProviders()`
- *     and each provider sets `model` from its own config — `request.model`
- *     has NO effect there.
+ *   - On the OpenAI-compat path (`inferViaOpenAi`: the
+ *     `INFERENCE_PRIMARY_PROVIDER=openai` setting and the SDK last line
+ *     below), execution goes through `loadProviders()` and each provider sets
+ *     `model` from its own config — `request.model` has NO effect there.
  *   - Vision is independent — see `inference/vision.ts` (explicit env).
  */
 async function inferViaClaudeSdk(
@@ -488,10 +490,6 @@ export async function inferWithToolsLastline(
   return { ...res, model: lastline.model };
 }
 
-/**
- * Send a single inference request with automatic failover.
- * Tries providers in priority order; retries on 429/5xx with exponential backoff.
- */
 export interface InferOptions {
   onTextChunk?: OnTextChunk;
   signal?: AbortSignal;
@@ -500,6 +498,12 @@ export interface InferOptions {
   onlyProvider?: string;
 }
 
+/**
+ * Send a single inference request: under INFERENCE_PRIMARY_PROVIDER=claude-sdk
+ * through `inferViaClaudeSdk` (inside a last-line tool loop, straight to the
+ * `fallback` provider); otherwise through `inferViaOpenAi`, which tries providers in priority order
+ * and retries on 429/5xx with exponential backoff.
+ */
 export async function infer(
   request: InferenceRequest,
   options?: InferOptions,
@@ -529,13 +533,6 @@ export async function infer(
 
   return inferViaOpenAi(request, options);
 }
-
-/**
- * Run a full multi-turn conversation with tool execution.
- *
- * Loops: send messages → LLM returns tool_calls → execute tools → append results → repeat.
- * Stops when LLM returns a text response with no tool calls, or maxRounds is hit.
- */
 
 export interface InferWithToolsOptions {
   maxRounds?: number;
@@ -580,9 +577,10 @@ export interface InferWithToolsOptions {
    * `inferWithToolsViaOpenAi`, which runs OUR L0-L3 compaction cascade.
    * The Claude Agent SDK path delegates context management to the SDK
    * itself — `compress()` never fires there — so this field is a no-op
-   * under `INFERENCE_PRIMARY_PROVIDER=claude-sdk` (the current default
-   * since 2026-05-10). Documented divergence, not a silent drop: passing
-   * it under the SDK provider is harmless but ineffective.
+   * on the SDK legs under `INFERENCE_PRIMARY_PROVIDER=claude-sdk`; the SDK
+   * last line runs `inferWithToolsViaOpenAi` and honors it.
+   * Documented divergence, not a silent drop: passing
+   * it under the SDK provider is harmless, and ineffective on the SDK legs.
    *
    * Tier-A cherry-pick from Hermes April Tier-2 #1 §7 — see
    * `docs/planning/pluggable-context-engine-design.md` §7.
@@ -618,6 +616,12 @@ export interface InferWithToolsOptions {
   costLedger?: CostLedgerAttribution | false;
 }
 
+/**
+ * Run a full multi-turn conversation with tool execution.
+ *
+ * Loops: send messages → LLM returns tool_calls → execute tools → append results → repeat.
+ * Stops when LLM returns a text response with no tool calls, or maxRounds is hit.
+ */
 export async function inferWithTools(
   messages: ChatMessage[],
   tools: ToolDefinition[],

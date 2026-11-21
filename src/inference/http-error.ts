@@ -127,7 +127,8 @@ export function parseRateLimitHeaders(
  * status code, a body snippet, and parsed rate-limit headers so callers can
  * route on 429/5xx and log structured telemetry. Message format is kept
  * compatible with the previous plain-Error path (`HTTP <status>: <body>`) so
- * existing string-match callers (`adapter.ts:953` `/HTTP (\d+)/`) keep working.
+ * existing string-match callers (`inferViaOpenAi` in adapter-openai.ts matches
+ * `/HTTP (\d+)/`) keep working.
  */
 export class HttpError extends Error {
   readonly status: number;

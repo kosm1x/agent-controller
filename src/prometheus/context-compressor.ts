@@ -38,7 +38,7 @@ export const SUMMARY_PREFIX = "[CONTEXT SUMMARY]";
 // verbatim per that section's own rule, which would otherwise conflict.
 // Header names stay English so the structure is stable across summaries;
 // nothing in the codebase parses these headers (only `SUMMARY_PREFIX` is
-// checked at line 136), but stable structure is friendlier when an operator
+// checked, by `compress`), but stable structure is friendlier when an operator
 // inspects a long thread.
 const LANGUAGE_RULE =
   "Write the summary CONTENT in the language used by the USER in the messages being compressed (look at user-role turns only; ignore code blocks, error text, file paths, tool outputs). Tie-break under heavy code-switching: use the most recent user message's language. Keep the section HEADER names exactly as written (`## Intent`, `## Key Facts`, etc.) — they are structural markers. EXCEPTION: verbatim quotes under `## User Messages` stay in their original language regardless of the summary language.";
