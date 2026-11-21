@@ -47,7 +47,7 @@ describe("governance: per-task store limit", () => {
     expect(mockRetain).toHaveBeenCalledTimes(5);
   });
 
-  it("blocks the 6th store with a warning", async () => {
+  it("refuses the 6th and 7th store with an error object", async () => {
     setMemoryTaskContext("task-2");
 
     // Exhaust the limit
@@ -55,12 +55,15 @@ describe("governance: per-task store limit", () => {
       await memoryStoreTool.execute({ content: `obs ${i}` });
     }
 
-    // 6th should be blocked
-    const result = await memoryStoreTool.execute({
-      content: "one too many",
-    });
-    expect(result).toContain("warning");
-    expect(result).toContain("limit reached");
+    for (const content of ["one too many", "and another"]) {
+      const result = await memoryStoreTool.execute({ content });
+      expect(result.startsWith('{"error":"')).toBe(true);
+      const parsed = JSON.parse(result) as Record<string, unknown>;
+      expect(Object.keys(parsed)).toEqual(["error"]);
+      expect(parsed.error).toBe(
+        "Memory store limit reached (5/task): nothing was stored. Further memory_store calls in this task are refused too.",
+      );
+    }
     expect(mockRetain).toHaveBeenCalledTimes(5); // not 6
   });
 

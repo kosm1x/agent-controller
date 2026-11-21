@@ -425,7 +425,7 @@ export function createTaskExecutor(
     if (name === "memory_store") {
       if (!context.tryMemoryStore()) {
         return JSON.stringify({
-          warning: `Memory store limit reached (${context.getMemoryStoreLimit()}/task). Prioritize quality over quantity — store only the most valuable observation.`,
+          error: `Memory store limit reached (${context.getMemoryStoreLimit()}/task): nothing was stored. Further memory_store calls in this task are refused too.`,
         });
       }
     }

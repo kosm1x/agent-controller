@@ -87,9 +87,10 @@ treats pages similarly to posts for create/update operations.`,
       });
     }
     return JSON.stringify({
+      error: `wp_pages: the site did not return a list of pages (HTTP ${status})`,
       site: resolved.name,
       http_status: status,
-      error: data,
+      body: data,
     });
   },
 };
@@ -188,9 +189,10 @@ COMMON PLUGINS for script injection:
         });
       }
       return JSON.stringify({
+        error: `wp_plugins list: the site did not return a list of plugins (HTTP ${status})`,
         site: resolved.name,
         http_status: status,
-        error: data,
+        body: data,
       });
     }
 
@@ -220,9 +222,10 @@ COMMON PLUGINS for script injection:
         });
       }
       return JSON.stringify({
+        error: `wp_plugins ${action}: the site answered HTTP ${status}`,
         site: resolved.name,
         http_status: status,
-        error: data,
+        body: data,
       });
     }
 
@@ -249,9 +252,10 @@ COMMON PLUGINS for script injection:
         });
       }
       return JSON.stringify({
+        error: `wp_plugins install: the site answered HTTP ${status}`,
         site: resolved.name,
         http_status: status,
-        error: data,
+        body: data,
       });
     }
 
@@ -341,9 +345,10 @@ For reading, call without any update fields. For updating, include the fields to
       });
     }
     return JSON.stringify({
+      error: `wp_settings ${hasUpdates ? "update" : "read"}: the site answered HTTP ${status}`,
       site: resolved.name,
       http_status: status,
-      error: data,
+      body: data,
     });
   },
 };
@@ -424,9 +429,10 @@ AFTER DELETING: Report what was deleted (title, type, ID) and whether it went to
       });
     }
     return JSON.stringify({
+      error: `wp_delete: the site answered HTTP ${status}`,
       site: resolved.name,
       http_status: status,
-      error: data,
+      body: data,
     });
   },
 };
@@ -530,10 +536,16 @@ The path is appended to the site's /wp-json/ base URL.`,
           ? JSON.stringify(data).slice(0, 3000) + "...(truncated)"
           : data;
     if (status < 200 || status >= 300) {
+      // A POST answered with 5xx may still have been saved: a retry can make a second item.
       return JSON.stringify({
+        error:
+          `wp_raw_api: the site answered HTTP ${status}` +
+          (/^post$/i.test(method) && status >= 500
+            ? ". The site may have saved it anyway: check the site before trying again."
+            : ""),
         site: resolved.name,
         http_status: status,
-        error: payload,
+        body: payload,
       });
     }
     return JSON.stringify({

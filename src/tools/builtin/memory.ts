@@ -195,7 +195,7 @@ TIPS:
       const count = storeCountByTask.get(_currentTaskId) ?? 0;
       if (count >= MAX_STORES_PER_TASK) {
         return JSON.stringify({
-          warning: `Memory store limit reached (${MAX_STORES_PER_TASK}/task). Prioritize quality over quantity — store only the most valuable observation.`,
+          error: `Memory store limit reached (${MAX_STORES_PER_TASK}/task): nothing was stored. Further memory_store calls in this task are refused too.`,
         });
       }
       storeCountByTask.set(_currentTaskId, count + 1);

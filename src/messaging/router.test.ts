@@ -9826,18 +9826,58 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
   it.each([
     ["{error: truthy}", "wp_delete", { id: 7 }, JSON.stringify({ error: "post not found" }), "post not found"],
     [
-      "wp_delete: error key with an empty body",
+      "wp_delete: the site answered with an empty body",
+      "wp_delete",
+      { id: 7 },
+      JSON.stringify({ error: "wp_delete: the site answered HTTP 404", site: "blog", http_status: 404, body: "" }),
+      "wp_delete: the site answered HTTP 404",
+    ],
+    [
+      "wp_raw_api: a create the site answered with a null body",
+      "wp_raw_api",
+      { method: "POST", path: "/wp/v2/posts" },
+      JSON.stringify({
+        error:
+          "wp_raw_api: the site answered HTTP 500. The site may have saved it anyway: check the site before trying again.",
+        site: "blog",
+        http_status: 500,
+        body: null,
+      }),
+      "wp_raw_api: the site answered HTTP 500. The site may have saved it anyway: check the site before trying again.",
+    ],
+    [
+      "wp_delete: the error key with an empty value (the reader's rule for a listed tool)",
       "wp_delete",
       { id: 7 },
       JSON.stringify({ site: "blog", http_status: 404, error: "" }),
       "404",
     ],
     [
-      "wp_raw_api: error key with a null body",
+      "wp_raw_api: the error key with a null value (the reader's rule for a listed tool)",
       "wp_raw_api",
-      { method: "POST", path: "/wp/v2/posts" },
+      { method: "GET", path: "/wp/v2/posts" },
       JSON.stringify({ site: "blog", http_status: 500, error: null }),
       "500",
+    ],
+    [
+      "wp_publish: an update the site answered with an empty body",
+      "wp_publish",
+      { post_id: 7, status: "publish" },
+      JSON.stringify({ error: "wp_publish: the site answered HTTP 404", site: "blog", http_status: 404, body: "" }),
+      "wp_publish: the site answered HTTP 404",
+    ],
+    [
+      "wp_publish: a create the site answered with an object body",
+      "wp_publish",
+      { title: "t", content: "c" },
+      JSON.stringify({
+        error:
+          "wp_publish: the site answered HTTP 503. The site may have saved it anyway: check the site before trying again.",
+        site: "blog",
+        http_status: 503,
+        body: { code: "rest_unavailable", message: "m", data: { status: 503 } },
+      }),
+      "wp_publish: the site answered HTTP 503. The site may have saved it anyway: check the site before trying again.",
     ],
     [
       "skill_run: {ok: false}",

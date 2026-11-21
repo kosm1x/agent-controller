@@ -202,9 +202,10 @@ ALWAYS call this BEFORE wp_publish with post_id — you need the real post ID, d
     }
 
     return JSON.stringify({
+      error: `wp_list_posts: the site did not return a list of posts (HTTP ${httpStatus})`,
       site: resolved.name,
       http_status: httpStatus,
-      error: data,
+      body: data,
     });
   },
 };
@@ -301,9 +302,10 @@ This approach prevents content truncation and article destruction.`,
     }
 
     return JSON.stringify({
+      error: `wp_read_post: the site answered HTTP ${status}`,
       site: resolved.name,
       http_status: status,
-      error: data,
+      body: data,
     });
   },
 };
@@ -645,10 +647,16 @@ AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post I
       return JSON.stringify(result);
     }
 
+    // A create answered with 5xx may still have been saved: a retry can make a second post.
     return JSON.stringify({
+      error:
+        `wp_publish: the site answered HTTP ${status}` +
+        (!postId && status >= 500
+          ? ". The site may have saved it anyway: check the site before trying again."
+          : ""),
       site: resolved.name,
       http_status: status,
-      error: data,
+      body: data,
     });
   },
 };
@@ -846,10 +854,16 @@ DO NOT fabricate media_ids — you MUST call this tool to get a real one.`,
         });
       }
 
+      // An upload answered with 5xx may still have been saved: a retry can make a second file.
       return JSON.stringify({
+        error:
+          `wp_media_upload: the site answered HTTP ${uploadResponse.status}` +
+          (uploadResponse.status >= 500
+            ? ". The site may have saved it anyway: check the site before trying again."
+            : ""),
         site: resolved.name,
         http_status: uploadResponse.status,
-        error: data,
+        body: data,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -945,9 +959,10 @@ Returns an array of {id, name, slug, count} objects.`,
     }
 
     return JSON.stringify({
+      error: `wp_categories: the site did not return a list of categories or tags (HTTP ${status})`,
       site: resolved.name,
       http_status: status,
-      error: data,
+      body: data,
     });
   },
 };

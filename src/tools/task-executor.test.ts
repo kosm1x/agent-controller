@@ -77,9 +77,16 @@ describe("createTaskExecutor", () => {
       expect(result).toBe('{"ok": true}');
     }
 
-    // 6th is rate-limited (not delegated to registry)
-    const result = await executor("memory_store", { content: "too many" });
-    expect(result).toContain("limit reached");
+    // 6th and 7th are refused (not delegated to registry)
+    for (const content of ["too many", "still too many"]) {
+      const result = await executor("memory_store", { content });
+      expect(result.startsWith('{"error":"')).toBe(true);
+      const parsed = JSON.parse(result) as Record<string, unknown>;
+      expect(Object.keys(parsed)).toEqual(["error"]);
+      expect(parsed.error).toBe(
+        "Memory store limit reached (5/task): nothing was stored. Further memory_store calls in this task are refused too.",
+      );
+    }
     expect(registry.execute).toHaveBeenCalledTimes(5); // not 6
   });
 
@@ -94,9 +101,10 @@ describe("createTaskExecutor", () => {
     // Exhaust A's limit
     for (let i = 0; i < 5; i++)
       await execA("memory_store", { content: `a${i}` });
-    expect(await execA("memory_store", { content: "blocked" })).toContain(
-      "limit reached",
-    );
+    expect(JSON.parse(await execA("memory_store", { content: "blocked" }))).toEqual({
+      error:
+        "Memory store limit reached (5/task): nothing was stored. Further memory_store calls in this task are refused too.",
+    });
 
     // B is unaffected
     expect(await execB("memory_store", { content: "b0" })).toBe('{"ok": true}');

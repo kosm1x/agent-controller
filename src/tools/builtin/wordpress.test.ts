@@ -7,8 +7,51 @@
  * 3. Structural element preservation
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
-import { _testing } from "./wordpress.js";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+// No request leaves this file: the site map is synthetic, the global fetch and
+// the image download are stand-ins that refuse any request a case did not queue.
+const net = vi.hoisted(() => ({
+  fetch: vi.fn(),
+  download: vi.fn(),
+  unexpected: [] as string[],
+}));
+vi.mock("../../lib/url-safety.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/url-safety.js")>()),
+  validateOutboundUrl: () => null,
+  safeFetch: net.download,
+}));
+
+import {
+  _testing,
+  wpListPostsTool,
+  wpReadPostTool,
+  wpPublishTool,
+  wpMediaUploadTool,
+  wpCategoriesTool,
+} from "./wordpress.js";
+
+function refuse(input: unknown): never {
+  net.unexpected.push(String(input));
+  throw new Error(`unexpected request in test: ${String(input)}`);
+}
+
+beforeEach(() => {
+  net.unexpected.length = 0;
+  net.fetch.mockReset().mockImplementation(refuse);
+  net.download.mockReset().mockImplementation(refuse);
+  vi.stubGlobal("fetch", net.fetch);
+  vi.stubEnv(
+    "WP_SITES",
+    JSON.stringify({ blog: { url: "https://site.example", username: "u", app_password: "p" } }),
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  expect(net.unexpected).toEqual([]);
+});
 
 const {
   stripHtml,
@@ -240,5 +283,206 @@ describe("content destruction detection thresholds", () => {
 
     // Should pass — text is ~95%+ of original
     expect(newTextLen >= existingTextLen * 0.8).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The failure envelope: a non-ok answer (or a list tool's answer that is not a
+// list) is an error object whose fixed words lead, with the site's answer kept
+// under `body`.
+// ---------------------------------------------------------------------------
+
+const SAVED_ANYWAY =
+  ". The site may have saved it anyway: check the site before trying again.";
+
+/** Queue the site's next answer to the global fetch. */
+function answer(status: number, text: string): void {
+  net.fetch.mockImplementationOnce(async () => new Response(text, { status }));
+}
+
+function expectEnvelope(out: string, error: string, status: number, body: unknown): void {
+  expect(out.startsWith('{"error":"')).toBe(true);
+  const parsed = JSON.parse(out) as Record<string, unknown>;
+  expect(Object.keys(parsed)).toEqual(["error", "site", "http_status", "body"]);
+  expect(parsed.error).toBe(error);
+  expect(parsed.site).toBe("blog");
+  expect(parsed.http_status).toBe(status);
+  expect(parsed.body).toEqual(body);
+}
+
+const WP_ERROR = { code: "rest_error", message: "m", data: { status: 500 } };
+
+describe("wp_list_posts failure envelope", () => {
+  it("a non-ok answer is an error object with the answer under body", async () => {
+    answer(500, JSON.stringify(WP_ERROR));
+    const out = await wpListPostsTool.execute({});
+    expectEnvelope(out, "wp_list_posts: the site did not return a list of posts (HTTP 500)", 500, WP_ERROR);
+    expect(String(net.fetch.mock.calls[0][0]).startsWith("https://site.example/wp-json/wp/v2/posts?")).toBe(true);
+  });
+
+  it("a 2xx answer that is not a list is an error object too", async () => {
+    answer(200, JSON.stringify({ a: 1 }));
+    const out = await wpListPostsTool.execute({});
+    expectEnvelope(out, "wp_list_posts: the site did not return a list of posts (HTTP 200)", 200, { a: 1 });
+  });
+
+  it("a list is returned as before", async () => {
+    answer(
+      200,
+      JSON.stringify([
+        {
+          id: 1,
+          title: { rendered: "T" },
+          status: "draft",
+          date: "2026-01-02T03:04:05",
+          link: "https://site.example/?p=1",
+          categories: [2],
+          tags: [],
+        },
+      ]),
+    );
+    const out = await wpListPostsTool.execute({});
+    expect(out).toBe(
+      JSON.stringify({
+        success: true,
+        site: "blog",
+        count: 1,
+        note: "Post IDs are NOT sequential. Use ONLY the IDs listed here for wp_read_post.",
+        posts: [
+          {
+            id: 1,
+            title: "T",
+            status: "draft",
+            date: "2026-01-02",
+            link: "https://site.example/?p=1",
+            categories: [2],
+            tags: [],
+          },
+        ],
+      }),
+    );
+  });
+});
+
+describe("wp_read_post failure envelope", () => {
+  it("a non-ok answer is an error object with the answer under body", async () => {
+    answer(404, JSON.stringify(WP_ERROR));
+    const out = await wpReadPostTool.execute({ post_id: 7 });
+    expectEnvelope(out, "wp_read_post: the site answered HTTP 404", 404, WP_ERROR);
+  });
+
+  it.each([
+    ["an empty body", "", ""],
+    ["a body that is not JSON", "<html>oops</html>", "<html>oops</html>"],
+    ["a null body", "null", null],
+    ["an array body", "[1,2]", [1, 2]],
+  ] as const)("%s is kept under body", async (_name, text, body) => {
+    answer(404, text);
+    const out = await wpReadPostTool.execute({ post_id: 7 });
+    expectEnvelope(out, "wp_read_post: the site answered HTTP 404", 404, body);
+  });
+});
+
+describe("wp_publish failure envelope", () => {
+  it.each([500, 503])("a create answered %i adds the may-have-saved sentence", async (status) => {
+    answer(status, JSON.stringify(WP_ERROR));
+    const out = await wpPublishTool.execute({ title: "t" });
+    expectEnvelope(out, `wp_publish: the site answered HTTP ${status}${SAVED_ANYWAY}`, status, WP_ERROR);
+    expect(net.fetch.mock.calls[0][1].method).toBe("POST");
+  });
+
+  it.each([400, 499])("a create answered %i has no such sentence", async (status) => {
+    answer(status, JSON.stringify(WP_ERROR));
+    const out = await wpPublishTool.execute({ title: "t" });
+    expectEnvelope(out, `wp_publish: the site answered HTTP ${status}`, status, WP_ERROR);
+  });
+
+  it("an update (with a post id) answered 503 has no such sentence", async () => {
+    answer(503, JSON.stringify(WP_ERROR));
+    const out = await wpPublishTool.execute({ post_id: 7, status: "publish" });
+    expectEnvelope(out, "wp_publish: the site answered HTTP 503", 503, WP_ERROR);
+    expect(net.fetch.mock.calls[0][1].method).toBe("PUT");
+  });
+
+  it("a saved post is returned as before", async () => {
+    answer(201, JSON.stringify({ id: 5, status: "draft", title: { rendered: "t" }, link: "https://site.example/?p=5" }));
+    const out = await wpPublishTool.execute({ title: "t" });
+    expect(out).toBe(
+      JSON.stringify({
+        success: true,
+        site: "blog",
+        post_id: 5,
+        status: "draft",
+        title: "t",
+        note:
+          "Post saved as draft. The link will only work after publishing. " +
+          'To publish: call wp_publish with post_id=5 and status="publish".',
+      }),
+    );
+  });
+});
+
+describe("wp_media_upload failure envelope", () => {
+  function queueDownload(): void {
+    net.download.mockImplementationOnce(
+      async () => new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "image/png" } }),
+    );
+  }
+
+  it.each([500, 503])("an upload answered %i adds the may-have-saved sentence", async (status) => {
+    queueDownload();
+    answer(status, JSON.stringify(WP_ERROR));
+    const out = await wpMediaUploadTool.execute({ image_url: "https://img.example/a.png", filename: "a.png" });
+    expectEnvelope(out, `wp_media_upload: the site answered HTTP ${status}${SAVED_ANYWAY}`, status, WP_ERROR);
+    expect(String(net.fetch.mock.calls[0][0])).toBe("https://site.example/wp-json/wp/v2/media");
+  });
+
+  it.each([400, 499])("an upload answered %i has no such sentence", async (status) => {
+    queueDownload();
+    answer(status, JSON.stringify(WP_ERROR));
+    const out = await wpMediaUploadTool.execute({ image_url: "https://img.example/a.png", filename: "a.png" });
+    expectEnvelope(out, `wp_media_upload: the site answered HTTP ${status}`, status, WP_ERROR);
+  });
+
+  it("a saved upload is returned as before", async () => {
+    queueDownload();
+    answer(201, JSON.stringify({ id: 9, source_url: "https://site.example/a.png" }));
+    const out = await wpMediaUploadTool.execute({ image_url: "https://img.example/a.png", filename: "a.png" });
+    expect(out).toBe(
+      JSON.stringify({
+        success: true,
+        site: "blog",
+        media_id: 9,
+        source_url: "https://site.example/a.png",
+        title: "a",
+      }),
+    );
+  });
+});
+
+describe("wp_categories failure envelope", () => {
+  it("a non-ok answer is an error object with the answer under body", async () => {
+    answer(500, JSON.stringify(WP_ERROR));
+    const out = await wpCategoriesTool.execute({});
+    expectEnvelope(out, "wp_categories: the site did not return a list of categories or tags (HTTP 500)", 500, WP_ERROR);
+  });
+
+  it("a 2xx answer that is not a list is an error object too", async () => {
+    answer(200, JSON.stringify({ a: 1 }));
+    const out = await wpCategoriesTool.execute({});
+    expectEnvelope(out, "wp_categories: the site did not return a list of categories or tags (HTTP 200)", 200, { a: 1 });
+  });
+
+  it("a list is returned as before", async () => {
+    answer(200, JSON.stringify([{ id: 2, name: "News", slug: "news", count: 3 }]));
+    const out = await wpCategoriesTool.execute({});
+    expect(out).toBe(
+      JSON.stringify({
+        success: true,
+        site: "blog",
+        count: 1,
+        items: [{ id: 2, name: "News", slug: "news", count: 3, parent: null }],
+      }),
+    );
   });
 });

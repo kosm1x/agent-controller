@@ -17,8 +17,8 @@ import {
 import { sanitizeToolResult } from "../inference/guards.js";
 
 /**
- * Tools whose failure can be `{error: <response body>}` with an empty body
- * (key present, value falsy) and whose successes never carry the key. Not
+ * Tools whose result counts as a failure when it carries the `error` key at
+ * all, even with a falsy value; their successes never carry the key. Not
  * every tool: a remote tool's JSON success may carry `"error": null`.
  */
 const EMPTY_ERROR_FAILURE_TOOLS: ReadonlySet<string> = new Set([
