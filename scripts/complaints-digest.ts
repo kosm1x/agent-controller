@@ -79,6 +79,10 @@ const now = new Date(nowMs).toISOString();
 
 let verdictOpts: { type: string; since: string; maxComplaints: number; runs: number } | undefined;
 if (parsed.verdict) {
+  // A --now ahead of the clock would count rows that runs queued later can
+  // still sort ahead of (src/complaints/verdict.ts). The clock is read here,
+  // after the wrapper pinned its --now, so the pinned value is never later.
+  if (Math.floor(nowMs / 1000) * 1000 > Date.now()) fail("--now must not be later than the current time with --verdict");
   if (type === undefined) fail("--verdict needs --type");
   if (parsed.since === undefined) fail("--verdict needs --since");
   if (parsed["max-complaints"] === undefined) fail("--verdict needs --max-complaints");

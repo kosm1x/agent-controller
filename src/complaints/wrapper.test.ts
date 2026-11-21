@@ -550,6 +550,19 @@ describe("--verdict: a prediction closed by code", () => {
       expect([args, sidecars()]).toEqual([args, []]);
     }
     expect(sha(vdb)).toBe(before);
+    // A --now later than the clock is refused in verdict mode only.
+    const future = ["--type", "ritual:vr", "--since", S, "--max-complaints", "1"];
+    clearSidecars();
+    const ahead = wrapper(["--db", vdb, "--now", "2099-01-01T00:00:00Z", "--verdict", ...future]);
+    expect([ahead.status, ahead.stdout, ahead.stderr]).toEqual([2, "", "complaints-digest: --now must not be later than the current time with --verdict\n"]);
+    expect(sidecars()).toEqual([]);
+    expect(wrapper(["--db", vdb, "--now", "2099-01-01T00:00:00Z"]).status).toBe(0);
+    // The current second (what the wrapper pins when --now is not given) is
+    // accepted; --since is a day back so the window never ages this out.
+    const current = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString();
+    const recent = ["--type", "ritual:vr", "--since", new Date(Date.now() - 86_400_000).toISOString(), "--max-complaints", "1"];
+    expect(wrapper(["--db", vdb, "--now", current, "--verdict", ...recent]).status).toBe(0);
+    expect(wrapper(["--db", vdb, "--verdict", ...recent]).status).toBe(0);
     const kn = wrapper(["--db", vdb, "--now", NOW, "--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "7"]);
     expect(kn.stderr).toContain("cannot be refuted");
     // Just inside the window, and K = N - 1, are accepted.
