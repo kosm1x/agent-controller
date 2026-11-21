@@ -13,6 +13,16 @@ import { submitReportTool } from "./submit-report.js";
 import { initDatabase, closeDatabase, getDatabase } from "../../db/index.js";
 import { queryClaudeSdk } from "../../inference/claude-sdk.js";
 import type { ReportDraft } from "../../audit/report-schema.js";
+import { ToolRegistry } from "../registry.js";
+import {
+  BUILTIN_TOOLS,
+  CRM_TOOLS,
+  GWS_TOOLS,
+  WP_TOOLS,
+} from "../sources/builtin.js";
+import { GoogleToolSource } from "../sources/google.js";
+import { MemoryToolSource } from "../sources/memory.js";
+import { SkillsToolSource } from "../sources/skills.js";
 
 vi.mock("../../inference/claude-sdk.js", async () => {
   const actual = await vi.importActual<
@@ -317,5 +327,147 @@ describe("submit_report — WeakMap cache (S2-W6 regression guard)", () => {
     mockPass();
     const out2 = await submitReportTool.execute(validArgs());
     expect(JSON.parse(out2).ok).toBe(true);
+  });
+});
+
+describe("submit_report — the text the model reads", () => {
+  const description = (): string =>
+    submitReportTool.definition.function.description;
+
+  type Prop = {
+    description?: string;
+    properties?: Record<string, Prop>;
+    items?: Prop;
+  };
+  const props = (): Record<string, Prop> =>
+    (
+      submitReportTool.definition.function.parameters as {
+        properties: Record<string, Prop>;
+      }
+    ).properties;
+
+  /** Tool names the description cites. */
+  const TOOL_NAMES = [
+    "gmail_send",
+    "jarvis_file_read",
+    "intel_query",
+    "intel_alert_history",
+    "memory_search",
+    "submit_report",
+  ];
+  /** Every other snake_case word in it: fields, values and one table. */
+  const NON_TOOL_WORDS = [
+    "verified_against",
+    "queried_at",
+    "tool_output",
+    "tool_name",
+    "call_id",
+    "output_sha256",
+    "cost_ledger",
+    "query_sha",
+    "row_count",
+    "evidence_index",
+    "small_sample",
+    "sample_n",
+    "mixed_pid_window",
+    "stale_data",
+    "incomplete_coverage",
+    "report_id",
+    "critic_verdict",
+    "retry_count",
+    "fail_returned_anyway",
+    "critic_critique",
+    "cap_exceeded",
+  ];
+
+  async function registryNames(widest: boolean): Promise<Set<string>> {
+    const registry = new ToolRegistry();
+    for (const t of BUILTIN_TOOLS) registry.register(t);
+    if (widest) {
+      for (const t of [...CRM_TOOLS, ...GWS_TOOLS, ...WP_TOOLS])
+        registry.register(t);
+      await new GoogleToolSource().registerTools(registry);
+      await new MemoryToolSource().registerTools(registry);
+    }
+    await new SkillsToolSource().registerTools(registry);
+    return new Set(registry.list());
+  }
+
+  it("names only gmail_send as the delivery tool", () => {
+    expect(description().split("\n")).toContain(
+      "USE WHEN composing any operator-facing report that quotes aggregate metrics, project status, recent events, or recommendations — BEFORE the actual delivery tool (gmail_send, etc.).",
+    );
+    expect(description()).not.toContain("telegram_send");
+  });
+
+  it("marks the file citation's hash as optional", () => {
+    expect(description().split("\n")).toContain(
+      '  - jarvis_file_read result → {type:"file", path, sha256?:"<64-hex>", queried_at}',
+    );
+  });
+
+  it("the schema-failure line no longer promises an attempt limit", () => {
+    expect(description().split("\n")).toContain(
+      '  - {ok:false, kind:"schema"|"invariants", issues:[...]}  — fix the cited issues and CALL submit_report AGAIN with a corrected draft.',
+    );
+    expect(description()).not.toContain("attempts per task");
+  });
+
+  it("every snake_case word is a known tool name or a listed non-tool word", () => {
+    const words = new Set(
+      description().match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)*_[a-z0-9]+\b/g) ??
+        [],
+    );
+    expect([...words].sort()).toEqual(
+      [...TOOL_NAMES, ...NON_TOOL_WORDS].sort(),
+    );
+  });
+
+  it("every tool name it cites is registered; gmail_send and memory_search only under a setting", async () => {
+    const widest = await registryNames(true);
+    expect(TOOL_NAMES.filter((n) => !widest.has(n))).toEqual([]);
+    expect(NON_TOOL_WORDS.filter((n) => widest.has(n))).toEqual([]);
+    // gmail_send needs Google configured (GoogleToolSource); memory_search
+    // needs the memory tools in mode "all" (MemoryToolSource).
+    const always = await registryNames(false);
+    expect(TOOL_NAMES.filter((n) => !always.has(n))).toEqual([
+      "gmail_send",
+      "memory_search",
+    ]);
+  });
+
+  it("the nested window and concern fields carry their texts", () => {
+    const window = props().window.properties!;
+    expect(window.start.description).toBe(
+      "ISO 8601 datetime (with offset) where the covered range begins.",
+    );
+    expect(window.end.description).toBe(
+      "ISO 8601 datetime (with offset) where the covered range ends; must not be before start.",
+    );
+    const concern = props().concerns.items!.properties!;
+    expect(concern.type.description).toBe(
+      "Which limitation applies; one of the listed values.",
+    );
+    expect(concern.detail.description).toBe(
+      "What the limitation is, in plain words; must not be empty.",
+    );
+  });
+
+  it("every property at every depth has a non-empty description", () => {
+    const missing: string[] = [];
+    let seen = 0;
+    const walk = (properties: Record<string, Prop>, path: string): void => {
+      for (const [key, prop] of Object.entries(properties)) {
+        const here = path ? `${path}.${key}` : key;
+        seen++;
+        if (!prop.description?.trim()) missing.push(here);
+        if (prop.properties) walk(prop.properties, here);
+        if (prop.items?.properties) walk(prop.items.properties, `${here}[]`);
+      }
+    };
+    walk(props(), "");
+    expect(missing).toEqual([]);
+    // 9 top-level, window.start/end, concerns[].type/detail.
+    expect(seen).toBe(13);
   });
 });

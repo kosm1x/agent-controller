@@ -77,10 +77,10 @@ export const submitReportTool: Tool = {
       name: "submit_report",
       description: `Validate and audit a draft report before delivering it to the operator.
 
-USE WHEN composing any operator-facing report that quotes aggregate metrics, project status, recent events, or recommendations — BEFORE the actual delivery tool (gmail_send, telegram_send, etc.).
+USE WHEN composing any operator-facing report that quotes aggregate metrics, project status, recent events, or recommendations — BEFORE the actual delivery tool (gmail_send, etc.).
 
 EVERY claim must cite a data source via verified_against. Build each citation while reading the source:
-  - jarvis_file_read result → {type:"file", path, sha256:"<64-hex>", queried_at}
+  - jarvis_file_read result → {type:"file", path, sha256?:"<64-hex>", queried_at}
   - intel_query / intel_alert_history output → {type:"tool_output", tool_name, call_id, output_sha256, queried_at}
   - memory_search results → {type:"tool_output", tool_name:"memory_search", call_id, output_sha256, queried_at}
   - git history → {type:"git", sha:"<40-hex>", path?, queried_at}
@@ -98,7 +98,7 @@ CONCERNS — list explicitly when any apply:
 RESPONSE shapes:
   - {ok:true, report_id, critic_verdict:"pass", retry_count}  — ship the report as-is
   - {ok:true, report_id, critic_verdict:"fail_returned_anyway", retry_count, critic_critique} — critic flagged issues but report is still persisted; SHIP the report anyway (don't drop the user's brief) and surface the critique in operator-visible logs. The failure is recorded in the reports table for post-hoc inspection.
-  - {ok:false, kind:"schema"|"invariants", issues:[...]}  — fix the cited issues and CALL submit_report AGAIN with a corrected draft. Max ${PER_TASK_CALL_CAP} attempts per task.
+  - {ok:false, kind:"schema"|"invariants", issues:[...]}  — fix the cited issues and CALL submit_report AGAIN with a corrected draft.
   - {ok:false, kind:"cap_exceeded", message}  — you've already audited 3 times. PROCEED to delivery with the latest draft; the audit trail exists in the reports table.
 
 NEVER skip the actual delivery tool because of an audit failure. submit_report is observability, not a gate.`,
@@ -147,8 +147,16 @@ NEVER skip the actual delivery tool because of an audit failure. submit_report i
             description:
               "ISO datetime range the report covers (start, end). end >= start.",
             properties: {
-              start: { type: "string" },
-              end: { type: "string" },
+              start: {
+                type: "string",
+                description:
+                  "ISO 8601 datetime (with offset) where the covered range begins.",
+              },
+              end: {
+                type: "string",
+                description:
+                  "ISO 8601 datetime (with offset) where the covered range ends; must not be before start.",
+              },
             },
             required: ["start", "end"],
           },
@@ -177,8 +185,14 @@ NEVER skip the actual delivery tool because of an audit failure. submit_report i
                     "incomplete_coverage",
                     "other",
                   ],
+                  description:
+                    "Which limitation applies; one of the listed values.",
                 },
-                detail: { type: "string" },
+                detail: {
+                  type: "string",
+                  description:
+                    "What the limitation is, in plain words; must not be empty.",
+                },
               },
               required: ["type", "detail"],
             },

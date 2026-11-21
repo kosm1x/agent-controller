@@ -59,7 +59,7 @@ const LEGACY_WITHOUT_NOT_FOR = new Set([
   "market_watchlist_remove", "memory_kg_query",
   "paper_history", "pm_alpha_latest",
   "project_get", "project_list", "project_update",
-  "sentiment_snapshot", "skill_list", "submit_report", "user_fact_delete",
+  "sentiment_snapshot", "submit_report", "user_fact_delete",
   "user_fact_list",
   "video_background_download", "video_brand_apply", "video_compose_manifest",
   "video_create", "video_image", "video_job_cancel", "video_job_cleanup",
