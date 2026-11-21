@@ -209,7 +209,7 @@ export class AlphaVantageAdapter implements MarketDataAdapter, MacroAdapter {
     if (!q || !q["01. symbol"]) {
       throw new Error(`AV quote: empty response for ${symbol}`);
     }
-    return {
+    const bar: MarketBar = {
       symbol: q["01. symbol"],
       timestamp: fromAlphaVantageDaily(q["07. latest trading day"]),
       open: parseFloat(q["02. open"]),
@@ -220,6 +220,12 @@ export class AlphaVantageAdapter implements MarketDataAdapter, MacroAdapter {
       provider: this.provider,
       interval: "daily",
     };
+    // Set only what the source gave: a missing field stays absent, never 0.
+    const previousClose = parseFloat(q["08. previous close"]);
+    if (Number.isFinite(previousClose)) bar.previousClose = previousClose;
+    const changePercent = parseFloat(q["10. change percent"]);
+    if (Number.isFinite(changePercent)) bar.changePercent = changePercent;
+    return bar;
   }
 
   async fetchMacro(series: string): Promise<MacroPoint[]> {

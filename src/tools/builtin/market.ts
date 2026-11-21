@@ -85,12 +85,12 @@ USE WHEN:
 
 NOT WHEN:
 - User wants historical bars (use market_history)
-- User wants indicators/signals (not yet — F2/F3)
+- User wants indicators/signals (use market_indicators / market_signals)
 
 Source: Alpha Vantage GLOBAL_QUOTE. ~15-min delayed during US market hours.
 
 Input: symbol (ticker). Examples: SPY, AAPL, TSLA, BRK.B.
-Output: formatted single-line summary (symbol, price, change %, timestamp, source).`,
+Output: formatted single-line summary (symbol, price, change % and previous close when the source gives them, OHLC with its trading day, volume, source).`,
       parameters: {
         type: "object",
         properties: {
@@ -110,6 +110,13 @@ Output: formatted single-line summary (symbol, price, change %, timestamp, sourc
     if (!symbol) return JSON.stringify({ error: "symbol is required" });
     try {
       const bar = await getDataLayer().getQuote(symbol);
+      // The adapter refuses an answer without a symbol, but a symbol with an
+      // absent or unreadable price parses to NaN: never print that as a price.
+      if (!Number.isFinite(bar.close)) {
+        return JSON.stringify({
+          error: `market_quote: la fuente no dio precio para ${symbol}`,
+        });
+      }
       return formatQuote(bar);
     } catch (err) {
       return JSON.stringify({
@@ -119,8 +126,23 @@ Output: formatted single-line summary (symbol, price, change %, timestamp, sourc
   },
 };
 
+/**
+ * The OHLC label is the source's trading day (the first ten characters of the
+ * timestamp, a New York date), which can be an earlier session than today.
+ * Change and previous close appear only when the source gave them.
+ */
 function formatQuote(bar: MarketBar): string {
-  return `${bar.symbol}: $${bar.close.toFixed(2)} (OHLC today: O ${bar.open.toFixed(2)} · H ${bar.high.toFixed(2)} · L ${bar.low.toFixed(2)}) · vol ${bar.volume.toLocaleString()} · @ ${bar.timestamp} · source: ${bar.provider}`;
+  // A value that rounds to 0.00 prints "+0.00", never "-0.00".
+  const pct = Math.abs(bar.changePercent ?? 0).toFixed(2);
+  const change =
+    bar.changePercent === undefined
+      ? ""
+      : ` · change ${bar.changePercent < 0 && pct !== "0.00" ? "-" : "+"}${pct}%`;
+  const prev =
+    bar.previousClose === undefined
+      ? ""
+      : ` · prev close $${bar.previousClose.toFixed(2)}`;
+  return `${bar.symbol}: $${bar.close.toFixed(2)}${change}${prev} (OHLC ${bar.timestamp.slice(0, 10)}: O ${bar.open.toFixed(2)} · H ${bar.high.toFixed(2)} · L ${bar.low.toFixed(2)}) · vol ${bar.volume.toLocaleString()} · source: ${bar.provider}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1171,7 +1193,9 @@ macd_crossover (histogram sign change), bollinger_breakout (close outside bands)
 volume_spike (z-score > 2σ), price_threshold (explicit user thresholds).
 
 If 'symbol' is omitted, scans the active watchlist. Persists detected signals
-to the market_signals DB table for F7 alpha-combination consumption.`,
+to the market_signals DB table for F7 alpha-combination consumption.
+
+Output: after the header, a "Newest bar:" line gives each scanned symbol's newest bar date, marked "(fallback)" when no provider answered and the bars are the stored fallback (the date tells their age), or "none" when no bars were at hand.`,
       parameters: {
         type: "object",
         properties: {
@@ -1262,6 +1286,7 @@ to the market_signals DB table for F7 alpha-combination consumption.`,
 
     const bySymbol = new Map<string, Signal[]>();
     const skipped: { symbol: string; reason: string }[] = [];
+    const newest = new Map<string, NewestBar>();
     let consecutiveRateLimit = 0;
     let earlyExit = false;
 
@@ -1275,6 +1300,13 @@ to the market_signals DB table for F7 alpha-combination consumption.`,
           interval === "daily"
             ? await layer.getDaily(symbol, { lookback })
             : await layer.getIntraday(symbol, "60min", { lookback });
+        const last = result.bars[result.bars.length - 1];
+        if (last) {
+          newest.set(symbol, {
+            date: last.timestamp.slice(0, interval === "daily" ? 10 : 16),
+            fallback: result.stale === true,
+          });
+        }
         if (result.bars.length < 40) {
           skipped.push({ symbol, reason: "insufficient bars" });
           continue;
@@ -1307,18 +1339,42 @@ to the market_signals DB table for F7 alpha-combination consumption.`,
     for (const sigs of bySymbol.values()) allSignals.push(...sigs);
     const inserted = persistSignals(allSignals);
 
-    return formatSignalsResult(targetSymbols, bySymbol, skipped, inserted);
+    return formatSignalsResult(
+      targetSymbols,
+      bySymbol,
+      skipped,
+      inserted,
+      newest,
+    );
   },
 };
+
+/** A scanned symbol's newest bar date, and whether the data layer answered with its stored fallback. */
+interface NewestBar {
+  date: string;
+  fallback: boolean;
+}
 
 function formatSignalsResult(
   targets: string[],
   bySymbol: Map<string, Signal[]>,
   skipped: { symbol: string; reason: string }[],
   inserted: number,
+  newest: Map<string, NewestBar>,
 ): string {
+  // Line 2 names every target in scan order, so a symbol with no firing (or
+  // one the data layer answered with its stored fallback) is still visible.
+  const newestLine = targets
+    .map((s) => {
+      const n = newest.get(s);
+      return n
+        ? `${s} ${n.date}${n.fallback ? " (fallback)" : ""}`
+        : `${s} none`;
+    })
+    .join(", ");
   const lines: string[] = [
     `market_signals: scanned ${targets.length} symbols · ${inserted} new firings persisted`,
+    `  Newest bar: ${newestLine}`,
   ];
   const orderedSymbols = targets.filter((s) => bySymbol.has(s));
   const withSignals = orderedSymbols.filter(

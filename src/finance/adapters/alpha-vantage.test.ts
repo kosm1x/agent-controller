@@ -166,6 +166,66 @@ describe("AlphaVantageAdapter", () => {
     const bar = await adapter.fetchQuote("SPY");
     expect(bar.symbol).toBe("SPY");
     expect(bar.close).toBe(523.45);
+    // The percent comes from the percent field ("0.4605%"), not the
+    // absolute change ("2.40").
+    expect(bar.previousClose).toBe(521.05);
+    expect(bar.changePercent).toBe(0.4605);
+  });
+
+  it("GLOBAL_QUOTE: a negative change percent keeps its sign", async () => {
+    const body = {
+      "Global Quote": {
+        "01. symbol": "QQQ",
+        "02. open": "530.00",
+        "03. high": "531.00",
+        "04. low": "522.10",
+        "05. price": "523.64",
+        "06. volume": "800",
+        "07. latest trading day": "2026-04-16",
+        "08. previous close": "530.00",
+        "09. change": "-6.36",
+        "10. change percent": "-1.2000%",
+      },
+    };
+    const fakeFetch = vi
+      .fn()
+      .mockResolvedValue(okResponse(body)) as unknown as typeof fetch;
+    const bar = await new AlphaVantageAdapter("test-key", fakeFetch).fetchQuote(
+      "QQQ",
+    );
+    expect(bar.previousClose).toBe(530);
+    expect(bar.changePercent).toBe(-1.2);
+  });
+
+  it("GLOBAL_QUOTE: a missing, empty or non-finite previous close / change percent leaves the property absent", async () => {
+    const quote = {
+      "01. symbol": "SPY",
+      "02. open": "521.50",
+      "03. high": "524.20",
+      "04. low": "520.10",
+      "05. price": "523.45",
+      "06. volume": "900",
+      "07. latest trading day": "2026-04-17",
+    };
+    for (const extra of [
+      {},
+      { "08. previous close": "", "09. change": "", "10. change percent": "" },
+      { "08. previous close": "Infinity", "10. change percent": "Infinity%" },
+      { "08. previous close": "1e400", "10. change percent": "1e400%" },
+    ]) {
+      const fakeFetch = vi
+        .fn()
+        .mockResolvedValue(
+          okResponse({ "Global Quote": { ...quote, ...extra } }),
+        ) as unknown as typeof fetch;
+      const bar = await new AlphaVantageAdapter(
+        "test-key",
+        fakeFetch,
+      ).fetchQuote("SPY");
+      expect(bar.close).toBe(523.45);
+      expect("previousClose" in bar).toBe(false);
+      expect("changePercent" in bar).toBe(false);
+    }
   });
 
   it("fetches NEWS_SENTIMENT with cost_units=25", async () => {

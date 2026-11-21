@@ -117,6 +117,7 @@ import {
   marketWatchlistReseedTool,
 } from "./market.js";
 import type { MarketBar, MacroPoint } from "../../finance/types.js";
+import { RateLimitedError } from "../../finance/types.js";
 
 /**
  * A failure is one JSON object whose first key is `error`, with nothing
@@ -168,6 +169,78 @@ describe("marketQuoteTool", () => {
     const out = (await marketQuoteTool.execute({ symbol: "SPY" })) as string;
     expect(errorWords(out)).toBe(
       "No pude obtener cotización de SPY: both providers down",
+    );
+  });
+
+  const quoteBar = (over: Partial<MarketBar> = {}): MarketBar => ({
+    symbol: "SPY",
+    timestamp: "2026-04-17T16:00:00-04:00",
+    open: 521.5,
+    high: 524.2,
+    low: 520.1,
+    close: 523.45,
+    volume: 900,
+    provider: "alpha_vantage",
+    interval: "daily",
+    ...over,
+  });
+  const quoteOf = async (bar: MarketBar) => {
+    mockLayer.getQuote.mockResolvedValue(bar);
+    return (await marketQuoteTool.execute({ symbol: bar.symbol })) as string;
+  };
+
+  it("prints change percent and previous close when the source gave both", async () => {
+    const out = await quoteOf(
+      quoteBar({ previousClose: 521.05, changePercent: 0.4605 }),
+    );
+    expect(out).toBe(
+      "SPY: $523.45 · change +0.46% · prev close $521.05 (OHLC 2026-04-17: O 521.50 · H 524.20 · L 520.10) · vol 900 · source: alpha_vantage",
+    );
+  });
+
+  it("prints neither part, and no placeholder, when the source gave neither", async () => {
+    const out = await quoteOf(quoteBar());
+    expect(out).toBe(
+      "SPY: $523.45 (OHLC 2026-04-17: O 521.50 · H 524.20 · L 520.10) · vol 900 · source: alpha_vantage",
+    );
+  });
+
+  it("prints only the part the source gave", async () => {
+    expect(await quoteOf(quoteBar({ changePercent: -1.2 }))).toBe(
+      "SPY: $523.45 · change -1.20% (OHLC 2026-04-17: O 521.50 · H 524.20 · L 520.10) · vol 900 · source: alpha_vantage",
+    );
+    expect(await quoteOf(quoteBar({ previousClose: 530 }))).toBe(
+      "SPY: $523.45 · prev close $530.00 (OHLC 2026-04-17: O 521.50 · H 524.20 · L 520.10) · vol 900 · source: alpha_vantage",
+    );
+  });
+
+  it("a zero change prints with a plus sign and two decimals", async () => {
+    const out = await quoteOf(quoteBar({ changePercent: 0 }));
+    expect(out).toContain(" · change +0.00% (OHLC ");
+  });
+
+  it("a negative change that rounds to zero prints +0.00%, never -0.00%", async () => {
+    const out = await quoteOf(quoteBar({ changePercent: -0.004 }));
+    expect(out).toBe(
+      "SPY: $523.45 · change +0.00% (OHLC 2026-04-17: O 521.50 · H 524.20 · L 520.10) · vol 900 · source: alpha_vantage",
+    );
+  });
+
+  it("the OHLC label is the source's trading day, an earlier session too, with no time part", async () => {
+    const out = await quoteOf(
+      quoteBar({ timestamp: "2026-04-10T16:00:00-04:00" }),
+    );
+    expect(out.startsWith("SPY: $")).toBe(true);
+    expect(out).toContain("(OHLC 2026-04-10: O 521.50");
+    expect(out).not.toContain("today");
+    expect(out).not.toContain("@");
+    expect(out).not.toContain("16:00");
+  });
+
+  it("a quote without a readable price is an error object, not a NaN price", async () => {
+    const out = await quoteOf(quoteBar({ close: Number.NaN }));
+    expect(errorWords(out)).toBe(
+      "market_quote: la fuente no dio precio para SPY",
     );
   });
 });
@@ -650,6 +723,156 @@ describe("marketSignalsTool", () => {
     })) as string;
     // Even if nothing fires, the header should still appear
     expect(out).toContain("scanned 1 symbols");
+  });
+});
+
+describe("marketSignalsTool — newest bar line", () => {
+  /** `n` flat daily bars, one per calendar day, ascending, the last on `lastDay`. */
+  function dailyUpTo(
+    symbol: string,
+    n: number,
+    lastDay: string,
+    lastClose = 100,
+  ): MarketBar[] {
+    const end = Date.parse(`${lastDay}T00:00:00Z`);
+    return Array.from({ length: n }, (_, i) => {
+      const day = new Date(end - (n - 1 - i) * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      const close = i === n - 1 ? lastClose : 100;
+      return {
+        symbol,
+        timestamp: `${day}T16:00:00-05:00`,
+        open: close,
+        high: close + 0.1,
+        low: close - 0.1,
+        close,
+        volume: 500,
+        provider: "alpha_vantage" as const,
+        interval: "daily" as const,
+      };
+    });
+  }
+  const entry = (symbol: string) => ({
+    symbol,
+    assetClass: "equity",
+    tags: [],
+    active: true,
+    addedAt: "x",
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPersistSignals.mockReturnValue(0);
+  });
+
+  it("names every scanned symbol once, in scan order, at line 2; nothing else in the reply moves", async () => {
+    const symbols = ["FRESH", "OLD", "THIN", "ERR", "RL1", "RL2", "RL3", "LATE"];
+    mockLayer.listWatchlist.mockReturnValue(symbols.map(entry));
+    mockLayer.getDaily.mockImplementation(async (symbol: string) => {
+      switch (symbol) {
+        case "FRESH": // fetched on this call; its last close crosses 105
+          return {
+            bars: dailyUpTo("FRESH", 60, "2026-03-01", 106),
+            provider: "alpha_vantage",
+          };
+        case "OLD": // no provider answered: the stored fallback, enough rows
+          return {
+            bars: dailyUpTo("OLD", 60, "2026-02-27"),
+            provider: "alpha_vantage",
+            stale: true,
+          };
+        case "THIN": // the stored fallback, too few rows to scan
+          return {
+            bars: dailyUpTo("THIN", 30, "2026-01-30"),
+            provider: "alpha_vantage",
+            stale: true,
+          };
+        case "ERR":
+          throw new Error("provider down");
+        default: // RL1..RL3 abort the scan; LATE is never fetched
+          throw new RateLimitedError("alpha_vantage");
+      }
+    });
+
+    const out = (await marketSignalsTool.execute({
+      types: ["price_threshold"],
+      price_thresholds: [105],
+    })) as string;
+
+    expect(out).toBe(
+      [
+        "market_signals: scanned 8 symbols · 0 new firings persisted",
+        "  Newest bar: FRESH 2026-03-01, OLD 2026-02-27 (fallback), THIN 2026-01-30 (fallback), ERR none, RL1 none, RL2 none, RL3 none, LATE none",
+        "",
+        "FRESH — 1 signals:",
+        "  2026-03-01T16:00:00-05:00 | price_threshold | long    | Price crossed threshold 105 (100.00 → 106.00)",
+        "",
+        "Skipped (6):",
+        "  THIN: insufficient bars",
+        "  ERR: provider down",
+        "  RL1: Rate limited by alpha_vantage",
+        "  RL2: Rate limited by alpha_vantage",
+        "  RL3: Rate limited by alpha_vantage",
+        "  ... and 1 more",
+      ].join("\n"),
+    );
+    expect(mockLayer.getDaily).not.toHaveBeenCalledWith(
+      "LATE",
+      expect.anything(),
+    );
+  });
+
+  it("a fetched symbol with no firing shows its date unmarked, before the no-signals line", async () => {
+    mockLayer.getDaily.mockResolvedValue({
+      bars: dailyUpTo("QUIET", 60, "2026-03-01"),
+      provider: "alpha_vantage",
+    });
+    const out = (await marketSignalsTool.execute({
+      symbol: "QUIET",
+    })) as string;
+    expect(out).toBe(
+      [
+        "market_signals: scanned 1 symbols · 0 new firings persisted",
+        "  Newest bar: QUIET 2026-03-01",
+        "  No signals fired.",
+      ].join("\n"),
+    );
+  });
+
+  it("the 60-minute interval prints the date with hour and minute", async () => {
+    const end = Date.parse("2026-03-02T20:00:00Z");
+    const bars = Array.from({ length: 50 }, (_, i) => ({
+      symbol: "SPY",
+      timestamp: new Date(end - (49 - i) * 3_600_000).toISOString(),
+      open: 100,
+      high: 100.1,
+      low: 99.9,
+      close: 100,
+      volume: 500,
+      provider: "alpha_vantage" as const,
+      interval: "60min" as const,
+    }));
+    mockLayer.getIntraday.mockResolvedValue({
+      bars,
+      provider: "alpha_vantage",
+    });
+    const out = (await marketSignalsTool.execute({
+      symbol: "SPY",
+      interval: "60min",
+      types: ["price_threshold"],
+      price_thresholds: [105],
+    })) as string;
+    expect(mockLayer.getIntraday).toHaveBeenCalledWith("SPY", "60min", {
+      lookback: 100,
+    });
+    expect(out).toBe(
+      [
+        "market_signals: scanned 1 symbols · 0 new firings persisted",
+        "  Newest bar: SPY 2026-03-02T20:00",
+        "  No signals fired.",
+      ].join("\n"),
+    );
   });
 });
 

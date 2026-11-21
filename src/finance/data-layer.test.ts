@@ -209,6 +209,68 @@ describe("DataLayer", () => {
     expect(result.stale).toBe(true);
   });
 
+  describe("the fallback flag on a repeat call", () => {
+    const seedOldRow = () =>
+      db
+        .prepare(
+          `INSERT INTO market_data (symbol, provider, interval, timestamp, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          "SPY",
+          "alpha_vantage",
+          "daily",
+          "2020-01-01T16:00:00-05:00",
+          100,
+          110,
+          95,
+          105,
+          1000,
+        );
+    const downAv = () => makeAvStub(() => Promise.reject(new Error("AV down")));
+
+    it("a cache hit after a fallback to stored rows still carries the flag", async () => {
+      seedOldRow();
+      const av = downAv();
+      const layer = new DataLayer(av, null, null);
+      const first = await layer.getDaily("SPY", { lookback: 1 });
+      const second = await layer.getDaily("SPY", { lookback: 1 });
+      expect(first.stale).toBe(true);
+      expect(second.stale).toBe(true);
+      expect(second.bars).toEqual(first.bars);
+      // The second answer is the cache, not a new attempt.
+      expect((av.fetchDaily as any).mock.calls.length).toBe(1);
+      expect(layer.stats().l1Hits).toBe(1);
+    });
+
+    it("a caller that joins a fetch in progress gets that fetch's flag", async () => {
+      seedOldRow();
+      let rejectFn: (e: Error) => void = () => {};
+      const pending = new Promise<MarketBar[]>((_, rej) => (rejectFn = rej));
+      const av = makeAvStub(() => pending);
+      const layer = new DataLayer(av, null, null);
+      const p1 = layer.getDaily("SPY", { lookback: 1 });
+      const p2 = layer.getDaily("SPY", { lookback: 1 });
+      rejectFn(new Error("AV down"));
+      const [r1, r2] = await Promise.all([p1, p2]);
+      expect((av.fetchDaily as any).mock.calls.length).toBe(1);
+      expect(layer.stats().inflightDedups).toBe(1);
+      expect(r1.stale).toBe(true);
+      expect(r2.stale).toBe(true);
+    });
+
+    it("a cache hit after a fresh fetch carries no flag", async () => {
+      const av = makeAvStub([
+        makeBar({ timestamp: "2026-04-17T16:00:00-04:00" }),
+      ]);
+      const layer = new DataLayer(av, null, null);
+      const first = await layer.getDaily("SPY", { lookback: 1 });
+      const second = await layer.getDaily("SPY", { lookback: 1 });
+      expect((av.fetchDaily as any).mock.calls.length).toBe(1);
+      expect(first.stale).toBeUndefined();
+      expect(second.stale).toBeUndefined();
+    });
+  });
+
   it("L2 returns one bar per session when both providers stored it (polygon T00:00 vs AV T16:00)", async () => {
     const ins = db.prepare(
       `INSERT INTO market_data (symbol, provider, interval, timestamp, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?,?,?)`,
@@ -557,6 +619,35 @@ describe("DataLayer.getWeekly — Polygon weekly", () => {
     );
     expect(kept.stale).toBe(true);
     expect(kept.bars).toHaveLength(1);
+  });
+
+  it("a cached weekly fallback answer keeps the flag on the next call", async () => {
+    insertWeekly(friday("2026-04-03", "alpha_vantage", 400));
+    const both = stubs([], []);
+    const layer = new DataLayer(both.av, both.poly, null);
+    const first = await layer.getWeekly("SPY", { lookback: 10 });
+    const second = await layer.getWeekly("SPY", { lookback: 10 });
+    expect(first.stale).toBe(true);
+    expect(second.stale).toBe(true);
+    expect(both.poly.fetchWeekly).toHaveBeenCalledTimes(1);
+  });
+
+  it("a weekly caller that joins a fetch in progress gets that fetch's flag", async () => {
+    insertWeekly(friday("2026-04-03", "alpha_vantage", 400));
+    const down = stubs([], new Error("AV down"));
+    let rejectFn: (e: Error) => void = () => {};
+    const pending = new Promise<MarketBar[]>((_, rej) => (rejectFn = rej));
+    down.poly.fetchWeekly = vi.fn().mockImplementation(() => pending);
+    const layer = new DataLayer(down.av, down.poly, null);
+    const p1 = layer.getWeekly("SPY", { lookback: 10 });
+    const p2 = layer.getWeekly("SPY", { lookback: 10 });
+    rejectFn(new Error("Polygon down"));
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(down.poly.fetchWeekly).toHaveBeenCalledTimes(1);
+    expect(down.av.fetchWeekly).toHaveBeenCalledTimes(1);
+    expect(r1.stale).toBe(true);
+    expect(r2.stale).toBe(true);
+    expect(r2.bars).toHaveLength(1);
   });
 
   it("the AV leg answers from the stitched DB read too — never the adapter's raw closes", async () => {

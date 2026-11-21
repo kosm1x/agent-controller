@@ -46,10 +46,18 @@ import {
 } from "./budget.js";
 import { errMsg } from "../lib/err-msg.js";
 
-// L1 cache entry. `ts` is the wall-clock millis when populated.
+// L1 cache entry. `ts` is the wall-clock millis when populated. `stale` keeps
+// the fetch's fallback flag, so a cache hit on a fallback answer still says so.
 interface CacheEntry {
   ts: number;
   bars: MarketBar[];
+  stale?: true;
+}
+
+/** A dispatch's answer as shared with callers that join it in flight. */
+interface Fetched {
+  bars: MarketBar[];
+  stale?: true;
 }
 
 const DAILY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -80,7 +88,7 @@ interface DbBarRow {
 
 export class DataLayer {
   private readonly l1 = new Map<string, CacheEntry>();
-  private readonly inflight = new Map<string, Promise<MarketBar[]>>();
+  private readonly inflight = new Map<string, Promise<Fetched>>();
   private readonly macroL1 = new Map<
     string,
     { ts: number; points: MacroPoint[] }
@@ -160,7 +168,11 @@ export class DataLayer {
     const cached = this.l1Lookup(key, DAILY_TTL_MS);
     if (cached) {
       this.cacheStats.l1Hits++;
-      return { bars: cached, provider: cached[0]?.provider ?? "alpha_vantage" };
+      return {
+        bars: cached,
+        provider: cached[0]?.provider ?? "alpha_vantage",
+        stale: this.l1.get(key)?.stale,
+      };
     }
 
     // L2: DB. If we have enough fresh rows, return them.
@@ -180,22 +192,21 @@ export class DataLayer {
     const existing = this.inflight.get(key);
     if (existing) {
       this.cacheStats.inflightDedups++;
-      const bars = await existing;
-      return { bars, provider: bars[0]?.provider ?? "alpha_vantage" };
+      const { bars, stale } = await existing;
+      return { bars, provider: bars[0]?.provider ?? "alpha_vantage", stale };
     }
 
     this.cacheStats.fetches++;
-    const fetchPromise = this.fetchDailyDispatch(symbol, opts.lookback, dbRows);
+    const fetchPromise = this.fetchDailyDispatch(
+      symbol,
+      opts.lookback,
+      dbRows,
+    ).then((bars) => fetched(bars, dbRows));
     this.inflight.set(key, fetchPromise);
     try {
-      const bars = await fetchPromise;
-      this.l1Set(key, bars);
-      const stale = bars.length > 0 && bars === dbRows;
-      return {
-        bars,
-        provider: bars[0]?.provider ?? "alpha_vantage",
-        stale: stale ? true : undefined,
-      };
+      const { bars, stale } = await fetchPromise;
+      this.l1Set(key, bars, stale);
+      return { bars, provider: bars[0]?.provider ?? "alpha_vantage", stale };
     } finally {
       this.inflight.delete(key);
     }
@@ -272,7 +283,11 @@ export class DataLayer {
       cached &&
       (current(cached) || Date.now() - cachedAt < WEEKLY_RETRY_MS)
     ) {
-      return { bars: cached, provider: cached[0]?.provider ?? "alpha_vantage" };
+      return {
+        bars: cached,
+        provider: cached[0]?.provider ?? "alpha_vantage",
+        stale: this.l1.get(key)?.stale,
+      };
     }
 
     const dbRows = this.dbBars(symbol, "weekly", opts.lookback);
@@ -287,25 +302,20 @@ export class DataLayer {
 
     const existing = this.inflight.get(key);
     if (existing) {
-      const bars = await existing;
-      return { bars, provider: bars[0]?.provider ?? "alpha_vantage" };
+      const { bars, stale } = await existing;
+      return { bars, provider: bars[0]?.provider ?? "alpha_vantage", stale };
     }
 
     const fetchPromise = this.fetchWeeklyDispatch(
       symbol,
       opts.lookback,
       dbRows,
-    );
+    ).then((bars) => fetched(bars, dbRows));
     this.inflight.set(key, fetchPromise);
     try {
-      const bars = await fetchPromise;
-      this.l1Set(key, bars);
-      const stale = bars.length > 0 && bars === dbRows;
-      return {
-        bars,
-        provider: bars[0]?.provider ?? "alpha_vantage",
-        stale: stale ? true : undefined,
-      };
+      const { bars, stale } = await fetchPromise;
+      this.l1Set(key, bars, stale);
+      return { bars, provider: bars[0]?.provider ?? "alpha_vantage", stale };
     } finally {
       this.inflight.delete(key);
     }
@@ -410,13 +420,15 @@ export class DataLayer {
     }
     const existing = this.inflight.get(key);
     if (existing) {
-      const bars = await existing;
+      const { bars } = await existing;
       return { bars, provider: bars[0]?.provider ?? "alpha_vantage" };
     }
-    const p = this.fetchIntradayDispatch(symbol, interval, opts.lookback);
+    const p = this.fetchIntradayDispatch(symbol, interval, opts.lookback).then(
+      (bars) => ({ bars }),
+    );
     this.inflight.set(key, p);
     try {
-      const bars = await p;
+      const { bars } = await p;
       this.l1Set(key, bars);
       return { bars, provider: bars[0]?.provider ?? "alpha_vantage" };
     } finally {
@@ -647,14 +659,14 @@ export class DataLayer {
     return entry.bars;
   }
 
-  private l1Set(key: string, bars: MarketBar[]): void {
+  private l1Set(key: string, bars: MarketBar[], stale?: true): void {
     // FIFO eviction: Map iteration order is insertion order, so the first
     // key is the oldest. This caps memory without an LRU library.
     if (this.l1.size >= L1_MAX_ENTRIES) {
       const oldest = this.l1.keys().next().value;
       if (oldest !== undefined) this.l1.delete(oldest);
     }
-    this.l1.set(key, { ts: Date.now(), bars });
+    this.l1.set(key, { ts: Date.now(), bars, stale });
   }
 
   private dbDaily(symbol: string, lookback: number): MarketBar[] {
@@ -805,6 +817,11 @@ export class DataLayer {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** The fallback flag: the dispatch handed back the stored rows it was given. */
+function fetched(bars: MarketBar[], dbRows: MarketBar[]): Fetched {
+  return bars.length > 0 && bars === dbRows ? { bars, stale: true } : { bars };
+}
 
 /**
  * Normalize a symbol string for storage.

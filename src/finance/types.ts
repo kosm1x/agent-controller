@@ -56,6 +56,10 @@ export interface MarketBar {
   close: number;
   volume: number;
   adjustedClose?: number;
+  /** Quote only: the source's previous session close, when it gives one. */
+  previousClose?: number;
+  /** Quote only: the source's change against the previous close, in percent, when it gives one. */
+  changePercent?: number;
   provider: BarProvider;
   interval: Interval;
 }
