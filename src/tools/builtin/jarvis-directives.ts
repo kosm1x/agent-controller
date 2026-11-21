@@ -77,7 +77,7 @@ AFTER PROPOSING: Tell the user what you proposed and ask for approval.`,
           current_content: {
             type: "string",
             description:
-              "The current content that would be replaced (for modify/remove). Omit for add.",
+              "The exact current text to replace (modify) or delete (remove). A modify or remove proposal without it is written but cannot be applied. Omit for add.",
           },
           proposed_content: {
             type: "string",
@@ -267,10 +267,28 @@ NEVER call this without explicit user approval in the current message.`,
 
   async execute(args: Record<string, unknown>): Promise<string> {
     const slug = args.proposal_slug as string;
+    if (!slug) {
+      return JSON.stringify({
+        error: `No proposal name given — nothing applied.`,
+      });
+    }
 
-    // Find the proposal
-    const proposals = listFiles({ prefix: PROPOSALS_PREFIX });
-    const match = proposals.find((p) => p.path.includes(slug));
+    // Find the proposal: the given name must equal its name part, its dated
+    // file name or its full path, never a part of one, and only one may match.
+    const proposals = listFiles({ prefix: PROPOSALS_PREFIX }).map((p) => {
+      const dated = p.path.slice(PROPOSALS_PREFIX.length).replace(/\.md$/, "");
+      const name = dated.replace(/^\d{4}-\d{2}-\d{2}-/, "");
+      return { path: p.path, dated, name };
+    });
+    const matches = proposals.filter(
+      (p) => p.name === slug || p.dated === slug || p.path === slug,
+    );
+    if (matches.length > 1) {
+      return JSON.stringify({
+        error: `${matches.length} proposals match "${slug}" — nothing applied. Pass one of these names: ${matches.map((p) => p.dated).join(", ")}.`,
+      });
+    }
+    const match = matches[0];
     if (!match) {
       return JSON.stringify({
         error: `Proposal "${slug}" not found in knowledge/proposals/.`,
@@ -335,6 +353,16 @@ NEVER call this without explicit user approval in the current message.`,
           });
         }
         const oldText = currentMatch?.[1] ?? "";
+        if (!oldText) {
+          return JSON.stringify({
+            error: `Proposal at ${match.path} is a modify without current content — nothing applied. Propose it again with the text to replace.`,
+          });
+        }
+        if (!existing.content.includes(oldText)) {
+          return JSON.stringify({
+            error: `The current content in ${match.path} is not in ${targetPath} — nothing applied.`,
+          });
+        }
         const newText = proposedMatch?.[1] ?? "";
         // replaceAll: if the pattern appears multiple times, change all of them
         const updated = existing.content.split(oldText).join(newText);
@@ -359,6 +387,16 @@ NEVER call this without explicit user approval in the current message.`,
           });
         }
         const oldText = currentMatch?.[1] ?? "";
+        if (!oldText) {
+          return JSON.stringify({
+            error: `Proposal at ${match.path} is a remove without current content — nothing applied. Propose it again with the text to remove.`,
+          });
+        }
+        if (!existing.content.includes(oldText)) {
+          return JSON.stringify({
+            error: `The current content in ${match.path} is not in ${targetPath} — nothing applied.`,
+          });
+        }
         const updated = existing.content.split(oldText).join("").trim();
         upsertFile(
           targetPath,
@@ -374,6 +412,10 @@ NEVER call this without explicit user approval in the current message.`,
           existing.qualifier,
           existing.priority,
         );
+      } else {
+        return JSON.stringify({
+          error: `Proposal at ${match.path} has the unknown type "${changeType}" — nothing applied.`,
+        });
       }
 
       // Log the decision

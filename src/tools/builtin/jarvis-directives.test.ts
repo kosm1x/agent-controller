@@ -196,18 +196,27 @@ describe("jarvis_propose_directive cooldown (SG4)", () => {
 
 describe("jarvis_apply_proposal failures are one error object", () => {
   const PROPOSAL_PATH = "knowledge/proposals/2026-11-21-test-proposal.md";
-  const proposalText = (type: string): string =>
+  const OLDER_PATH = "knowledge/proposals/2026-11-20-test-proposal.md";
+  /** `current` null leaves the Current block out; "" gives an empty block. */
+  const proposalText = (
+    type: string,
+    current: string | null = "old text",
+  ): string =>
     [
       "# Proposal: Test Proposal",
       "",
       "**Target:** directives/core.md",
       `**Type:** ${type}`,
       "",
-      "## Current Content",
-      "<<<CURRENT>>>",
-      "old text",
-      "<<<END_CURRENT>>>",
-      "",
+      ...(current === null
+        ? []
+        : [
+            "## Current Content",
+            "<<<CURRENT>>>",
+            current,
+            "<<<END_CURRENT>>>",
+            "",
+          ]),
       "## Proposed Content",
       "<<<PROPOSED>>>",
       "new text",
@@ -236,10 +245,21 @@ describe("jarvis_apply_proposal failures are one error object", () => {
   });
 
   /** getFile answers the proposal path and the target path separately. */
-  function files(proposal: unknown, targetFile: unknown): void {
+  function files(
+    proposal: unknown,
+    targetFile: unknown,
+    proposalPath = PROPOSAL_PATH,
+  ): void {
     mockAll.getFile.mockImplementation((path: string) =>
-      path === PROPOSAL_PATH ? proposal : targetFile,
+      path === proposalPath ? proposal : targetFile,
     );
+  }
+
+  /** The proposal paths getFile was asked for. */
+  function proposalsRead(): string[] {
+    return mockAll.getFile.mock.calls
+      .map((c) => c[0] as string)
+      .filter((p) => p.startsWith("knowledge/proposals/"));
   }
 
   function expectNoWrite(): void {
@@ -322,5 +342,221 @@ describe("jarvis_apply_proposal failures are one error object", () => {
     );
     expect(lines).toHaveLength(3);
     expect(mockAll.deleteFile).toHaveBeenCalledWith(PROPOSAL_PATH);
+  });
+
+  const apply = (name: unknown): Promise<string> =>
+    jarvisApplyProposalTool.execute({ proposal_slug: name });
+
+  for (const [label, current] of [
+    ["without a current-content block", null],
+    ["whose current-content block is empty", ""],
+  ] as const) {
+    it(`a modify proposal ${label} is refused before any write`, async () => {
+      files({ content: proposalText("modify", current) }, target);
+      expect(errorText(await apply("test-proposal"))).toBe(
+        `Proposal at ${PROPOSAL_PATH} is a modify without current content — nothing applied. Propose it again with the text to replace.`,
+      );
+      expectNoWrite();
+    });
+
+    it(`a remove proposal ${label} is refused before any write`, async () => {
+      files({ content: proposalText("remove", current) }, target);
+      expect(errorText(await apply("test-proposal"))).toBe(
+        `Proposal at ${PROPOSAL_PATH} is a remove without current content — nothing applied. Propose it again with the text to remove.`,
+      );
+      expectNoWrite();
+    });
+  }
+
+  for (const type of ["modify", "remove"]) {
+    it(`a ${type} proposal whose current text is not in the target is refused before any write`, async () => {
+      files({ content: proposalText(type, "absent text") }, target);
+      expect(errorText(await apply("test-proposal"))).toBe(
+        `The current content in ${PROPOSAL_PATH} is not in directives/core.md — nothing applied.`,
+      );
+      expectNoWrite();
+    });
+  }
+
+  it("a proposal with an unknown type word is refused before any write", async () => {
+    files({ content: proposalText("rename") }, target);
+    expect(errorText(await apply("test-proposal"))).toBe(
+      `Proposal at ${PROPOSAL_PATH} has the unknown type "rename" — nothing applied.`,
+    );
+    expectNoWrite();
+  });
+
+  it("a modify writes the replaced text, then the decision log, then deletes the proposal", async () => {
+    files({ content: proposalText("modify") }, target);
+    const lines = (await apply("test-proposal")).split("\n");
+    expect(lines[0]).toBe("✅ **Propuesta aplicada:** test-proposal");
+    expect(lines[1]).toBe("Target: directives/core.md (modify)");
+    expect(lines).toHaveLength(3);
+    expect(mockAll.upsertFile).toHaveBeenCalledTimes(2);
+    expect(mockAll.upsertFile.mock.calls[0]).toEqual([
+      "directives/core.md",
+      "Core",
+      "new text here",
+      [],
+      "reference",
+      50,
+    ]);
+    expect(mockAll.upsertFile.mock.calls[1][0]).toMatch(
+      /^logs\/decisions\/\d{4}-\d{2}-\d{2}-test-proposal\.md$/,
+    );
+    expect(mockAll.deleteFile).toHaveBeenCalledOnce();
+    expect(mockAll.deleteFile).toHaveBeenCalledWith(PROPOSAL_PATH);
+    expect(mockAll.upsertFile.mock.invocationCallOrder[1]).toBeLessThan(
+      mockAll.deleteFile.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("a modify replaces every occurrence of the current text", async () => {
+    files(
+      { content: proposalText("modify") },
+      { ...target, content: "old text, then old text again" },
+    );
+    await apply("test-proposal");
+    expect(mockAll.upsertFile.mock.calls[0][2]).toBe(
+      "new text, then new text again",
+    );
+  });
+
+  it("an add appends the new text to an existing target", async () => {
+    files({ content: proposalText("add") }, target);
+    await apply("test-proposal");
+    expect(mockAll.upsertFile.mock.calls[0][0]).toBe("directives/core.md");
+    expect(mockAll.upsertFile.mock.calls[0][2]).toBe("old text here\nnew text");
+    expect(mockAll.deleteFile).toHaveBeenCalledWith(PROPOSAL_PATH);
+  });
+
+  it("a remove deletes the current text and trims the rest", async () => {
+    files({ content: proposalText("remove") }, target);
+    const result = await apply("test-proposal");
+    expect(result.split("\n")[1]).toBe("Target: directives/core.md (remove)");
+    expect(mockAll.upsertFile.mock.calls[0][0]).toBe("directives/core.md");
+    expect(mockAll.upsertFile.mock.calls[0][2]).toBe("here");
+    expect(mockAll.deleteFile).toHaveBeenCalledWith(PROPOSAL_PATH);
+  });
+
+  it("an empty or missing name is refused before the proposals are listed", async () => {
+    // A proposal whose name part is empty exists, so only the refusal keeps
+    // an empty name from applying it.
+    const emptyNamePath = "knowledge/proposals/2026-11-21-.md";
+    mockAll.listFiles.mockReturnValue([{ path: emptyNamePath }]);
+    files({ content: proposalText("add") }, target, emptyNamePath);
+    for (const name of ["", undefined]) {
+      expect(errorText(await apply(name))).toBe(
+        "No proposal name given — nothing applied.",
+      );
+    }
+    expect(mockAll.listFiles).not.toHaveBeenCalled();
+    expect(mockAll.getFile).not.toHaveBeenCalled();
+    expectNoWrite();
+  });
+
+  it("a name that is only part of a proposal's path is not found", async () => {
+    files({ content: proposalText("add") }, target);
+    for (const name of [
+      "t",
+      "test",
+      "proposals",
+      "knowledge/proposals/",
+      "2026-11-21",
+      "-",
+      ".md",
+    ]) {
+      expect(errorText(await apply(name))).toBe(
+        `Proposal "${name}" not found in knowledge/proposals/.`,
+      );
+    }
+    expect(mockAll.getFile).not.toHaveBeenCalled();
+    expectNoWrite();
+  });
+
+  it("two proposals with the same name part are refused, naming both dated names", async () => {
+    mockAll.listFiles.mockReturnValue([
+      { path: OLDER_PATH },
+      { path: PROPOSAL_PATH },
+    ]);
+    files({ content: proposalText("add") }, target);
+    expect(errorText(await apply("test-proposal"))).toBe(
+      '2 proposals match "test-proposal" — nothing applied. Pass one of these names: 2026-11-20-test-proposal, 2026-11-21-test-proposal.',
+    );
+    expect(mockAll.getFile).not.toHaveBeenCalled();
+    expectNoWrite();
+  });
+
+  it("the dated name applies that proposal and no other", async () => {
+    mockAll.listFiles.mockReturnValue([
+      { path: OLDER_PATH },
+      { path: PROPOSAL_PATH },
+    ]);
+    files({ content: proposalText("add") }, target);
+    await apply("2026-11-21-test-proposal");
+    expect(proposalsRead()).toEqual([PROPOSAL_PATH]);
+    expect(mockAll.deleteFile).toHaveBeenCalledOnce();
+    expect(mockAll.deleteFile).toHaveBeenCalledWith(PROPOSAL_PATH);
+  });
+
+  it("a name that starts a longer one applies the exact one, even when the longer is listed first", async () => {
+    const shortPath = "knowledge/proposals/2026-11-21-test.md";
+    mockAll.listFiles.mockReturnValue([
+      { path: OLDER_PATH },
+      { path: shortPath },
+    ]);
+    files({ content: proposalText("add") }, target, shortPath);
+    await apply("test");
+    expect(proposalsRead()).toEqual([shortPath]);
+    expect(mockAll.deleteFile).toHaveBeenCalledOnce();
+    expect(mockAll.deleteFile).toHaveBeenCalledWith(shortPath);
+  });
+
+  it("the full path applies that proposal and no other", async () => {
+    mockAll.listFiles.mockReturnValue([
+      { path: OLDER_PATH },
+      { path: PROPOSAL_PATH },
+    ]);
+    files({ content: proposalText("add") }, target);
+    await apply(PROPOSAL_PATH);
+    expect(proposalsRead()).toEqual([PROPOSAL_PATH]);
+    expect(mockAll.deleteFile).toHaveBeenCalledOnce();
+    expect(mockAll.deleteFile).toHaveBeenCalledWith(PROPOSAL_PATH);
+  });
+
+  it("a proposal in a sub-folder is named by its path below the proposals folder", async () => {
+    // The leading date is dropped only at the start of that path, so the
+    // sub-folder stays part of the name.
+    const subPath = "knowledge/proposals/sub/2026-11-21-test-proposal.md";
+    mockAll.listFiles.mockReturnValue([{ path: subPath }]);
+    files({ content: proposalText("add") }, target, subPath);
+    expect(errorText(await apply("test-proposal"))).toBe(
+      'Proposal "test-proposal" not found in knowledge/proposals/.',
+    );
+    expectNoWrite();
+    await apply("sub/2026-11-21-test-proposal");
+    expect(mockAll.deleteFile).toHaveBeenCalledOnce();
+    expect(mockAll.deleteFile).toHaveBeenCalledWith(subPath);
+  });
+
+  it("only the leading date is cut from a name part, and the case of the name counts", async () => {
+    const datePart = "knowledge/proposals/2026-11-21-2026-11-20-plan.md";
+    const digitPart = "knowledge/proposals/2026-11-21-2026-plan.md";
+    mockAll.listFiles.mockReturnValue([
+      { path: datePart },
+      { path: digitPart },
+      { path: PROPOSAL_PATH },
+    ]);
+    files({ content: proposalText("add") }, target, datePart);
+    for (const name of ["plan", "11-20-plan", "Test-Proposal"]) {
+      expect(errorText(await apply(name))).toBe(
+        `Proposal "${name}" not found in knowledge/proposals/.`,
+      );
+    }
+    expectNoWrite();
+    await apply("2026-11-20-plan");
+    expect(proposalsRead()).toEqual([datePart]);
+    expect(mockAll.deleteFile).toHaveBeenCalledOnce();
+    expect(mockAll.deleteFile).toHaveBeenCalledWith(datePart);
   });
 });
