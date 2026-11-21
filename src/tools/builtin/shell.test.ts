@@ -1329,9 +1329,9 @@ B`;
   });
 
   describe("williams-entry-radar write access", () => {
-    // The radar repo is Jarvis's autonomous build. He needs write access
+    // This sibling repo is Jarvis's autonomous build. He needs write access
     // for tooling/scripts the operator authorizes (see CLAUDE.md in the
-    // repo). Pre-fix /root/claude/williams-entry-radar/ was not in
+    // repo). Pre-fix its path was not in
     // ALLOW_WRITE_PREFIXES — heredoc-based file writes were rejected.
     it("allows writes inside the radar repo", () => {
       const r = validateShellCommand(
@@ -1348,8 +1348,7 @@ B`;
     });
 
     it("allows writes to any project repo under /root/claude/", () => {
-      // Sibling repos (vlcrm, intelligence-ops-mcp, eurekams-intelligence-ui, …)
-      // are all legitimate targets — the allow-list is a single /root/claude/ prefix,
+      // Sibling repos are all legitimate targets — the allow-list is a single /root/claude/ prefix,
       // so it can't drift out of date and block a repo it forgot to enumerate.
       const r = validateShellCommand(
         "echo data > /root/claude/eurekams-intelligence-ui/web/build.log",

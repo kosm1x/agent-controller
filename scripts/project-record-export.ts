@@ -135,7 +135,7 @@ export function buildRecordFromRow(
   // validity can depend on another (a `capabilities.mcp[].env` `{name, secret}`
   // must name an entry of `secrets`: the `superRefine` of `projectContractSchema`
   // in src/projects/record.ts), so a key
-  // probed alone is judged wrongly (incident 2026-10-12: eurekams lost its
+  // probed alone is judged wrongly (incident 2026-10-12: a project lost its
   // `capabilities`). Pass 1: every present owned key. On failure, the keys an
   // issue names (`path[0]`) are invalid and the rest are re-probed together
   // (pass 2); if that fails too, per key.

@@ -408,7 +408,7 @@ describe("canonicalProjectSlug — C1: every resolved slug must name a projects 
   });
 
   it("a detector folder name resolves through an ACTIVE/PAUSED row's alias, case-insensitive; the archived row with the same alias is skipped", () => {
-    // the shape of `williams-radar` → `williams-entry-radar` via alias `williams`
+    // the shape of `<name>-radar` → `<name>-entry-radar` via alias `<name>`
     expect(canonicalProjectSlug(getDatabase(), "acme-radar", "chat")).toBe("acme-entry-radar");
   });
 

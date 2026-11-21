@@ -139,7 +139,7 @@ const PROJECT_SLUGS = [
 
 /** Match project names in message text (slug or natural name). */
 export function detectProjectInMessage(text: string): string | null {
-  // very-light-cms (VLCMS, the thewilliamsradar.com CMS) and vlmp (the media
+  // very-light-cms (VLCMS, a site's CMS) and vlmp (the media
   // player) are unrelated repos. Checked before the slug loop so a message
   // naming both ("VLCMS is not VLMP") binds to VLCMS, not to the "vlmp" slug.
   if (/\bvlcms\b|\bvery[ -]light[ -]cms\b/i.test(text)) {
@@ -157,8 +157,8 @@ export function detectProjectInMessage(text: string): string | null {
   if (/\bvlmp\b/i.test(text)) return "vlmp";
   if (/\bpipesong\b/i.test(text)) return "pipesong";
   // "Williams" alone always refers to the Williams Entry Radar in this
-  // workspace. We don't alias bare "radar" — "PipeSong Tech Radar" and
-  // other project-specific radars would collide.
+  // workspace. We don't alias bare "radar" — another project's "Tech Radar"
+  // and other project-specific radars would collide.
   if (/\bwilliams\b/i.test(text)) return "williams-entry-radar";
   return null;
 }

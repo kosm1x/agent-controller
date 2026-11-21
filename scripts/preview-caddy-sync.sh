@@ -11,7 +11,7 @@
 # ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$ and must not collide with an existing
 # explicit vhost (RESERVED below; anything else is caught by caddy validate,
 # which reverts the generated file).
-# codie-checklist reserved 2026-09-26: promoted to an explicit Caddyfile vhost
+# A project reserved 2026-09-26: promoted to an explicit Caddyfile vhost
 # that proxies /api/* to :3031; generating it too would duplicate the site block.
 set -euo pipefail
 

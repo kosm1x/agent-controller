@@ -6,7 +6,8 @@
  * This ritual closes that gap: every 2 min it GETs /api/v1/alerts and pushes
  * NEWLY firing (and newly resolved) alerts to the operator's owner channels
  * (WhatsApp / Telegram / owner-email if configured). It covers ALL mc alert
- * rules (vps-system, mission-control, hindsight, salones-wa), not just one.
+ * rules (the vps-system, mission-control and monitoring-meta groups and a sibling
+ * service's group), not just one.
  * Delivery to ZERO channels is treated as a failure (retried), never a
  * silent-commit (qa-C1).
  *
@@ -17,7 +18,7 @@
  * a false "resolved", because a failed fetch leaves the state untouched).
  *
  * Re-alert cadence (2026-06-12): pure notify-once let a single missed ping become
- * a multi-day silent outage (the salones-wa logout — one 23:00-MX
+ * a multi-day silent outage (a sibling service's logout — one 23:00-MX
  * notification, then ~22h of silence). So a still-firing CRITICAL alert is
  * re-announced every ALERT_RENOTIFY_HOURS (default 6h) as a reminder, resetting
  * its per-fingerprint clock on each send. Only `critical` re-nags — warnings stay
@@ -30,8 +31,7 @@
  *   ALERT_RENOTIFY_HOURS   re-alert interval for still-firing criticals (default 6; 0 disables)
  *
  * Delivery reuses router.broadcastToAll → WHATSAPP_OWNER_JID /
- * TELEGRAM_OWNER_CHAT_ID (whichever are configured). See queue: salones-wa
- * alert-delivery follow-up (2026-06-06).
+ * TELEGRAM_OWNER_CHAT_ID (whichever are configured).
  */
 import { getRouter } from "../messaging/index.js";
 

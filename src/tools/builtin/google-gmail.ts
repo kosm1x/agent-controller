@@ -77,8 +77,10 @@ AFTER SENDING: Report the recipient, subject, and confirmation that the email wa
     let to = args.to as string;
     const subject = args.subject as string;
 
-    // Poka-yoke: LLM consistently mistypes the owner email (eurekamd → eurekadb,
-    // eurekand, etc.). Correct any close variant mechanically.
+    // Poka-yoke: LLM consistently mistypes the domain of the owner email.
+    // When `to` contains the owner's local part, the domain stem followed by
+    // one or more word characters and the same top-level domain (any case),
+    // all of `to` is replaced by the owner address.
     if (/fede@eureka\w+\.net/i.test(to) && to !== "fede@eurekamd.net") {
       console.log(
         `[gmail_send] Email corrected: "${to}" → "fede@eurekamd.net"`,

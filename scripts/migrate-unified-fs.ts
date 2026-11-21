@@ -135,7 +135,7 @@ function getDynamicMoves(): Array<[string, string, string?]> {
     moves.push([path, `inbox/${filename}`]);
   }
 
-  // research/* → projects/cuatro-flor/research/*
+  // research/* → projects/<one fixed project>/research/*
   const research = db
     .prepare("SELECT path FROM jarvis_files WHERE path LIKE 'research/%'")
     .all() as Array<{ path: string }>;

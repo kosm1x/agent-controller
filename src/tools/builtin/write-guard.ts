@@ -114,7 +114,7 @@ export function realResolveParent(p: string): string {
  * The operator's own governance/config surface directly under /root/claude/:
  * the Claude Code config + hooks (.claude/), MCP server config (.mcp.json), env,
  * and the umbrella CLAUDE.md. These are NOT project content (which lives under a
- * named repo directory at depth >= 2, e.g. /root/claude/vlcrm/…) and they govern
+ * named repo directory at depth >= 2, e.g. /root/claude/<repo>/…) and they govern
  * the operator's OWN sessions — a settings/hook rewrite is command execution on
  * the operator's next tool call. Any TOP-LEVEL dotfile/dotdir qualifies, so a
  * future one is protected without editing a list. A repo's own CLAUDE.md (depth

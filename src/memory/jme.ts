@@ -458,7 +458,7 @@ const RECALL_FILLER_WORDS = new Set([
  * stripped (it made "Listo" recall 8 facts — audit W1). Tokens are
  * letters/digits ≥ 3 chars, filler words excluded; the message recalls when
  * it has ≥ 2 tokens OR one non-stopword token ≥ 4 chars (a single entity:
- * "¿y Trustr?" — qa R2 W7). Otherwise null — the caller skips recall
+ * "¿y Example?" — qa R2 W7). Otherwise null — the caller skips recall
  * entirely (no embed, no block, no audit row).
  */
 export function jmeRecallQuery(text: string): string | null {
@@ -865,7 +865,7 @@ const JME_DIGITS_KEYWORD_WINDOW = 40;
  * numbers, long opaque tokens and keyword-labelled digit runs. The token rule
  * needs a digit AND a letter in the run (or ≥ 32 letters alone): on the 455
  * live facts (2026-09-30) that separated the one real id (a Drive file id)
- * from 10 legit paths, tool and repo names (`/root/claude/promo-video-agent`,
+ * from 10 legit paths, tool and repo names (a `/root/claude/<repo>` path,
  * `agent_create/update/…`). JME-only: redactSecrets' other callers keep their
  * semantics.
  */

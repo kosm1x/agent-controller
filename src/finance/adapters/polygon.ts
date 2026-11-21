@@ -240,7 +240,7 @@ export class PolygonAdapter implements MarketDataAdapter {
     });
 
     // Requested newest-first (a capped response then loses the OLDEST bars,
-    // never the newest — williams-entry-radar 2026-W37); callers want ascending.
+    // never the newest — seen 2026-W37); callers want ascending.
     const results = (body.results ?? [])
       .slice()
       .sort((a, b) => a.t - b.t)

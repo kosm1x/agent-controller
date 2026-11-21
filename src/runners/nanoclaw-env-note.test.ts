@@ -25,7 +25,7 @@ describe("buildEnvironmentNote — nanoclaw sandbox guards", () => {
     expect(note).toContain("cannot commit");
   });
 
-  // Layer B — sandbox-scope guard (the EurekaMS-Landing misroute fix). Must fire
+  // Layer B — sandbox-scope guard (the landing-site misroute fix). Must fire
   // on BOTH branches: the agent should never edit mc's own source as a substitute
   // for an absent target, and must emit the structured TARGET_NOT_IN_SANDBOX stop.
   it.each([["/workspace"], [null]] as const)(

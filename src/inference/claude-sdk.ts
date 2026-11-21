@@ -1310,8 +1310,8 @@ export async function queryClaudeSdk(opts: {
     // settings layer sets autoMemoryEnabled: false (sdk.d.ts: "When false,
     // Claude will not read from or write to the auto-memory directory").
     // Proven by the continuity bench's extracted leg (Port 4): the nightly
-    // JME consolidator (Haiku) emitted a "Pipesong … Phases 0-3 … 4a latency"
-    // fact in 16 of 26 scenarios; "pipesong" occurs nowhere in the corpus,
+    // JME consolidator (Haiku) emitted a fact about another project
+    // in 16 of 26 scenarios; that project's name occurs nowhere in the corpus,
     // the bench or jme.ts, only in that MEMORY.md. Every Jarvis SDK call ran
     // with the same cwd and user. Pinned by spec in claude-sdk.test.ts.
     settings: {

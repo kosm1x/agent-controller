@@ -418,7 +418,7 @@ export function migrateUserFactsToProjects(): void {
 
     if (facts.length === 0) return;
 
-    // Group by project prefix (e.g. "livingjoyfully_wp_user" → "livingjoyfully")
+    // Group by project prefix (e.g. "example-project_wp_user" → "example-project")
     const grouped = new Map<string, Record<string, string>>();
     for (const fact of facts) {
       const parts = fact.key.split("_");

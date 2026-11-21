@@ -45,7 +45,7 @@ const STATIC_PROJECT_SLUGS = [
 /**
  * Registry aliases the extractor ignores. A 2,000-row replay showed these
  * attributing NFL surnames (Caleb/Javonte/Kyren Williams), "systemd journal"
- * and "en el radar" to williams-entry-radar. They stay in projects.config for
+ * and "en el radar" to a project. They stay in projects.config for
  * dispatcher routing — only extraction skips them.
  */
 const EXTRACTOR_ALIAS_STOPLIST = new Set(["williams", "radar", "journal"]);
@@ -57,8 +57,8 @@ interface ProjectTerm {
 }
 
 /**
- * Word-boundary match, hyphen = optional hyphen/space ("cuatro flor" hits
- * `cuatro-flor`). `\b` is only added on an edge that is a word char, so names
+ * Word-boundary match, hyphen = optional hyphen/space ("example project" hits
+ * `example-project`). `\b` is only added on an edge that is a word char, so names
  * ending in ")" or "." can still match.
  */
 function termPattern(term: string): RegExp {

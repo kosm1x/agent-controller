@@ -285,7 +285,7 @@ export function isCodingTask(text: string): boolean {
 // A coding task that names a sibling repo under /root/claude — anything other than
 // the mission-control checkout — cannot run in the nanoclaw sandbox. That container
 // only mounts /root/claude/mission-control (read-only) and clones IT to /workspace,
-// so git/file ops on e.g. /root/claude/thewilliamsradar-journal hit a path that isn't
+// so git/file ops on e.g. /root/claude/example-project hit a path that isn't
 // in the container: they fail outright ("Read-only file system") or, worse, "succeed"
 // against the throwaway clone without ever landing on the host. Such tasks must stay
 // on a HOST runner (fast/heavy/swarm), where the repo physically exists and
@@ -310,15 +310,15 @@ export function targetsForeignRepo(text: string): boolean {
 /**
  * True when the text mentions a registered NON-mission-control project by slug
  * or name. Operators reference a sibling repo by name far more often than by
- * literal path — "termina la landing de EurekaMS", not
- * "/root/claude/EurekaMS-Landing" — so `targetsForeignRepo` (path-only) misses
+ * literal path — "termina la landing de <project>", not
+ * "/root/claude/<project>-landing" — so `targetsForeignRepo` (path-only) misses
  * them and the coding task wrongly routes to the mission-control-only nanoclaw
  * sandbox, where the agent confabulates edits to mc's OWN source (2026-06-24
- * EurekaMS-Landing incident). This catches the named case; the runner-side
+ * landing incident). This catches the named case; the runner-side
  * sandbox-scope guard catches the rest. `names` are pre-lowercased slugs/names
  * of non-mc projects (length-gated ≥4 by the resolver) — matched on a
- * non-alphanumeric word boundary so "eurekams" does not match inside
- * "eurekamsxyz".
+ * non-alphanumeric word boundary so "example" does not match inside
+ * "examplexyz".
  */
 export function referencesForeignProject(
   text: string,

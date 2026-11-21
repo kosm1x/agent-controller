@@ -131,7 +131,7 @@ const DEFAULT_TASKS = [
   "d6920620", // Skill evolution — 2026-09-05 (nightly ritual, 4 goals)
   "1ae5fe56", // Skill evolution — 2026-09-03
   "7ab38110", // Williams W37 analyst commentary rewrite (6 goals, 31 tool calls)
-  "b324396a", // trustr.mx handover review (3 goals, read-only)
+  "b324396a", // Project handover review (3 goals, read-only)
   "656a4b94", // Read LEARNINGS doc + report (2 goals, read-only)
   "613df433", // Fantasy 10k USD strategy (6 goals, $8.42 — the expensive shape)
   "eb91914c", // Deep research self-eval (3 goals, score 0.65)

@@ -128,7 +128,7 @@ describe("extractEntities", () => {
     const triples = extractEntities(
       "El proyecto Cuatro Flor avanza. Seguimos con el proyecto Cuatro Flor mañana",
     );
-    // "proyecto Cuatro Flor" matched twice by regex, dedup keeps one per path
+    // The project phrase matched twice by regex, dedup keeps one per path
     const projMentions = triples.filter(
       (t) =>
         t.subject === "cuatro flor" &&

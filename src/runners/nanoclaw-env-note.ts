@@ -5,9 +5,9 @@
  * importing `nanoclaw-worker.ts` (whose module body self-invokes `main()` —
  * reads stdin, inits the DB — and so cannot be imported from a test).
  *
- * Beyond the workspace mechanics it carries two guards added 2026-06-24 after a
- * landing-site coding task was misrouted into this sandbox (which holds ONLY
- * mission-control, so the real target repo was absent). Finding no EurekaMS repo,
+ * Beyond the workspace mechanics it carries three guards. The first two were
+ * added 2026-06-24 after a landing-site coding task was misrouted into this sandbox (which holds ONLY
+ * mission-control, so the real target repo was absent). Finding no target repo,
  * the agent confabulated edits to mission-control's OWN source, then base64-encoded
  * `commit` to dodge the shell-guard:
  *   1. SANDBOX SCOPE — only mission-control is here; any other target ⇒ STOP +

@@ -22,7 +22,7 @@
  * inverse: a coincidental common word ("data", "salon", "voice") matching and
  * thereby SUPPRESSING a real stall — which is exactly why bare short/generic
  * tokens are excluded (they also collide across projects, e.g.
- * salon-voice-outreach vs salones-wa). Tighten precision by adding alias terms
+ * two project slugs that share a word stem). Tighten precision by adding alias terms
  * to `projects.config` over time.
  *
  * Silence ≠ stall (operator correction 2026-06-24): a project can go quiet in
@@ -81,7 +81,7 @@ interface DayLogRow {
 const DATE_IN_PATH = /logs\/day-logs\/(\d{4}-\d{2}-\d{2})\.md$/;
 
 /** Match terms for a project: slug, full name, and significant name tokens, all
- *  lower-cased. The slug ("salones-wa") and a tokenized name ("salones") give
+ *  lower-cased. The slug ("example-project") and a tokenized name ("example") give
  *  two independent shots at a free-text mention.
  *
  *  S6 WS1: `{ aliases: true }` also adds each `config.aliases` entry (the
@@ -97,12 +97,12 @@ export function matchTermsFor(
   const name = p.name.toLowerCase().trim();
   // Distinctive whole-identity terms (precise, no cross-project collision).
   if (slug) {
-    terms.add(slug); // "salones-wa"
-    terms.add(slug.replace(/[-_]+/g, " ")); // "salones wa"
+    terms.add(slug); // "example-project"
+    terms.add(slug.replace(/[-_]+/g, " ")); // "example project"
   }
-  if (name) terms.add(name); // "salones wa"
+  if (name) terms.add(name); // "example project"
   // Distinctive single tokens only (len >= MIN_TOKEN_LEN, not generic) — keeps
-  // "salones"/"pipesong"/"outreach"; drops "data"/"salon"/"voice"/"intelligence".
+  // "example"/"outreach"; drops "data"/"salon"/"voice"/"intelligence".
   for (const tok of `${name} ${slug}`.split(/[^a-z0-9áéíóúñ]+/i)) {
     const t = tok.toLowerCase();
     if (t.length >= MIN_TOKEN_LEN && !COMMON_TOKENS.has(t)) terms.add(t);

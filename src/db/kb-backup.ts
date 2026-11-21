@@ -1,5 +1,5 @@
 /**
- * KB Backup — syncs jarvis_files to Supabase Postgres (db.mycommit.net).
+ * KB Backup — syncs jarvis_files to Supabase Postgres (address in `COMMIT_DB_URL`).
  *
  * Provides disaster recovery for Jarvis's knowledge base.
  * Push-only: SQLite → Postgres. Runs periodically or on-demand.

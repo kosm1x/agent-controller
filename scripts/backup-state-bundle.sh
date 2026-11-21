@@ -1,6 +1,6 @@
 #!/bin/bash
 # Mission-control state bundle — creates a hot-safe daily snapshot of all
-# irreplaceable mission-control state (+ the vlcrm lead DB, which has no other
+# irreplaceable mission-control state (+ a sibling repository's lead DB, which has no other
 # daily offsite copy) and parks it in /opt/supabase/backups/ so the PC's nightly
 # rsync (which already pulls that path) carries it offsite.
 #
@@ -47,12 +47,12 @@ if ! sqlite3 "${STAGE_DIR}/mc.db" "PRAGMA integrity_check;" | grep -qx ok; then
 fi
 echo "  + mc.db integrity_check ok"
 
-# vlcrm lead DB — co-located here for a DAILY offsite copy. vlcrm went live
-# 2026-07-05 (EurekaMS landing form → /ingest/web); its data/vlcrm.db (real form
-# leads) is NOT in the desktop daily pull — vlcrm is a top-level repo, not under
-# the pulled /root/claude/projects — so without this it lives only in the weekly
-# Hostinger image. SECONDARY + NON-FATAL: the bundle's primary job is mc.db; a
-# vlcrm snapshot/integrity failure alerts but must NOT abort the mc.db bundle.
+# Lead DB of a sibling repository (path in the variable below) — co-located here for a DAILY
+# offsite copy. It holds real form leads and is NOT in the desktop daily pull —
+# that repository is a top-level repo, not under the pulled /root/claude/projects
+# — so without this it lives only in the weekly Hostinger image. SECONDARY +
+# NON-FATAL: the bundle's primary job is mc.db; a lead-DB snapshot/integrity
+# failure alerts but must NOT abort the mc.db bundle.
 VLCRM_DB="/root/claude/vlcrm/data/vlcrm.db"
 if [ -f "$VLCRM_DB" ]; then
   if sqlite3 "$VLCRM_DB" ".backup '${STAGE_DIR}/vlcrm.db'" 2>/dev/null \

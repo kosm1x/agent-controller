@@ -465,9 +465,9 @@ function drainContainerQueue(): void {
 /**
  * Slugs + names of registered projects that are NOT mission-control. Fed to the
  * classifier so a coding task that NAMES a sibling project (e.g. "termina la
- * landing de EurekaMS") routes to a host runner instead of the
+ * landing de <project>") routes to a host runner instead of the
  * mission-control-only nanoclaw sandbox — the path-literal `targetsForeignRepo`
- * guard alone misses name references (2026-06-24 EurekaMS-Landing incident).
+ * guard alone misses name references (2026-06-24 landing incident).
  * Cheap (small table), recomputed per submission so newly-registered projects
  * take effect immediately. Length-gated ≥4 to avoid spurious short-slug matches.
  * Never throws — routing must not break on a project-table read.
@@ -505,8 +505,8 @@ function getForeignProjectNames(db: ReturnType<typeof getDatabase>): string[] {
       if (slug && slug.length >= 4) out.add(slug);
       if (name && name.length >= 4) out.add(name);
       // config.aliases: user-facing shorthand that names the project without
-      // its slug/name — e.g. "el Journal W29" targets williams-entry-radar's
-      // journal repo but contains neither "williams" nor "radar". The W29
+      // its slug/name — e.g. "el Journal W29" targets a project's
+      // journal repo but contains neither its slug nor its name. The W29
       // misroute (task cf40a528, 2026-07-18) sailed past this guard into the
       // nanoclaw sandbox on exactly that gap.
       try {

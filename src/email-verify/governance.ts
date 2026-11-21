@@ -1,6 +1,6 @@
 /**
  * email-verify — governance. Every SMTP probe leaves this box's mail IP
- * (mail.eurekams.net, the same IP Stalwart delivers from). These limits are
+ * (the same IP Stalwart delivers from). These limits are
  * the structural guard against burning its reputation:
  *
  * - daily cap on CONNECTIONS (every host tried and every retry is charged),

@@ -1044,7 +1044,7 @@ function scheduleJmeConsolidation(): void {
 }
 
 /**
- * Prometheus alert notifier (queue: salones-wa alert-delivery follow-up).
+ * Prometheus alert notifier.
  *
  * mc-prometheus evaluates alert rules but has no Alertmanager/Grafana wired, so
  * firing alerts only show in its UI. Every 2 min this polls /api/v1/alerts and

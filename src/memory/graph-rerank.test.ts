@@ -2,7 +2,7 @@
  * Tests for graph-aware coherence reranker.
  *
  * These tests rely on the real v6.5 entity extractor to build entity bags,
- * so fixtures use project slug mentions (`cuatro-flor`, `pipesong`, `vlmp`,
+ * so fixtures use project slug mentions (other project slugs, `vlmp`,
  * `pulso-aura-upfront`) that the mocked projects registry below makes the
  * extractor catch.
  */
@@ -103,10 +103,10 @@ describe("rerankByCoherence", () => {
     });
 
     it("builds coherent clusters from mixed-topic recall", () => {
-      // 6 items: 3 about cuatro-flor (high+mid+low scores), 2 about pipesong, 1 about pulso-aura-upfront.
+      // 6 items: 3 about one project (high+mid+low scores), 2 about a second, 1 about pulso-aura-upfront.
       // Without rerank: top-5 would interleave topics by raw score.
       // With rerank: after seeding with highest, we should see the
-      //              cuatro-flor trio grouped and pipesong pair grouped.
+      //              cf trio grouped and the ps pair grouped.
       const items = [
         item("cf1", "cuatro-flor día 5 terminé la síntesis final", 0.95),
         item("ps1", "pipesong TTS completé el fix de latency", 0.9),
@@ -133,12 +133,12 @@ describe("rerankByCoherence", () => {
         .map((id) => orderIds.indexOf(id))
         .sort((a, b) => a - b);
       expect(cfPositions).toEqual([0, 1, 2]);
-      // pipesong pair should then cluster together
+      // The ps pair should then cluster together
       const psPositions = ["ps1", "ps2"]
         .map((id) => orderIds.indexOf(id))
         .sort((a, b) => a - b);
       expect(psPositions[1] - psPositions[0]).toBe(1);
-      // Coherence should be > 0 because top-5 contains the cuatro-flor trio (3 pairs)
+      // Coherence should be > 0 because top-5 contains the cf trio (3 pairs)
       expect(result.coherence).toBeGreaterThan(0);
     });
   });
@@ -211,7 +211,7 @@ describe("rerankByCoherence", () => {
     });
 
     it("honors custom maxBonus cap when connections accumulate", () => {
-      // 4 items: seed 'a' (cuatro-flor), 2 connected at low score ('b','d'),
+      // 4 items: seed 'a' (one project), 2 connected at low score ('b','d'),
       // 1 disconnected at mid score ('c'). Permissive options (higher per-link
       // bonus + higher cap) should let the connected pair win over 'c'.
       const items = [

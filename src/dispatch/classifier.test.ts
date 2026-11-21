@@ -1015,7 +1015,7 @@ describe("classifier", () => {
   });
 
   // ----- Sibling repo named (no path) stays OFF nanoclaw (2026-06-24) -----
-  // Operators name a project, not a path: "termina la landing de EurekaMS" → the
+  // Operators name a project, not a path: "termina la landing de <project>" → the
   // path-literal targetsForeignRepo guard can't fire, the task wrongly hit the
   // mission-control-only nanoclaw sandbox, and the agent confabulated edits to mc's
   // OWN source. referencesForeignProject closes the named case.

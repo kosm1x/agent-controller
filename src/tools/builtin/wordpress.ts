@@ -6,8 +6,8 @@
  *
  * Example WP_SITES value:
  * {
- *   "livingjoyfully": { "url": "https://livingjoyfully.art", "username": "admin", "app_password": "xxxx xxxx xxxx" },
- *   "redlightinsider": { "url": "https://redlightinsider.com", "username": "admin", "app_password": "yyyy yyyy yyyy" }
+ *   "blog": { "url": "https://blog.example.com", "username": "admin", "app_password": "xxxx xxxx xxxx" },
+ *   "shop": { "url": "https://shop.example.org", "username": "admin", "app_password": "yyyy yyyy yyyy" }
  * }
  */
 

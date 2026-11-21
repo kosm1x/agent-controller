@@ -227,7 +227,7 @@ const SEED_EVENTS: ReadonlyArray<Omit<CreateGeneralEventInput, "created_by">> =
         "beta pilot window was missed; the project carries forward as an " +
         "active long-running engagement with a commercial-intelligence gap " +
         "still lacking production validation.",
-      // start-approximate: see denue-eurekamd-arc above (R1-R3 fold).
+      // start-approximate: see the start-approximate note above (R1-R3 fold).
       themes: ["crm", "whatsapp", "project", "start-approximate"],
       start_at: "2026-05-01T00:00:00-06:00",
       end_at: null,

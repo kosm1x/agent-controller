@@ -99,7 +99,7 @@ const MX_TTL_MS = 60 * 60_000;
 const CATCH_ALL_TTL_MS = 6 * 60 * 60_000;
 const RESULT_TTL_MS = 24 * 60 * 60_000;
 
-/** `mail.eurekams.net` → `eurekams.net`; a bare host stays as is. */
+/** `mail.example.com` → `example.com`; a bare host stays as is. */
 export function deriveMailDomain(hostname: string): string {
   const labels = hostname.split(".").filter(Boolean);
   return labels.length >= 3 ? labels.slice(1).join(".") : hostname;

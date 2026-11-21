@@ -1,7 +1,7 @@
 /**
  * Git/GitHub tools — enables Jarvis to commit, push, and create PRs.
  *
- * All operations run in the project root (/root/claude/cuatro-flor by default).
+ * Operations run in the call's working directory (`DEFAULT_CWD` when none is given).
  * Uses async exec/execFile with timeouts. Refuses to stage sensitive files.
  */
 
@@ -24,7 +24,8 @@ import { MC_WORKTREE_ROOT } from "./immutable-core.js";
 import { repoRootOf, withCwdLock } from "./cwd-lock.js";
 import { isMcRepository, mcProtectedPathsRefusal } from "./protected-push.js";
 
-// Jarvis's git domain — EurekaMD org projects + mission-control on jarvis/* branches.
+// Working directory when a call names none. Allowed: under ALLOWED_CWD_PREFIXES below
+// (never the operator's config); mission-control only through Jarvis's worktree on jarvis/* branches.
 const DEFAULT_CWD = "/root/claude/cuatro-flor";
 const MC_DIR = "/root/claude/mission-control/";
 // P1 fix (2026-07-12): Jarvis's mission-control git work happens in a
@@ -35,13 +36,13 @@ const MC_DIR = "/root/claude/mission-control/";
 // split is structural, not advisory. The jarvis/* branch rule continues
 // to apply inside the worktree.
 export const JARVIS_MC_WORKTREE = MC_WORKTREE_ROOT;
-// Every EurekaMD/Jarvis project lives under /root/claude/ — some at the top level
-// (vlcrm, intelligence-ops-mcp, eurekams-intelligence-ui, …), some under projects/
-// (EurekaMS-Landing, …). A single prefix covers them all and cannot drift, which the
-// old per-repo enumeration did: it silently blocked git_commit on every repo it forgot
-// (e.g. the EurekaMS repos), reported to the caller as "no soporta este path".
-// mission-control is inside this prefix but further restricted to jarvis/* branches by
-// checkMissionControlAccess below. /tmp/ covers sandbox/throwaway clones.
+// The /root/claude/ prefix matches a top-level repo and one under projects/
+// alike. A single prefix cannot drift, which the
+// old per-repo enumeration did: it silently blocked git_commit on every repo it forgot,
+// reported to the caller as "no soporta este path".
+// mission-control is inside this prefix, but checkMissionControlAccess below blocks its
+// primary checkout and allows only Jarvis's worktree on jarvis/* branches.
+// /tmp/ covers sandbox/throwaway clones.
 const ALLOWED_CWD_PREFIXES = ["/root/claude/", "/tmp/"];
 const SENSITIVE_PATTERNS = [
   ".env",
@@ -55,7 +56,7 @@ const JARVIS_BRANCH_RE = /^jarvis\/(feat|fix|refactor)\/.+$/;
 /** git_push `remote`: a plain GitHub HTTPS URL — no credentials, port, or path beyond owner/repo. */
 const GITHUB_HTTPS_REMOTE_RE =
   /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/;
-/** owner/repo of a GitHub remote URL (dots allowed: "trustr.io"), anchored at the URL end. */
+/** owner/repo of a GitHub remote URL (dots allowed: "example.org"), anchored at the URL end. */
 const GITHUB_SLUG_RE =
   /github\.com[:/]([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?\/?$/;
 
@@ -496,7 +497,7 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
       // `git remote add`, so this is the only sanctioned path for a repo that
       // already exists on GitHub but was never linked locally. Without it the
       // two tools pointed at each other and a new project was un-pushable
-      // (trustr, task 8953, 2026-09-01).
+      // (task 8953, 2026-09-01).
       let remote: string;
       let pendingRemote: string | undefined;
       try {
@@ -518,7 +519,7 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
         }
         remote = pendingRemote = remoteArg;
       }
-      // Full owner/repo (dots allowed: "trustr.io"), anchored at the URL end so
+      // Full owner/repo (dots allowed: "example.org"), anchored at the URL end so
       // nothing but [A-Za-z0-9_.-] ever reaches the gh shell string (qa #2/#8).
       const slug = remote.includes("github.com")
         ? remote.match(GITHUB_SLUG_RE)?.[1]
@@ -584,7 +585,7 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
       // Fetch + rebase to avoid push rejection from a diverged remote. Each step
       // is handled distinctly so a REAL failure surfaces an actionable error
       // instead of being swallowed as "empty repo" and pushed into a guaranteed
-      // non-fast-forward rejection — the dead-end Jarvis hit on williams-entry-radar
+      // non-fast-forward rejection — the dead-end Jarvis hit on a project repo
       // (diverged + dirty tree → silent rebase failure → rejected push → stuck).
       try {
         await runArgs("git", ["fetch", "origin"], 15_000, cwd, githubEnv);
@@ -758,7 +759,7 @@ A bare name creates the repo under the agent's own GitHub account; owner/name cr
       ghArgs.push("--confirm");
       // Wire the local repo as `origin` in the same gh call (--source/--remote):
       // shell_exec denies `git remote add` and git_push needs origin to exist,
-      // so without this a NEW project could never be pushed (trustr, 2026-09-01).
+      // so without this a NEW project could never be pushed (2026-09-01).
       const cwd = args.cwd as string | undefined;
       const sourceDir = cwd ? resolveWorkDir(cwd) : undefined;
       if (sourceDir) {

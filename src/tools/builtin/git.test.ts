@@ -303,7 +303,7 @@ describe("git tools", () => {
     });
 
     it("blocks with an actionable error when the tree is dirty + remote exists", async () => {
-      // Regression (williams-entry-radar, 2026-06-20): a dirty tree makes the
+      // Regression (2026-06-20): a dirty tree makes the
       // pre-push rebase abort. The tool must surface that BEFORE pushing into a
       // guaranteed rejection — not swallow it as "empty repo".
       mockExec
@@ -486,7 +486,7 @@ describe("git tools", () => {
       expect(result).toContain("detached HEAD");
     });
 
-    // ── no-origin path (trustr dead-end, task 8953, 2026-09-01) ──
+    // ── no-origin path (dead-end, task 8953, 2026-09-01) ──
     // shell_exec denies `git remote add` and the old error here said "use
     // shell_exec to add one" — a circular dead-end that left a brand-new repo
     // un-pushable. `remote` is the sanctioned way to link an existing GitHub repo.
@@ -499,7 +499,7 @@ describe("git tools", () => {
         .mockImplementationOnce(() => {
           throw new Error("error: No such remote 'origin'");
         }) // git remote get-url → none
-        .mockReturnValueOnce('{"name":"trustr"}') // gh repo view EurekaMD-net/trustr
+        .mockReturnValueOnce('{"name":"trustr"}') // gh repo view <owner>/<repo>
         .mockReturnValueOnce("master") // git branch --show-current (fresh git init)
         .mockReturnValueOnce(""); // git branch -M main
       mockExecFile
@@ -642,7 +642,7 @@ describe("git tools", () => {
         .mockImplementationOnce(() => {
           throw new Error("error: No such remote 'origin'");
         }) // git remote get-url → none
-        .mockReturnValueOnce('{"name":"trustr.io"}') // gh repo view EurekaMD-net/trustr.io
+        .mockReturnValueOnce('{"name":"trustr.io"}') // gh repo view <owner>/<dotted repo>
         .mockReturnValueOnce("main"); // git branch --show-current
       mockExecFile
         .mockReturnValueOnce("") // git remote add origin
@@ -737,7 +737,7 @@ describe("git tools", () => {
   });
 
   describe("gh_repo_create", () => {
-    // trustr dead-end (task 8953, 2026-09-01): the tool created the GitHub repo
+    // No-origin dead-end (task 8953, 2026-09-01): the tool created the GitHub repo
     // but never linked the local checkout, and no other tool could add the remote.
 
     it("with cwd, creates the repo AND wires it as origin via gh --source/--remote", async () => {

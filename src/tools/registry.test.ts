@@ -849,8 +849,8 @@ describe("writeTargetKeys — every row pinned (R4 audit W4-1)", () => {
 });
 
 describe("retired COMMIT sync stays retired (2026-10-06 regression lock)", () => {
-  // Matched case-insensitively. `mycommit` stays banned although
-  // db.mycommit.net is still the live Supabase/pgvector host used by
+  // Matched case-insensitively. The second entry stays banned although its
+  // domain is still the live Supabase/pgvector host used by
   // non-model-visible code: a tool that must name the host narrows this entry.
   const RETIRED = ["northstar_sync", "mycommit", "COMMIT_ID"];
   const REGISTERED = ALL_TOOLS;
