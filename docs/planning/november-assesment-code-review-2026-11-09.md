@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-21 08:41 UTC — batch 10 piece 1 COMMITTED `fb14097e` (queue 4hs; not deployed, ships with the batch): the whole-call failures of fourteen tools in five finance tool files come back as an error object with the same words; no success result changes; three backtest description passages no longer name a look-alike table. Review passed after one fold (one unguarded return got its case; three header comments reworded). The batch plan gains one piece: two further finance tool files with the same class, with a sweep of the tool folder. Batch 10 pieces left: see queue 4hr and 4hs.**
+
 **Status 2026-11-21 07:56 UTC — comments that named real site addresses, site aliases and private projects are reworded, COMMITTED `c0745e4f` (queue 4hr; comments only, no deploy), with the held comment file `0453d850`. Batch 10 was re-read against today's tree (26 rows: 16 ready, 7 need a decision or a check, 4 left the batch) and its first piece, the finance tools' failure shapes, is in work; the list in the batch 10 section below is older than that read, queue 4hr holds the corrections and the order. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. LIVE build unchanged, `b9b48657`.**
 
 **Status 2026-11-21 06:41 UTC — build `b9b48657` is LIVE since 2026-11-21 06:38 UTC (queue 4hq); everything committed is deployed, 4hn and 4hp included; none of the failed-write changes is proven on a real case yet. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: batch leftovers, then batch 10.**
