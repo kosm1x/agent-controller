@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-21 14:53 UTC — batch 10 piece 9 COMMITTED `f346ecee` (queue 4ia; not deployed, ships with the batch): the skill list returns compact rows within a size budget and takes a query; texts of the save, list and report tools made true; four nested properties described. Review: pass with warnings; three texts and a comment replaced, one missing case added. Next: the remaining texts, then the piece that makes the list and the load tool travel together.**
+
 **Status 2026-11-21 13:59 UTC — batch 10 piece 8 COMMITTED `8fddd6f5` (queue 4hz; not deployed, ships with the batch): failures of six tools in five files start with an error and keep what was made; three candidates left as results on purpose; the upload's time-out message made true. Review: pass with warnings; one untrue sentence of new text replaced and three surviving faults closed by added cases. Next: the skills file and the report tool.**
 
 **Status 2026-11-21 13:05 UTC — batch 10 piece 7 COMMITTED `112d5aea` (queue 4hy; not deployed, ships with the batch): the twelve non-ok returns of the site tools put error first as fixed words and keep the site's answer under a new key; a create answered with a server error says the site may have saved it; the memory store limit's refusal is an error object. Review: pass with warnings; two surviving faults and one lost reader case closed by added cases. Next: the unowned non-standard failure shapes.**
