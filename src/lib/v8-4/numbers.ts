@@ -154,8 +154,11 @@ export const UNRESOLVED_TARGET_TOOL_RE = /^(grep|glob|code_search|list_dir)$/;
 /**
  * Queue 2026-10-08 (late) item 10: the run's LATEST write-class call only
  * (last wins: a failed write followed by a successful one is not a failed
- * run). `error` = first 300 chars of the (already secret-scrubbed) error
- * result or thrown message. Freed by `takeWriteOutcome` / `takeToolEvidence`.
+ * run). `error` = the first 300 chars of the failure text, by source: an
+ * error result, a thrown value or the registry's own refusal gives its
+ * `error` field when the text is JSON with a string `error`, else the text
+ * itself; a write's `success: false` envelope gives a short text built from
+ * it. Freed by `takeWriteOutcome` / `takeToolEvidence`.
  */
 export interface WriteOutcome {
   tool: string;

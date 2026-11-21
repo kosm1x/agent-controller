@@ -355,6 +355,70 @@ describe("createMcpTool", () => {
     expect(JSON.parse(result)).toEqual({ error: "unknown failure" });
   });
 
+  // A failed call never carries an empty `error`: a reader that tests the
+  // field by truth would take the failure for a success.
+  const NO_MESSAGE = "tool failed without an error message";
+
+  it("a failed call with one empty text item returns the fallback text", async () => {
+    const callFn: McpCallFn = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "" }],
+      isError: true,
+    });
+    const tool = createMcpTool("w", { name: "t" }, callFn);
+
+    expect(JSON.parse(await tool.execute({}))).toEqual({ error: NO_MESSAGE });
+  });
+
+  it.each([
+    ["an Error without a message", () => new Error()],
+    ["a thrown empty string", () => ""],
+  ])("%s thrown by the call returns the fallback text", async (_label, thrown) => {
+    const callFn: McpCallFn = vi.fn().mockRejectedValue(thrown());
+    const tool = createMcpTool("w", { name: "t" }, callFn);
+
+    expect(JSON.parse(await tool.execute({}))).toEqual({ error: NO_MESSAGE });
+  });
+
+  it("a failed call whose text is spaces keeps that text", async () => {
+    const callFn: McpCallFn = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "   " }],
+      isError: true,
+    });
+    const tool = createMcpTool("w", { name: "t" }, callFn);
+
+    expect(JSON.parse(await tool.execute({}))).toEqual({ error: "   " });
+  });
+
+  it("an Error whose message is spaces keeps that text", async () => {
+    const callFn: McpCallFn = vi.fn().mockRejectedValue(new Error("   "));
+    const tool = createMcpTool("w", { name: "t" }, callFn);
+
+    expect(JSON.parse(await tool.execute({}))).toEqual({ error: "   " });
+  });
+
+  it("a failed call with two empty text items keeps their joined text", async () => {
+    const callFn: McpCallFn = vi.fn().mockResolvedValue({
+      content: [
+        { type: "text", text: "" },
+        { type: "text", text: "" },
+      ],
+      isError: true,
+    });
+    const tool = createMcpTool("w", { name: "t" }, callFn);
+
+    expect(JSON.parse(await tool.execute({}))).toEqual({ error: "\n" });
+  });
+
+  it("a successful call with one empty text item still returns an empty text", async () => {
+    const callFn: McpCallFn = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "" }],
+      isError: false,
+    });
+    const tool = createMcpTool("w", { name: "t" }, callFn);
+
+    expect(await tool.execute({})).toBe("");
+  });
+
   // -------------------------------------------------------------------------
   // v7.6 Spine 4 W4 — name-pattern annotation override propagation
   // -------------------------------------------------------------------------

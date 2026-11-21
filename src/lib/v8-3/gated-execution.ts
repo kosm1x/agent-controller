@@ -123,7 +123,9 @@ export function shouldRecordGatedExecution(toolName: string): boolean {
  * batch-tool partial-error envelope (`jarvis_files_batch_delete` returns
  * `{success: errors === 0, …}`). The mutation log's check
  * (`recordMutationFromResult`) reads both shapes the same way, though it
- * records nothing for the batch tools.
+ * records nothing for the batch tools. A structured error leaves the decision
+ * pending, never committed: this seam declares no `sqlMutation`, so nothing
+ * is reverted automatically.
  */
 function toolReportedError(result: string): boolean {
   try {
