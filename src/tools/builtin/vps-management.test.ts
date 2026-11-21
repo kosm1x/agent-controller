@@ -95,33 +95,125 @@ vi.mock("node:child_process", () => ({
   execFile,
   ...otherChildren,
 }));
-vi.mock("fs", async (orig) => ({
-  ...(await orig<typeof import("fs")>()),
-  existsSync: vi.fn(() => true),
-}));
-vi.mock("../../db/index.js", () => ({ getDatabase: vi.fn() }));
+// Host safety: every fs function that creates, writes, copies, renames or
+// deletes is a stub for the whole file, under both specifiers, on the default
+// export and in the promise API, so no case can reach the real one. A stub
+// throws unless the case gives it an implementation. existsSync answers true,
+// and statSync and readdirSync read through to the real ones unless a case
+// answers them. vitest resolves "fs" and "node:fs" to one module, so both
+// specifiers get the same factory.
+const fsMock = vi.hoisted(() => {
+  const WRITER_RE =
+    /^(mkdir|mkdtemp|write|append|copy|cp|rename|unlink|rm|symlink|link|truncate|ftruncate|createWriteStream|open|chmod|lchmod|fchmod|chown|lchown|fchown|utimes|futimes|lutimes|WriteStream|FileWriteStream)/;
+  const stubs = new Map<string, ReturnType<typeof vi.fn>>();
+  const stub = (name: string) => {
+    let f = stubs.get(name);
+    if (!f) {
+      f = vi.fn((..._args: unknown[]): unknown => {
+        throw new Error(`fs ${name} is a stub in this file`);
+      });
+      stubs.set(name, f);
+    }
+    return f;
+  };
+  /** The real module with every writer replaced; `prefix` keeps the
+   *  promise API's stubs apart from the callback API's. */
+  const build = (
+    real: Record<string, unknown>,
+    prefix: string,
+  ): Record<string, unknown> => {
+    const out: Record<string, unknown> = { ...real };
+    for (const k of Object.keys(real)) {
+      if (WRITER_RE.test(k) && typeof real[k] === "function") {
+        out[k] = stub(prefix + k);
+      }
+    }
+    return out;
+  };
+  const existsSync = vi.fn((..._args: unknown[]) => true);
+  const statSync = vi.fn();
+  const readdirSync = vi.fn();
+  /** The real read functions, set when the fs mock is built. */
+  const real = {} as Record<
+    "statSync" | "readdirSync",
+    (...a: unknown[]) => unknown
+  >;
+  /** The fs module: every writer a stub, the three reads above. */
+  const fsModule = (actual: Record<string, unknown>) => {
+    const out = build(actual, "");
+    out.promises = build(
+      actual.promises as Record<string, unknown>,
+      "promises.",
+    );
+    real.statSync = actual.statSync as (...a: unknown[]) => unknown;
+    real.readdirSync = actual.readdirSync as (...a: unknown[]) => unknown;
+    out.existsSync = existsSync;
+    out.statSync = statSync;
+    out.readdirSync = readdirSync;
+    out.default = out;
+    return out;
+  };
+  /** The fs/promises module: every writer a stub. */
+  const promisesModule = (actual: Record<string, unknown>) => {
+    const out = build(actual, "promises.");
+    out.default = out;
+    return out;
+  };
+  return {
+    stubs,
+    stub,
+    fsModule,
+    promisesModule,
+    existsSync,
+    statSync,
+    readdirSync,
+    real,
+  };
+});
+vi.mock("fs", async (orig) => fsMock.fsModule(await orig()));
+vi.mock("node:fs", async (orig) => fsMock.fsModule(await orig()));
+vi.mock("fs/promises", async (orig) => fsMock.promisesModule(await orig()));
+vi.mock("node:fs/promises", async (orig) =>
+  fsMock.promisesModule(await orig()),
+);
+const backupDb = vi.hoisted(() => ({ backup: vi.fn() }));
+vi.mock("../../db/index.js", () => ({ getDatabase: vi.fn(() => backupDb) }));
 
-import { vpsDeployTool, vpsLogsTool, vpsStatusTool } from "./vps-management.js";
+import * as fs from "fs";
+import * as nodeFs from "node:fs";
+import * as fsPromises from "fs/promises";
+import * as nodeFsPromises from "node:fs/promises";
+import {
+  vpsBackupTool,
+  vpsDeployTool,
+  vpsLogsTool,
+  vpsStatusTool,
+} from "./vps-management.js";
 import { jarvisTestRunTool, SUITE_RUN_BUSY } from "./jarvis-self-repair.js";
 import * as nodeChildProcess from "node:child_process";
 
 const OPERATOR_LINE = "cd /root/claude/mission-control && ./scripts/deploy.sh";
 // The model-visible description is frozen here: a description change goes
 // through the eval gate in its own batch, never as a side effect.
-const DEPLOY_DESCRIPTION = `Build and deploy mission-control. Gates on the tests related to changed files (not the full suite) — will NOT restart if they fail.
+const DEPLOY_DESCRIPTION = `Hand the mission-control deploy to the operator. This tool does not build, run tests or restart the service, and it starts no process: when it runs, it returns the same error object every time, whose text says that only the operator deploys, with the deploy script, and gives the command to run in the server's terminal. That error means the tool does not deploy, not that a deploy failed.
 
 USE WHEN:
-- After merging a Jarvis PR (jarvis_dev workflow)
-- User says "haz deploy", "deploy", "restart Jarvis"
+- The user asks to deploy mission-control ("haz deploy", "deploy")
+- A pull request from the jarvis_dev workflow was merged and the change has to go live
 
-WORKFLOW:
-1. Runs npx tsc (build)
-2. Runs the tests related to changed .ts files (none changed → skipped)
-3. If tests pass: systemctl restart mission-control
-4. Waits 5s, checks health endpoint
-5. Reports success or rollback instructions
+DO NOT USE WHEN:
+- You want to check whether the service is healthy — use vps_status
+- You want the service logs, for example after the operator's deploy — use vps_logs
 
-CRITICAL: This restarts the service. All running tasks will be orphaned (shutdown hook marks them failed).`;
+AFTER CALLING: Give the user the command from the error text exactly as written and say that only the operator runs it. Never report the deploy as done, started or scheduled.`;
+
+/** A whole-call failure: one error object, `error` its first and only key. */
+function errorText(result: string): string {
+  expect(result.startsWith('{"error":')).toBe(true);
+  const parsed = JSON.parse(result) as Record<string, unknown>;
+  expect(Object.keys(parsed)).toEqual(["error"]);
+  return parsed.error as string;
+}
 
 /** Healthy box: one canned stdout per vps_status / vps_logs child. */
 const STATUS_OUT: Record<string, string> = {
@@ -164,6 +256,12 @@ beforeEach(() => {
   for (const fn of Object.values(otherChildren)) fn.mockClear();
   stdinEnds.length = 0;
   Object.assign(changed, { ahead: "src/x.ts\0", worktree: "", fail: false });
+  // Every fs writer back to its throwing stub; the reads back to the real ones.
+  for (const f of fsMock.stubs.values()) f.mockReset();
+  fsMock.existsSync.mockReset();
+  fsMock.statSync.mockReset().mockImplementation(fsMock.real.statSync);
+  fsMock.readdirSync.mockReset().mockImplementation(fsMock.real.readdirSync);
+  backupDb.backup.mockReset();
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -207,6 +305,11 @@ describe("vps_deploy — hands the deploy to the operator, spawns nothing", () =
   it("the refusal does not depend on the suite lock (held by jarvis_test_run)", async () => {
     let release!: (v: { stdout: string; stderr: string }) => void;
     execGroupKill.mockImplementation(() => new Promise((r) => (release = r)));
+    // The child env asks for an empty temp folder; the stub names one and
+    // creates nothing.
+    fsMock
+      .stub("mkdtempSync")
+      .mockImplementation(() => "/nonexistent/mc-gh-config-test");
     const first = jarvisTestRunTool.execute({ typecheck_only: true });
     await vi.waitFor(() => expect(release).toBeTypeOf("function"));
     const out = await vpsDeployTool.execute({});
@@ -345,15 +448,119 @@ describe("vps_logs — journalctl runs async, same output shape", () => {
         },
       );
     });
-    expect(await vpsLogsTool.execute({ service: "mission-control" })).toBe(
-      "❌ Could not read logs for mission-control.",
-    );
+    expect(
+      errorText(await vpsLogsTool.execute({ service: "mission-control" })),
+    ).toBe("Could not read logs for mission-control.");
   });
 
   it("invalid service name never spawns a child", async () => {
-    expect(await vpsLogsTool.execute({ service: "x; rm -rf /" })).toBe(
-      "❌ Invalid service name.",
+    expect(errorText(await vpsLogsTool.execute({ service: "x; rm -rf /" }))).toBe(
+      "Invalid service name.",
     );
     expect(childImpl).not.toHaveBeenCalled();
+  });
+
+  it("no matching entries is a result, not an error object", async () => {
+    childImpl.mockImplementation(() => "");
+    expect(await vpsLogsTool.execute({})).toBe(
+      "📋 No log entries found for mission-control.",
+    );
+  });
+});
+
+describe("host safety of this file: every fs writer is a stub", () => {
+  const WRITERS = [
+    "mkdirSync",
+    "mkdtempSync",
+    "writeFileSync",
+    "appendFileSync",
+    "copyFileSync",
+    "cpSync",
+    "renameSync",
+    "unlinkSync",
+    "rmSync",
+    "rmdirSync",
+    "symlinkSync",
+    "linkSync",
+    "truncateSync",
+    "openSync",
+    "createWriteStream",
+    "mkdir",
+    "writeFile",
+    "rename",
+    "unlink",
+    "rm",
+  ];
+  const PROMISE_WRITERS = [
+    "mkdir",
+    "mkdtemp",
+    "writeFile",
+    "appendFile",
+    "copyFile",
+    "cp",
+    "rename",
+    "unlink",
+    "rm",
+    "rmdir",
+    "open",
+  ];
+  const get = (o: unknown, k: string): unknown =>
+    (o as Record<string, unknown>)[k];
+
+  it("under both specifiers, on the default export and in the promise API", () => {
+    for (const mod of [fs, nodeFs]) {
+      for (const k of WRITERS) {
+        expect(vi.isMockFunction(get(mod, k)), k).toBe(true);
+        expect(vi.isMockFunction(get(get(mod, "default"), k)), k).toBe(true);
+      }
+      for (const k of PROMISE_WRITERS) {
+        expect(vi.isMockFunction(get(get(mod, "promises"), k)), k).toBe(true);
+      }
+    }
+    for (const mod of [fsPromises, nodeFsPromises]) {
+      for (const k of PROMISE_WRITERS) {
+        expect(vi.isMockFunction(get(mod, k)), k).toBe(true);
+      }
+    }
+  });
+
+  it("a writer no case answered throws instead of touching the disk", () => {
+    expect(() => fs.mkdirSync("/nonexistent-path")).toThrow(/is a stub/);
+    expect(() => nodeFs.unlinkSync("/nonexistent-path")).toThrow(/is a stub/);
+  });
+});
+
+describe("vps_backup failures are one error object", () => {
+  it("a missing database: the fixed words and the file name, nothing created", async () => {
+    fsMock.existsSync.mockReturnValue(false);
+    const text = errorText(await vpsBackupTool.execute({}));
+    expect(text).toMatch(/^Database not found at \/\S+\/data\/mc\.db$/);
+    expect(fsMock.stub("mkdirSync")).not.toHaveBeenCalled();
+    expect(backupDb.backup).not.toHaveBeenCalled();
+  });
+
+  it("a backup that rejects: the error words, nothing pruned", async () => {
+    fsMock.stub("mkdirSync").mockImplementation(() => undefined);
+    backupDb.backup.mockRejectedValue(new Error("disk I/O error"));
+    expect(errorText(await vpsBackupTool.execute({}))).toBe(
+      "Backup failed: disk I/O error",
+    );
+    expect(fsMock.stub("unlinkSync")).not.toHaveBeenCalled();
+  });
+
+  it("success stays plain text (every writer stubbed)", async () => {
+    fsMock.stub("mkdirSync").mockImplementation(() => undefined);
+    backupDb.backup.mockResolvedValue(undefined);
+    fsMock.statSync.mockReturnValue({ size: 2048, mtimeMs: Date.now() });
+    fsMock.readdirSync.mockReturnValue([]);
+    const lines = (await vpsBackupTool.execute({})).split("\n");
+    expect(lines[0]).toBe("💾 **Backup complete**");
+    expect(lines[1]).toMatch(
+      /^File: \/\S+\/backups\/mc\.db\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/,
+    );
+    expect(lines[2]).toBe("Size: 2 KB");
+    expect(lines).toHaveLength(3);
+    expect(backupDb.backup).toHaveBeenCalledWith(lines[1].slice("File: ".length));
+    expect(fsMock.stub("unlinkSync")).not.toHaveBeenCalled();
   });
 });

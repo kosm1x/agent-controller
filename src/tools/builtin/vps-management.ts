@@ -194,20 +194,17 @@ export const vpsDeployTool: Tool = {
     type: "function",
     function: {
       name: "vps_deploy",
-      description: `Build and deploy mission-control. Gates on the tests related to changed files (not the full suite) — will NOT restart if they fail.
+      description: `Hand the mission-control deploy to the operator. This tool does not build, run tests or restart the service, and it starts no process: when it runs, it returns the same error object every time, whose text says that only the operator deploys, with the deploy script, and gives the command to run in the server's terminal. That error means the tool does not deploy, not that a deploy failed.
 
 USE WHEN:
-- After merging a Jarvis PR (jarvis_dev workflow)
-- User says "haz deploy", "deploy", "restart Jarvis"
+- The user asks to deploy mission-control ("haz deploy", "deploy")
+- A pull request from the jarvis_dev workflow was merged and the change has to go live
 
-WORKFLOW:
-1. Runs npx tsc (build)
-2. Runs the tests related to changed .ts files (none changed → skipped)
-3. If tests pass: systemctl restart mission-control
-4. Waits 5s, checks health endpoint
-5. Reports success or rollback instructions
+DO NOT USE WHEN:
+- You want to check whether the service is healthy — use vps_status
+- You want the service logs, for example after the operator's deploy — use vps_logs
 
-CRITICAL: This restarts the service. All running tasks will be orphaned (shutdown hook marks them failed).`,
+AFTER CALLING: Give the user the command from the error text exactly as written and say that only the operator runs it. Never report the deploy as done, started or scheduled.`,
       parameters: { type: "object", properties: {} },
     },
   },
@@ -251,7 +248,7 @@ AFTER BACKUP: Report the backup file path and size.`,
 
   async execute(): Promise<string> {
     if (!existsSync(DB_PATH)) {
-      return "❌ Database not found at " + DB_PATH;
+      return JSON.stringify({ error: "Database not found at " + DB_PATH });
     }
 
     mkdirSync(BACKUP_DIR, { recursive: true });
@@ -289,7 +286,9 @@ AFTER BACKUP: Report the backup file path and size.`,
       if (pruned > 0) lines.push(`Pruned: ${pruned} old backup(s)`);
       return lines.join("\n");
     } catch (err) {
-      return `❌ Backup failed: ${err instanceof Error ? err.message : err}`;
+      return JSON.stringify({
+        error: `Backup failed: ${err instanceof Error ? err.message : err}`,
+      });
     }
   },
 };
@@ -345,7 +344,7 @@ Returns filtered log entries. Default: last 30 lines of mission-control.`,
 
     // Validate service name (prevent injection)
     if (!/^[a-z0-9-]+$/.test(service)) {
-      return "❌ Invalid service name.";
+      return JSON.stringify({ error: "Invalid service name." });
     }
 
     try {
@@ -380,7 +379,7 @@ Returns filtered log entries. Default: last 30 lines of mission-control.`,
 
       return `📋 **${service}** (${trimmed.length} lines${filter ? `, filter: "${filter}"` : ""})\n\n${trimmed.join("\n")}`;
     } catch {
-      return `❌ Could not read logs for ${service}.`;
+      return JSON.stringify({ error: `Could not read logs for ${service}.` });
     }
   },
 };

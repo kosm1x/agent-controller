@@ -65,7 +65,7 @@ const LEGACY_WITHOUT_NOT_FOR = new Set([
   "video_create", "video_image", "video_job_cancel", "video_job_cleanup",
   "video_list_profiles", "video_list_voices", "video_script", "video_status",
   "video_storyboard", "video_transition_preview", "video_tts", "vps_backup",
-  "vps_deploy", "vps_logs", "vps_status", "whale_trades", "wp_categories",
+  "vps_logs", "vps_status", "whale_trades", "wp_categories",
   "wp_list_posts", "wp_media_upload", "wp_pages", "wp_plugins", "wp_publish",
   "wp_raw_api", "wp_read_post", "wp_settings",
 ]);

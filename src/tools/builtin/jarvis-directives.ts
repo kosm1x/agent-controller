@@ -272,12 +272,16 @@ NEVER call this without explicit user approval in the current message.`,
     const proposals = listFiles({ prefix: PROPOSALS_PREFIX });
     const match = proposals.find((p) => p.path.includes(slug));
     if (!match) {
-      return `❌ Proposal "${slug}" not found in knowledge/proposals/.`;
+      return JSON.stringify({
+        error: `Proposal "${slug}" not found in knowledge/proposals/.`,
+      });
     }
 
     const proposal = getFile(match.path);
     if (!proposal) {
-      return `❌ Could not read proposal at ${match.path}.`;
+      return JSON.stringify({
+        error: `Could not read proposal at ${match.path}.`,
+      });
     }
 
     // Parse target and change type
@@ -294,7 +298,9 @@ NEVER call this without explicit user approval in the current message.`,
     const changeType = typeMatch?.[1]?.trim();
 
     if (!targetPath || !changeType) {
-      return `❌ Could not parse proposal — missing target or type.`;
+      return JSON.stringify({
+        error: `Could not parse proposal — missing target or type.`,
+      });
     }
 
     // Apply the change
@@ -323,7 +329,11 @@ NEVER call this without explicit user approval in the current message.`,
           upsertFile(targetPath, targetPath, newContent, [], "reference", 50);
         }
       } else if (changeType === "modify") {
-        if (!existing) return `❌ Target file ${targetPath} not found.`;
+        if (!existing) {
+          return JSON.stringify({
+            error: `Target file ${targetPath} not found.`,
+          });
+        }
         const oldText = currentMatch?.[1] ?? "";
         const newText = proposedMatch?.[1] ?? "";
         // replaceAll: if the pattern appears multiple times, change all of them
@@ -343,7 +353,11 @@ NEVER call this without explicit user approval in the current message.`,
           existing.priority,
         );
       } else if (changeType === "remove") {
-        if (!existing) return `❌ Target file ${targetPath} not found.`;
+        if (!existing) {
+          return JSON.stringify({
+            error: `Target file ${targetPath} not found.`,
+          });
+        }
         const oldText = currentMatch?.[1] ?? "";
         const updated = existing.content.split(oldText).join("").trim();
         upsertFile(
@@ -393,7 +407,9 @@ NEVER call this without explicit user approval in the current message.`,
         `Decision logged: ${decisionPath}`,
       ].join("\n");
     } catch (err) {
-      return `❌ Failed to apply: ${err instanceof Error ? err.message : err}`;
+      return JSON.stringify({
+        error: `Failed to apply: ${err instanceof Error ? err.message : err}`,
+      });
     }
   },
 };
