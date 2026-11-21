@@ -373,19 +373,21 @@ cmd_cancel() {
     die "Task ${id} not found."
   fi
   case "$current_status" in
-    completed | failed | cancelled)
+    completed | completed_with_concerns | failed | cancelled)
       echo -e "${YELLOW}Task ${id} already in terminal state: ${current_status} (no-op)${NC}"
       return 0
       ;;
   esac
 
-  # Atomic-ish cancel: task + runs in one transaction. Subtasks would need
-  # recursive walk; for tonight, one level of cascade.
+  # One transaction cancels the task (unless it ended after the status read
+  # above), its running runs, and its direct subtasks that have not ended.
+  # Deeper subtasks and the runs of subtasks are not touched, and no
+  # cancelled event is sent from here.
   sqlite3 "$DB_PATH" <<EOF
 BEGIN;
-UPDATE tasks SET status = 'cancelled', updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = '${id}';
+UPDATE tasks SET status = 'cancelled', updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = '${id}' AND status NOT IN ('completed','completed_with_concerns','failed','cancelled');
 UPDATE runs SET status = 'cancelled', completed_at = datetime('now') WHERE task_id = '${id}' AND status = 'running';
-UPDATE tasks SET status = 'cancelled', updated_at = datetime('now'), completed_at = datetime('now') WHERE parent_task_id = '${id}' AND status NOT IN ('completed','failed','cancelled');
+UPDATE tasks SET status = 'cancelled', updated_at = datetime('now'), completed_at = datetime('now') WHERE parent_task_id = '${id}' AND status NOT IN ('completed','completed_with_concerns','failed','cancelled');
 COMMIT;
 EOF
   echo -e "${GREEN}Task ${id} cancelled (direct DB).${NC}"
