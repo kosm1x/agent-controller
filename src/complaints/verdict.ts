@@ -90,6 +90,20 @@ export interface Verdict {
   runList: VerdictRun[];
 }
 
+/** A type key as --type takes it. */
+export const TYPE_PATTERN = /^(ritual|schedule):[A-Za-z0-9_-]+$/;
+/** An ISO time with Z or an offset, as --now and --since take it. */
+export const ISO_TIME = /^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:\d\d)$/;
+
+/**
+ * The close rule over `limit`: REFUTED once `bad` exceeds it, CONFIRMED once
+ * `bad` plus `unknown` cannot, else COUNTING. One copy, so the ledger's guards
+ * close by exactly the verdict's rule.
+ */
+export function closeRule(bad: number, unknown: number, limit: number): VerdictWord {
+  return bad > limit ? "REFUTED" : bad + unknown <= limit ? "CONFIRMED" : "COUNTING";
+}
+
 /** tasks.created_at text ('YYYY-MM-DD HH:MM:SS') of an ISO time, floored to the second. */
 const secondKey = (iso: string): string => iso.slice(0, 19).replace("T", " ");
 const queued = (r: TaskRow): QueuedRun => ({ createdAt: r.created_at, taskId: r.task_id, status: r.status });
@@ -122,7 +136,7 @@ export function buildVerdict(rows: TaskRow[], opts: VerdictOptions): Verdict {
   const complaints = counted.filter(isComplaint).length;
   const unknown = inFlight.length + (opts.runs - slots.length);
   const K = opts.maxComplaints;
-  const verdict: VerdictWord = complaints > K ? "REFUTED" : complaints + unknown <= K ? "CONFIRMED" : "COUNTING";
+  const verdict = closeRule(complaints, unknown, K);
   return {
     now: opts.now,
     type: opts.type,

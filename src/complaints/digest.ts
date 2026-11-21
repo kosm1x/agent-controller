@@ -132,7 +132,7 @@ export function stripChar(status: string): string {
   return "?";
 }
 
-function toolCounts(r: TaskRow): Record<string, number> {
+export function toolCounts(r: TaskRow): Record<string, number> {
   const v = parseJson(r.tools);
   const out: Record<string, number> = {};
   if (v === null || typeof v !== "object" || Array.isArray(v)) return out;

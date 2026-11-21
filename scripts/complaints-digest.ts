@@ -21,7 +21,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { complaintsSql } from "../src/complaints/query.js";
 import { buildDigest, renderDigest, type TaskRow } from "../src/complaints/digest.js";
-import { buildVerdict, nowIsAfterClock, renderVerdict } from "../src/complaints/verdict.js";
+import { buildVerdict, ISO_TIME, nowIsAfterClock, renderVerdict, TYPE_PATTERN } from "../src/complaints/verdict.js";
 
 function fail(msg: string): never {
   process.stderr.write(`complaints-digest: ${msg}\n`);
@@ -66,10 +66,7 @@ const days = int("days", parsed.days, 1, 365);
 const last = int("last", parsed.last, 1, 100);
 const min = int("min", parsed.min, 1, last);
 const type = parsed.type;
-if (type !== undefined && !/^(ritual|schedule):[A-Za-z0-9_-]+$/.test(type)) {
-  fail("--type must match ^(ritual|schedule):[A-Za-z0-9_-]+$");
-}
-const ISO_TIME = /^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:\d\d)$/;
+if (type !== undefined && !TYPE_PATTERN.test(type)) fail(`--type must match ${TYPE_PATTERN.source}`);
 if (parsed.now !== undefined && !ISO_TIME.test(parsed.now)) {
   fail("--now must be an ISO time with Z or an offset, e.g. 2026-11-20T18:00:00Z");
 }
