@@ -875,7 +875,7 @@ Returns entries sorted alphabetically with "/" suffix for directories.`,
       if (!output.trim()) {
         return JSON.stringify({
           entries: [],
-          message: "Directory is empty or does not exist",
+          message: "No entries listed",
         });
       }
 
@@ -933,7 +933,7 @@ USE WHEN:
 Returns: file path, line number, and signature for each match.
 
 WORKFLOW:
-1. code_search query="detectsHallucinatedExecution" → finds fast-runner.ts:250
+1. code_search query="detectsHallucinatedExecution" → the file and line where it is defined
 2. file_read the file around that line
 3. file_edit to make the fix
 
@@ -979,7 +979,7 @@ AFTER SEARCHING: Report the matches found with file:line references.`,
     }
 
     if (!query || query.length < 2)
-      return "Query must be at least 2 characters.";
+      return JSON.stringify({ error: "Query must be at least 2 characters." });
 
     const results = searchCode(query, { kind, limit: 15 });
     if (results.length === 0)

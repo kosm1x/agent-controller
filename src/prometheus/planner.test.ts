@@ -37,6 +37,8 @@ import { plan, replan, splitCriteria } from "./planner.js";
 import { infer } from "../inference/adapter.js";
 import { searchMaps, getNodes } from "../db/knowledge-maps.js";
 import { getFilesByQualifier } from "../db/jarvis-fs.js";
+// The refusal list only: a Set, nothing in the guard runs.
+import { DENY_COMMANDS } from "../tools/builtin/shell.js";
 
 const mockInfer = vi.mocked(infer);
 const mockSearchMaps = vi.mocked(searchMaps);
@@ -151,6 +153,33 @@ describe("plan", () => {
     if (typeof sysText !== "string") throw new Error("system prompt is not a string");
     expect(sysText.split(kbRule).length - 1).toBe(1);
     expect(sysMsg!.content).toMatch(/never silently drop items/i);
+  });
+
+  it("the check rule's program list is exact, names none of the shell guard's refused commands, and the prompt never names sqlite3", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        goals: [{ id: "g-1", description: "Goal", completion_criteria: [], parent_id: null, depends_on: [] }],
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      provider: "test",
+      latency_ms: 10,
+    });
+
+    await plan("Check that the report file exists");
+
+    const sysMsg = mockInfer.mock.calls[0][0].messages.find(
+      (m: { role: string }) => m.role === "system",
+    );
+    const sysText = sysMsg!.content;
+    if (typeof sysText !== "string") throw new Error("system prompt is not a string");
+    const list = "only real binaries (grep, curl, test, jq, node, npx).";
+    expect(sysText.split(list).length - 1).toBe(1);
+    expect(sysText).not.toContain("sqlite3");
+    const programs = list.slice(list.indexOf("(") + 1, list.indexOf(")")).split(", ");
+    expect(programs).toEqual(["grep", "curl", "test", "jq", "node", "npx"]);
+    for (const p of programs) expect(DENY_COMMANDS.has(p), p).toBe(false);
+    expect(DENY_COMMANDS.has("sqlite3")).toBe(true);
   });
 
   it("system prompt carries the ownership rule (memory plan v2.0 Track 3: disjoint research targets per sibling)", async () => {
