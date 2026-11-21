@@ -404,6 +404,8 @@ describe("--verdict: a prediction closed by code", () => {
     ["v4", "failed", "2026-11-18 12:00:00", "{}", "v4 boom"],
     ["v5", "needs_context", "2026-11-19 12:00:00", "{}", null],
     ["v6", "completed_with_concerns", "2026-11-19 13:00:00", '{"text":"v6 reply"}', null],
+    // Queued in the second of NOW: left for the next check.
+    ["v7", "completed_with_concerns", "2026-11-20 18:00:00", '{"text":"v7 reply"}', null],
   ];
   const VR_FACTS: [string, string, string | null][] = [
     ["v1", "aaa1111", null],
@@ -412,7 +414,7 @@ describe("--verdict: a prediction closed by code", () => {
     ["v6", "aaa1111", null],
   ];
   const S = "2026-11-15T12:00:00Z";
-  const VERDICT_KEYS = ["builds", "cancelled", "complaints", "counted", "ignoredAfterN", "inFlight", "maxComplaints", "now", "runList", "runs", "since", "strip", "type", "unknown", "verdict"];
+  const VERDICT_KEYS = ["builds", "cancelled", "complaints", "counted", "deferred", "ignoredAfterN", "inFlight", "maxComplaints", "now", "runList", "runs", "since", "strip", "type", "unknown", "verdict"];
   let vdb: string;
   const sidecars = () => [`${vdb}-wal`, `${vdb}-shm`].filter((p) => existsSync(p));
   const clearSidecars = () => {
@@ -448,7 +450,7 @@ describe("--verdict: a prediction closed by code", () => {
     expect(r.stdout).toBe(
       [
         "Prediction: ritual:vr has at most 1 complaint(s) (concerns+failed) in its first 3 runs queued at or after 2026-11-15T12:00:00.000Z; checked at 2026-11-20T18:00:00.000Z",
-        "verdict: REFUTED  counted 3/3  complaints 2 (limit 1)",
+        "verdict: REFUTED  counted 3/3  unknown 0  complaints 2 (limit 1)",
         "  slots, oldest left: [.CF]",
         "    2026-11-15 12:00:00 completed @aaa1111",
         "    2026-11-16 12:00:00 completed_with_concerns @aaa1111 [concern] v2 facts concern",
@@ -457,6 +459,7 @@ describe("--verdict: a prediction closed by code", () => {
         "  cancelled, ignored: 1",
         "    2026-11-17 12:00:00 cancelled v3",
         "  after the first 3: 2",
+        "  queued in the second of the check, left for the next check: 1",
         "  caveat: the counted runs span 2 builds, oldest first: aaa1111 · bbb2222",
         "",
       ].join("\n"),
@@ -467,16 +470,18 @@ describe("--verdict: a prediction closed by code", () => {
     const r = verdict(["--type", "ritual:vr", "--since", S, "--max-complaints", "3"]);
     expect(r.status, r.stderr).toBe(0);
     const lines = r.stdout.split("\n");
-    expect(lines[1]).toBe("verdict: COUNTING  counted 4/7  complaints 3 (limit 3)");
+    expect(lines[1]).toBe("verdict: COUNTING  counted 4/7  unknown 3  complaints 3 (limit 3)");
     expect(lines[2]).toBe("  slots, oldest left: [.CF?C]");
-    expect(lines[3]).toBe("  waiting for 1 run(s) still in flight");
-    expect(lines.slice(8)).toEqual([
+    expect(lines[3]).toBe("  to close: 1 more complaint(s) would refute it; 3 more clean result(s) would confirm it");
+    expect(lines[4]).toBe("  waiting for 1 run(s) still in flight");
+    expect(lines.slice(9)).toEqual([
       "  in flight, holding a slot: 1",
       "    2026-11-19 12:00:00 needs_context v5",
       "  needs_context: not a complaint; holds its slot until it resolves",
       "  cancelled, ignored: 1",
       "    2026-11-17 12:00:00 cancelled v3",
       "  after the first 7: 0",
+      "  queued in the second of the check, left for the next check: 1",
       "  caveat: the counted runs span 2 builds, oldest first: aaa1111 · bbb2222",
       "",
     ]);
@@ -486,7 +491,7 @@ describe("--verdict: a prediction closed by code", () => {
     const confirmed = json(["--type", "ritual:vr", "--since", S, "--max-complaints", "2", "--runs", "3"]);
     expect(Object.keys(confirmed).sort()).toEqual(VERDICT_KEYS);
     expect(confirmed).toMatchObject({
-      verdict: "CONFIRMED", counted: 3, runs: 3, complaints: 2, unknown: 0, maxComplaints: 2, since: "2026-11-15T12:00:00.000Z",
+      verdict: "CONFIRMED", counted: 3, runs: 3, complaints: 2, unknown: 0, deferred: 1, maxComplaints: 2, since: "2026-11-15T12:00:00.000Z",
       inFlight: [], cancelled: [{ createdAt: "2026-11-17 12:00:00", taskId: "v3", status: "cancelled" }], ignoredAfterN: 2, builds: ["aaa1111", "bbb2222"],
     });
     expect(confirmed.runList.map((r: { taskId: string }) => r.taskId)).toEqual(["v1", "v2", "v4"]);
@@ -506,7 +511,7 @@ describe("--verdict: a prediction closed by code", () => {
     expect(json(["--type", "ritual:vr", "--since", "2026-11-21T00:00:00Z", "--max-complaints", "2"])).toMatchObject({ verdict: "COUNTING", counted: 0, unknown: 7, inFlight: [], cancelled: [] });
     const r = verdict(["--type", "ritual:real-text", "--since", "2026-11-01T00:00:00Z", "--max-complaints", "0"], db);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain("verdict: REFUTED  counted 1/7  complaints 1 (limit 0)\n");
+    expect(r.stdout).toContain("verdict: REFUTED  counted 1/7  unknown 6  complaints 1 (limit 0)\n");
     expect(r.stdout).toContain(`    ${MID} failed @- [reply] real reply\n`);
     expect(r.stdout).not.toContain("caveat");
   });
@@ -557,6 +562,13 @@ describe("--verdict: a prediction closed by code", () => {
     expect([ahead.status, ahead.stdout, ahead.stderr]).toEqual([2, "", "complaints-digest: --now must not be later than the current time with --verdict\n"]);
     expect(sidecars()).toEqual([]);
     expect(wrapper(["--db", vdb, "--now", "2099-01-01T00:00:00Z"]).status).toBe(0);
+    // Two seconds past the next whole second: ahead of the clock however a
+    // second ticks over before the check, and close enough to pin the bound.
+    const soon = new Date(Math.ceil(Date.now() / 1000) * 1000 + 2000).toISOString();
+    clearSidecars();
+    const close = wrapper(["--db", vdb, "--now", soon, "--verdict", ...future]);
+    expect([close.status, close.stdout, close.stderr]).toEqual([2, "", "complaints-digest: --now must not be later than the current time with --verdict\n"]);
+    expect(sidecars()).toEqual([]);
     // The current second (what the wrapper pins when --now is not given) is
     // accepted; --since is a day back so the window never ages this out.
     const current = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString();

@@ -112,7 +112,9 @@ describe("buildVerdict", () => {
       row({ task_id: "b", status: STATUS.C, created_at: "2026-11-20 17:59:59" }),
       row({ task_id: "a", status: STATUS.C, created_at: "2026-11-20 18:00:00" }),
     ];
-    expect(verdict(rows, { maxComplaints: 0 }).runList.map((r) => r.taskId)).toEqual(["b"]);
+    const v = verdict(rows, { maxComplaints: 0 });
+    expect([v.runList.map((r) => r.taskId), v.deferred]).toEqual([["b"], 1]);
+    expect(renderVerdict(v)).toContain("  queued in the second of the check, left for the next check: 1\n");
   });
 
   it("in-flight runs hold a slot as unknown, every in-flight status alike", () => {
@@ -243,6 +245,46 @@ describe("a closed verdict never flips", () => {
     }
     expect(closedSeen).toBeGreaterThan(1000);
   });
+
+  it("property: checks at an advancing clock, appends in the second of the check with any task id (lower ones too)", () => {
+    let seed = 777;
+    const rand = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return Math.floor((seed / 2147483648) * n);
+    };
+    const pick = (s: string): string => s[rand(s.length)];
+    const base = Date.parse("2026-11-15T12:00:00Z");
+    const iso = (k: number): string => new Date(base + k * 1000).toISOString();
+    let closedSeen = 0;
+    let sameSecondLower = 0;
+    for (let trial = 0; trial < 3000; trial++) {
+      const N = 1 + rand(5);
+      const K = rand(N);
+      let clock = 3 + rand(5);
+      const seq: TaskRow[] = [];
+      const add = (letter: string, k: number) => {
+        const created = iso(k).slice(0, 19).replace("T", " ");
+        const id = `${rand(65536).toString(16).padStart(4, "0")}-${seq.length}`;
+        if (seq.some((r) => r.created_at === created && r.task_id > id)) sameSecondLower++;
+        seq.push(row({ task_id: id, status: STATUS[letter], created_at: created }));
+      };
+      for (let i = rand(9); i > 0; i--) add(pick(".CFX" + IN_FLIGHT), rand(clock));
+      let closed: string | null = null;
+      for (let step = 0; step < 25; step++) {
+        const v = verdict(seq, { now: iso(clock), runs: N, maxComplaints: K }).verdict;
+        if (closed !== null) expect([trial, step, v]).toEqual([trial, step, closed]);
+        else if (v !== "COUNTING") closed = v;
+        const open = seq.filter((r) => IN_FLIGHT.split("").some((c) => STATUS[c] === r.status));
+        const move = rand(4);
+        if (move === 0) clock += 1 + rand(2);
+        else if (move === 1 || open.length === 0) add(pick(".CFX" + IN_FLIGHT), clock);
+        else open[rand(open.length)].status = STATUS[pick(".CFXRQN")];
+      }
+      if (closed !== null) closedSeen++;
+    }
+    expect(closedSeen).toBeGreaterThan(1000);
+    expect(sameSecondLower).toBeGreaterThan(1000);
+  });
 });
 
 describe("renderVerdict", () => {
@@ -251,8 +293,9 @@ describe("renderVerdict", () => {
     const text = renderVerdict(verdict(rows, { runs: 3, maxComplaints: 1 }));
     expect(text.split("\n")).toEqual([
       `Prediction: ${TYPE} has at most 1 complaint(s) (concerns+failed) in its first 3 runs queued at or after ${SINCE}; checked at ${NOW}`,
-      "verdict: COUNTING  counted 2/3  complaints 1 (limit 1)",
+      "verdict: COUNTING  counted 2/3  unknown 1  complaints 1 (limit 1)",
       "  slots, oldest left: [.C?]",
+      "  to close: 1 more complaint(s) would refute it; 1 more clean result(s) would confirm it",
       "  waiting for 1 run(s) still in flight",
       "    2026-11-15 12:00:00 completed @aaa1111",
       `    2026-11-15 13:00:00 completed_with_concerns @aaa1111 [concern] ${"x".repeat(500)}`,
@@ -261,14 +304,29 @@ describe("renderVerdict", () => {
       "  cancelled, ignored: 1",
       "    2026-11-15 14:00:00 cancelled t02",
       "  after the first 3: 1",
+      "  queued in the second of the check, left for the next check: 0",
       "",
     ]);
+  });
+
+  it("COUNTING with only empty slots: the closing line, no waiting line", () => {
+    const text = renderVerdict(verdict(runs(".C")));
+    expect(text).toContain("verdict: COUNTING  counted 2/7  unknown 5  complaints 1 (limit 2)\n");
+    expect(text).toContain("  to close: 2 more complaint(s) would refute it; 4 more clean result(s) would confirm it\n");
+    expect(text).not.toContain("waiting");
+  });
+
+  it("closed verdicts print no closing line; the verdict line carries unknown", () => {
+    expect(renderVerdict(verdict(runs("CCC")))).toContain("verdict: REFUTED  counted 3/7  unknown 4  complaints 3 (limit 2)\n");
+    expect(renderVerdict(verdict(runs("CCC")))).not.toContain("to close");
+    expect(renderVerdict(verdict(runs("....."))).split("\n")[1]).toBe("verdict: CONFIRMED  counted 5/7  unknown 2  complaints 0 (limit 2)");
   });
 
   it("needs_context and blocked are named; no waiting line once the verdict is closed", () => {
     const text = renderVerdict(verdict(runs(".NB"), { runs: 3, maxComplaints: 2 }));
     expect(text).toContain("  needs_context and blocked: not a complaint; holds its slot until it resolves\n");
     expect(text).not.toContain("waiting");
+    expect(text).not.toContain("to close");
     expect(text).toContain("verdict: CONFIRMED");
     expect(renderVerdict(verdict(runs(".R"), { runs: 3 }))).not.toContain("not a complaint");
   });

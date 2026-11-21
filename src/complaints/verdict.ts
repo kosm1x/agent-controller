@@ -21,8 +21,16 @@
  * complaint) or is cancelled and the runs behind it move up (that unknown is
  * replaced by a complaint, a clean run, another unknown or an empty slot).
  * complaints never falls, so REFUTED stays; complaints + unknown never rises,
- * so CONFIRMED stays. Not covered: retention deleting rows inside the window
- * (only if TASKS_RETENTION_DAYS is below the --since age).
+ * so CONFIRMED stays.
+ *
+ * Outside that guarantee: (1) the `mc-ctl cancel` database fallback, used
+ * when the API is unreachable, can cancel a completed_with_concerns row,
+ * which takes a counted complaint out of the slots ([C, C, .] with K 1, N 2
+ * is REFUTED; cancel the first and it reads CONFIRMED); (2) retention
+ * deleting a counted row (only if TASKS_RETENTION_DAYS is below the --since
+ * age); (3) the host clock stepping backward, so new rows are stamped before
+ * rows already counted. A replay with a past --now reads today's statuses,
+ * not a snapshot of that time.
  */
 import { buildOf, cmp, evidence, isComplaint, stripChar, typeKey, type TaskRow } from "./digest.js";
 
@@ -65,6 +73,8 @@ export interface Verdict {
   complaints: number;
   /** In-flight runs in the slots plus the empty slots. */
   unknown: number;
+  /** Runs queued in the second of `now` (or later): left for the next check. */
+  deferred: number;
   maxComplaints: number;
   /** In-flight runs holding a slot. */
   inFlight: QueuedRun[];
@@ -92,8 +102,9 @@ export function buildVerdict(rows: TaskRow[], opts: VerdictOptions): Verdict {
   // queued later in that same second would share the time and could sort
   // ahead of them on task_id (a random id), so only earlier seconds count.
   const before = secondKey(opts.now);
-  const mine = rows
-    .filter((r) => typeKey(r) === opts.type && cmp(r.created_at, since) >= 0 && cmp(r.created_at, before) < 0)
+  const ofType = rows.filter((r) => typeKey(r) === opts.type && cmp(r.created_at, since) >= 0);
+  const mine = ofType
+    .filter((r) => cmp(r.created_at, before) < 0)
     .sort((a, b) => cmp(a.created_at, b.created_at) || cmp(a.task_id, b.task_id));
   const live = mine.filter((r) => !isCancelled(r));
   const slots = live.slice(0, opts.runs);
@@ -112,6 +123,7 @@ export function buildVerdict(rows: TaskRow[], opts: VerdictOptions): Verdict {
     runs: opts.runs,
     complaints,
     unknown,
+    deferred: ofType.length - mine.length,
     maxComplaints: K,
     inFlight: inFlight.map(queued),
     cancelled: mine.filter(isCancelled).map(queued),
@@ -135,11 +147,16 @@ export function buildVerdict(rows: TaskRow[], opts: VerdictOptions): Verdict {
 export function renderVerdict(v: Verdict): string {
   const out = [
     `Prediction: ${v.type} has at most ${v.maxComplaints} complaint(s) (concerns+failed) in its first ${v.runs} runs queued at or after ${v.since}; checked at ${v.now}`,
-    `verdict: ${v.verdict}  counted ${v.counted}/${v.runs}  complaints ${v.complaints} (limit ${v.maxComplaints})`,
+    `verdict: ${v.verdict}  counted ${v.counted}/${v.runs}  unknown ${v.unknown}  complaints ${v.complaints} (limit ${v.maxComplaints})`,
     `  slots, oldest left: [${v.strip}]`,
   ];
-  if (v.verdict === "COUNTING" && v.inFlight.length > 0) {
-    out.push(`  waiting for ${v.inFlight.length} run(s) still in flight`);
+  if (v.verdict === "COUNTING") {
+    // From the rule: REFUTED needs complaints > K; CONFIRMED needs enough
+    // unknown slots to resolve clean that complaints + unknown <= K.
+    const refute = v.maxComplaints + 1 - v.complaints;
+    const confirm = v.complaints + v.unknown - v.maxComplaints;
+    out.push(`  to close: ${refute} more complaint(s) would refute it; ${confirm} more clean result(s) would confirm it`);
+    if (v.inFlight.length > 0) out.push(`  waiting for ${v.inFlight.length} run(s) still in flight`);
   }
   for (const r of v.runList) {
     const text = r.source === null ? "" : ` [${r.source}] ${r.text}`;
@@ -152,6 +169,7 @@ export function renderVerdict(v: Verdict): string {
   out.push(`  cancelled, ignored: ${v.cancelled.length}`);
   for (const r of v.cancelled) out.push(`    ${r.createdAt} ${r.status} ${r.taskId}`);
   out.push(`  after the first ${v.runs}: ${v.ignoredAfterN}`);
+  out.push(`  queued in the second of the check, left for the next check: ${v.deferred}`);
   if (v.builds.length > 1) {
     out.push(`  caveat: the counted runs span ${v.builds.length} builds, oldest first: ${v.builds.map((b) => b ?? "no build").join(" · ")}`);
   }

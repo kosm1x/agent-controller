@@ -17,6 +17,8 @@
 # verdict does not change later. Exit 0 for all three. K must be below N;
 # --since is floored to the second and must fall inside the --days window
 # (default 30) before --now. Every run counts: a retry of a failed run is its own run.
+# Runs queued in the second of --now are left for the next check (and counted
+# as deferred), since a run queued later in that second could sort ahead of them.
 #
 # With task_completion_facts (schema 18 on), each type also gets a builds line:
 # the runs of the last-N strip grouped by build in order of first appearance,
