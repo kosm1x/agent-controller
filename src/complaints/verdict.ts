@@ -104,6 +104,17 @@ export function closeRule(bad: number, unknown: number, limit: number): VerdictW
   return bad > limit ? "REFUTED" : bad + unknown <= limit ? "CONFIRMED" : "COUNTING";
 }
 
+/**
+ * A prediction's S as counted: floored to the second (tasks.created_at has
+ * whole seconds, so a run stamped in the second of S is at or after it), and
+ * whether it is inside the window (now - days, now] the SQL reads. An S at or
+ * before the window's start could miss runs, so it is never half counted.
+ */
+export function windowSince(sinceMs: number, nowMs: number, days: number): { since: string; inside: boolean } {
+  const floored = Math.floor(sinceMs / 1000) * 1000;
+  return { since: new Date(floored).toISOString(), inside: floored > nowMs - days * 86_400_000 };
+}
+
 /** tasks.created_at text ('YYYY-MM-DD HH:MM:SS') of an ISO time, floored to the second. */
 const secondKey = (iso: string): string => iso.slice(0, 19).replace("T", " ");
 const queued = (r: TaskRow): QueuedRun => ({ createdAt: r.created_at, taskId: r.task_id, status: r.status });

@@ -27,7 +27,7 @@ import { parseArgs } from "node:util";
 import { complaintsSql } from "../src/complaints/query.js";
 import { buildDigest, renderDigest, type TaskRow } from "../src/complaints/digest.js";
 import { checkRow, LEDGER_DAYS, parseLedger, renderLedger, type Prediction } from "../src/complaints/ledger.js";
-import { buildVerdict, ISO_TIME, nowIsAfterClock, renderVerdict, TYPE_PATTERN } from "../src/complaints/verdict.js";
+import { buildVerdict, ISO_TIME, nowIsAfterClock, renderVerdict, TYPE_PATTERN, windowSince } from "../src/complaints/verdict.js";
 
 function fail(msg: string): never {
   process.stderr.write(`complaints-digest: ${msg}\n`);
@@ -104,13 +104,9 @@ if (parsed.verdict) {
   if (!ISO_TIME.test(parsed.since)) fail("--since must be an ISO time with Z or an offset, e.g. 2026-11-20T18:00:00Z");
   const parsedSince = Date.parse(parsed.since);
   if (Number.isNaN(parsedSince)) fail("--since must be a date");
-  // tasks.created_at has whole seconds: a run stamped in the second of
-  // --since is at or after it.
-  const sinceMs = Math.floor(parsedSince / 1000) * 1000;
-  // The SQL window is (now - days, now]: a --since at or before its start
-  // could miss runs, so it is refused rather than half counted.
-  if (sinceMs <= nowMs - days * 86_400_000) fail(`--since must be later than --now minus --days (${days} days)`);
-  verdictOpts = { type, since: new Date(sinceMs).toISOString(), maxComplaints, runs };
+  const w = windowSince(parsedSince, nowMs, days);
+  if (!w.inside) fail(`--since must be later than --now minus --days (${days} days)`);
+  verdictOpts = { type, since: w.since, maxComplaints, runs };
 } else if (parsed.since !== undefined || parsed["max-complaints"] !== undefined || parsed.runs !== undefined) {
   fail("--since, --max-complaints and --runs need --verdict");
 }
