@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-21 15:51 UTC — batch 10 piece 10 COMMITTED `fe287ae4` (queue 4ib; not deployed, ships with the batch): thirteen undescribed input properties described, the condition text of both file write tools names the words it is matched against, and a lint case walks every schema property at every depth. Review: pass with warnings; four texts and a comment replaced, one walk case strengthened. Next: the untrue texts, then the piece that makes the skill list and the load tool travel together.**
+
 **Status 2026-11-21 14:53 UTC — batch 10 piece 9 COMMITTED `f346ecee` (queue 4ia; not deployed, ships with the batch): the skill list returns compact rows within a size budget and takes a query; texts of the save, list and report tools made true; four nested properties described. Review: pass with warnings; three texts and a comment replaced, one missing case added. Next: the remaining texts, then the piece that makes the list and the load tool travel together.**
 
 **Status 2026-11-21 13:59 UTC — batch 10 piece 8 COMMITTED `8fddd6f5` (queue 4hz; not deployed, ships with the batch): failures of six tools in five files start with an error and keep what was made; three candidates left as results on purpose; the upload's time-out message made true. Review: pass with warnings; one untrue sentence of new text replaced and three surviving faults closed by added cases. Next: the skills file and the report tool.**
