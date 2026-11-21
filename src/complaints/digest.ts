@@ -17,10 +17,12 @@ export interface TaskRow {
   schedule_name: string | null;
   /** JSON object text, tool name -> calls attempted in this run (tool.called events). */
   tools: string | null;
+  /** Ledger SQL only (complaintsSql with `guards`): tasks.completed_at, UTC 'YYYY-MM-DD HH:MM:SS'. */
+  completed_at?: string | null;
   /**
    * Ledger SQL only (complaintsSql with `guards`): JSON object text, tool
-   * name -> calls not refused at the confirmation gate, written no later than
-   * the run's completed_at second. Absent from the digest and verdict SQL.
+   * name -> calls with no did-not-run gate row, written no later than the
+   * run's completed_at second. Absent from the digest and verdict SQL.
    */
   guard_tools?: string | null;
   /** 1 when the output carries a numbers_audit record. */

@@ -380,23 +380,37 @@ describe("query", () => {
     expect([complaintsSql(false, false), complaintsSql(true, false)]).toEqual([complaintsSql(false), complaintsSql(true)]);
   });
 
-  it("guards add exactly completed_at in base and the guard_tools column, bounded by completed_at, gate decisions as literals", () => {
+  it("guards add exactly completed_at (in base and out) and the guard_tools column, bounded by completed_at, gate decisions as literals", () => {
     for (const facts of [false, true]) {
       const g = complaintsSql(facts, true);
       const column = g.slice(g.indexOf(",\n  (SELECT json_group_object(c.tool, c.n) FROM (\n     SELECT e.tool, max(0,"), g.indexOf(" AS guard_tools") + " AS guard_tools".length);
-      expect(g.replace(", t.completed_at", "").replace(column, "")).toBe(complaintsSql(facts));
+      expect(g.replace(", t.completed_at", "").replace(",\n  b.completed_at", "").replace(column, "")).toBe(complaintsSql(facts));
       expect(column).toContain("replace(substr(e.ts, 1, 19), 'T', ' ') <= b.completed_at");
       expect(column).toContain(`IN (${GATED_NOT_RUN.map((d) => `'${d}'`).join(", ")})`);
     }
     for (const d of GATED_NOT_RUN) expect(d).toMatch(/^[a-z_]+$/);
   });
 
-  it("GATED_NOT_RUN is every tool.gated decision literal in the two files that write them", () => {
+  // Gate decisions after which the call does run: a guard counts those calls,
+  // so they stay out of GATED_NOT_RUN. None today.
+  const DECISIONS_THAT_RUN: string[] = [];
+  it("every tool.gated decision literal in the two files that write them is in GATED_NOT_RUN or DECISIONS_THAT_RUN", () => {
     const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-    const literals = new Set<string>();
-    for (const f of ["inference/claude-sdk.ts", "tools/task-executor.ts"]) {
-      for (const m of readFileSync(join(root, f), "utf8").matchAll(/"((?:refused|queued)_[a-z_]+|confirmation_required)"/g)) literals.add(m[1]);
+    const files = ["src/inference/claude-sdk.ts", "src/tools/task-executor.ts"];
+    const known = new Set([...GATED_NOT_RUN, ...DECISIONS_THAT_RUN]);
+    const todo = (what: string, where: string) =>
+      `a gate decision literal was ${what} in ${where}: add it to GATED_NOT_RUN in src/complaints/query.ts only if that decision means the call did not run; ` +
+      "otherwise add it to the test's list of decisions that run (DECISIONS_THAT_RUN in src/complaints/digest.test.ts)" +
+      (what === "removed" ? "; for a removed one, take it out of whichever list holds it" : "");
+    const problems: string[] = GATED_NOT_RUN.filter((d) => DECISIONS_THAT_RUN.includes(d)).map((d) => `${d} is in both lists`);
+    const seen = new Set<string>();
+    for (const f of files) {
+      for (const m of readFileSync(join(root, "..", f), "utf8").matchAll(/"((?:refused|queued)_[a-z_]+|confirmation_required)"/g)) {
+        seen.add(m[1]);
+        if (!known.has(m[1])) problems.push(`${m[1]}: ${todo("added", f)}`);
+      }
     }
-    expect([...literals].sort()).toEqual([...GATED_NOT_RUN].sort());
+    for (const d of known) if (!seen.has(d)) problems.push(`${d}: ${todo("removed", files.join(" or "))}`);
+    expect([...new Set(problems)]).toEqual([]);
   });
 });

@@ -608,8 +608,9 @@ describe("--ledger: every prediction in a file, checked by code", () => {
   // second of completed_at), l2 a concern with 1, l3 clean with no trace rows.
   // zb (the watchdog case): z2 was failed at 13:01:00 and its runner kept
   // writing calls after that. gt: two gmail_send calls, one refused at the
-  // gate, plus a tool.gated row with an unknown decision and one with
-  // unreadable attrs, which refuse nothing.
+  // gate, plus a tool.gated row with an unknown decision, one with unreadable
+  // attrs, and a row of another event carrying a not-run decision: none of
+  // these three refuses anything.
   const LG: [string, string, string, string, string][] = [
     ["l1", "completed", "2026-11-15 12:00:00", "lg", "{}"],
     ["l2", "completed_with_concerns", "2026-11-16 12:00:00", "lg", '{"text":"l2 reply"}'],
@@ -630,12 +631,13 @@ describe("--ledger: every prediction in a file, checked by code", () => {
     ["g1", "tool.gated", "gmail_send", "2026-11-16T12:00:10.000Z", '{"decision":"confirmation_required","origin":"x"}'],
     ["g1", "tool.gated", "gmail_send", "2026-11-16T12:00:20.000Z", '{"decision":"not_a_decision"}'],
     ["g1", "tool.gated", "gmail_send", "2026-11-16T12:00:20.000Z", "not json"],
+    ["g1", "tool.secret_ref_refused", "gmail_send", "2026-11-16T12:00:20.000Z", '{"decision":"refused_placeholder"}'],
   ];
   const S = "2026-11-15T12:00:00Z";
   const SS = "2026-11-15T12:00:00.000Z";
   const CHECKED = "2026-11-20T18:00:00.000Z";
   const RECORDED = "2026-11-19T00:00:00.000Z";
-  const GUARD_NOTE = "; a guard counts calls not refused at the confirmation gate, errored calls included";
+  const GUARD_NOTE = "; a guard counts a tool's calls with no did-not-run gate row (errored calls and some refusals included)";
   const base = { type: "ritual:lg", since: S, maxComplaints: 1, runs: 3, change: "a change", baseline: "a baseline" };
   const ROWS = {
     a: { id: "a", ...base, guards: [{ tool: "exa", min: 2, maxBelow: 1 }], answer: "never printed" },
@@ -645,14 +647,14 @@ describe("--ledger: every prediction in a file, checked by code", () => {
     e: { id: "e", ...base, type: "ritual:zb", runs: 2, guards: [{ tool: "exa", min: 1, maxBelow: 1 }] },
     f: { id: "f", ...base, type: "ritual:gt", maxComplaints: 0, runs: 1, guards: [{ tool: "gmail_send", min: 1, maxBelow: 0 }, { tool: "gmail_send", min: 2, maxBelow: 0 }] },
   };
-  const LINE_A = `a CONFIRMED, guard broken | ritual:lg since ${SS}: counted 3/3, complaints 1 (limit 1), unknown 0 [.C.]; guard exa >= 2 not refused: 2 run(s) below (limit 1) broken`;
-  const LINE_B = `b CONFIRMED | ritual:lg since ${SS}: counted 3/3, complaints 1 (limit 1), unknown 0 [.C.]; guard exa >= 1 not refused: 1 run(s) below (limit 1) holds`;
+  const LINE_A = `a CONFIRMED, guard broken | ritual:lg since ${SS}: counted 3/3, complaints 1 (limit 1), unknown 0 [.C.]; guard exa >= 2 calls: 2 run(s) below (limit 1) broken`;
+  const LINE_B = `b CONFIRMED | ritual:lg since ${SS}: counted 3/3, complaints 1 (limit 1), unknown 0 [.C.]; guard exa >= 1 calls: 1 run(s) below (limit 1) holds`;
   const LINE_C = `c COUNTING | ritual:nobody since ${SS}: counted 0/2, complaints 0 (limit 0), unknown 2 []; guard: none; no run of this type in 30 days`;
   const LINE_D = "d EXPIRED | ritual:old since 2026-10-01T00:00:00.000Z: since is outside the 30-day window";
-  const LINE_E = `e CONFIRMED, guard broken | ritual:zb since ${SS}: counted 2/2, complaints 1 (limit 1), unknown 0 [.F]; guard exa >= 1 not refused: 2 run(s) below (limit 1) broken`;
+  const LINE_E = `e CONFIRMED, guard broken | ritual:zb since ${SS}: counted 2/2, complaints 1 (limit 1), unknown 0 [.F]; guard exa >= 1 calls: 2 run(s) below (limit 1) broken`;
   const LINE_F =
     `f CONFIRMED, guard broken | ritual:gt since ${SS}: counted 1/1, complaints 0 (limit 0), unknown 0 [.]; ` +
-    "guard gmail_send >= 1 not refused: 0 run(s) below (limit 0) holds; guard gmail_send >= 2 not refused: 1 run(s) below (limit 0) broken";
+    "guard gmail_send >= 1 calls: 0 run(s) below (limit 0) holds; guard gmail_send >= 2 calls: 1 run(s) below (limit 0) broken";
   let ldb: string;
   const ledgerFile = (name: string, rows: object[]) => {
     const path = join(dir, name);
@@ -660,6 +662,7 @@ describe("--ledger: every prediction in a file, checked by code", () => {
     return path;
   };
   const ledger = (args: string[]) => wrapper(["--db", ldb, "--now", NOW, "--ledger", ...args]);
+  const ledger_at = (now: string, args: string[]) => wrapper(["--db", ldb, "--now", now, "--ledger", ...args]);
   const sidecars = () => [`${ldb}-wal`, `${ldb}-shm`].filter((p) => existsSync(p));
 
   beforeAll(() => {
@@ -697,6 +700,17 @@ describe("--ledger: every prediction in a file, checked by code", () => {
       ].join("\n"),
     );
     expect(sidecars()).toHaveLength(2);
+  }, 60_000);
+
+  it("replay earlier than a recorded closure: the row is marked, the file is not refused; exit 0", () => {
+    const r = ledger_at("2026-11-18T00:00:00Z", [ledgerFile("early.jsonl", [ROWS.b])]);
+    expect([r.status, r.stderr, r.stdout.split("\n").slice(2)]).toEqual([0, "", [`  recorded CONFIRMED at ${RECORDED}, after this time; not rechecked (replay)`, ""]]);
+  }, 60_000);
+
+  it("the --now=<time> form is a replay too: the wrapper pins no clock and sets no marker", () => {
+    const f = ledgerFile("eq-form.jsonl", [ROWS.b]);
+    const r = wrapper(["--db", ldb, `--now=${NOW}`, "--ledger", f]);
+    expect([r.status, r.stdout.split("\n")]).toEqual([0, [expect.stringContaining(`replayed at ${CHECKED} (a replay, not a recheck)`), LINE_B, `  recorded CONFIRMED at ${RECORDED}; not rechecked (replay)`, ""]]);
   }, 60_000);
 
   it("replay: a recorded closure the rows disagree with is not a MISMATCH and exits 0", () => {
@@ -759,9 +773,9 @@ describe("--ledger at the clock (no --now): recorded closures are rechecked", ()
   const base = { type: "ritual:ck", since, maxComplaints: 1, runs: 3, change: "a change", baseline: "a baseline" };
   const P = { id: "p", ...base, guards: [{ tool: "exa", min: 1, maxBelow: 1 }], closed: { state: "CONFIRMED", checkedAt: recorded, line: "earlier" } };
   const R = { id: "r", ...base };
-  const LINE_P = `p CONFIRMED | ritual:ck since ${since}: counted 3/3, complaints 1 (limit 1), unknown 0 [.C.]; guard exa >= 1 not refused: 1 run(s) below (limit 1) holds`;
+  const LINE_P = `p CONFIRMED | ritual:ck since ${since}: counted 3/3, complaints 1 (limit 1), unknown 0 [.C.]; guard exa >= 1 calls: 1 run(s) below (limit 1) holds`;
   const LINE_R = `r CONFIRMED | ritual:ck since ${since}: counted 3/3, complaints 1 (limit 1), unknown 0 [.C.]; guard: none`;
-  const HEADER = /^Ledger .* checked at \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.000Z over the 30 days before it: 2 row\(s\); a guard counts/;
+  const HEADER = /^Ledger .* checked at \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.000Z over the 30 days before it: 2 row\(s\); a guard counts a tool's calls with no did-not-run gate row/;
   let cdb: string;
   const file = (name: string, rows: object[]) => {
     const path = join(dir, name);
@@ -808,9 +822,115 @@ describe("--ledger at the clock (no --now): recorded closures are rechecked", ()
     expect(lines).toHaveLength(6);
   }, 60_000);
 
+  it("at the clock a closure recorded later than the check is a file problem: exit 2", () => {
+    const later = new Date(sec + 86_400_000).toISOString();
+    const path = file("clock-later.jsonl", [{ ...P, closed: { ...P.closed, checkedAt: later } }]);
+    const r = wrapper(["--db", cdb, "--ledger", path]);
+    expect([r.status, r.stdout, r.stderr]).toEqual([
+      2,
+      "",
+      `complaints-digest: ledger ${path} line 1: "checkedAt" in "closed" must be an ISO time at or after "since" and not later than the check: less than 30 days after "since", or at least that for EXPIRED\n`,
+    ]);
+  }, 60_000);
+
   it("a caller's environment cannot claim the clock: the wrapper clears the marker, so --now stays a replay", () => {
     const env = { ...process.env, COMPLAINTS_DIGEST_NOW_FROM_CLOCK: "1" };
     const r = wrapper(["--db", cdb, "--now", new Date(sec).toISOString(), "--ledger", file("clock-env.jsonl", [{ ...P, closed: { ...P.closed, state: "REFUTED" } }])], env);
     expect([r.status, r.stdout.split("\n")[0]]).toEqual([0, expect.stringContaining("(a replay, not a recheck)")]);
   }, 60_000);
+});
+
+describe("the CLI on its own: marker values, which SQL each mode sends, the guard SQL's completed_at bound", () => {
+  const TSX = join(REPO, "node_modules", ".bin", "tsx");
+  const CLI = join(REPO, "scripts", "complaints-digest.ts");
+  const cli = (args: string[], env: NodeJS.ProcessEnv = {}, input = "[]") =>
+    spawnSync(TSX, [CLI, ...args], { cwd: REPO, env: { ...process.env, COMPLAINTS_DIGEST_NOW_FROM_CLOCK: undefined, ...env }, input, encoding: "utf8", timeout: 60_000 });
+  const ROW = { id: "m", type: "ritual:m", since: "2026-11-15T12:00:00Z", maxComplaints: 0, runs: 1, change: "c", baseline: "b" };
+  let f: string;
+  beforeAll(() => {
+    f = join(dir, "cli.jsonl");
+    writeFileSync(f, `${JSON.stringify(ROW)}\n`);
+  });
+
+  it.each([["0"], ["true"], [""], ["1 "], ["yes"]])("marker %j is a replay; only \"1\" is a recheck", (value) => {
+    const r = cli(["--now", NOW, "--ledger", f], { COMPLAINTS_DIGEST_NOW_FROM_CLOCK: value });
+    expect([r.status, r.stderr, r.stdout.split("\n")[0]]).toEqual([0, "", expect.stringContaining("(a replay, not a recheck)")]);
+    const c = cli(["--now", NOW, "--ledger", f], { COMPLAINTS_DIGEST_NOW_FROM_CLOCK: "1" });
+    expect(c.stdout.split("\n")[0]).toContain("checked at 2026-11-20T18:00:00.000Z over");
+  }, 60_000);
+
+  it("the digest and --verdict send no guard SQL (no completed_at, no guard_tools); --ledger does", () => {
+    const verdict = ["--verdict", "--type", "ritual:m", "--since", "2026-11-15T12:00:00Z", "--max-complaints", "0"];
+    for (const facts of [[], ["--facts-table"]]) {
+      for (const args of [[], ["--json"], verdict]) {
+        const r = cli(["--print-sql", ...facts, "--now", NOW, ...args]);
+        expect([r.status, r.stderr]).toEqual([0, ""]);
+        expect(r.stdout).not.toMatch(/guard_tools|completed_at/);
+      }
+      const l = cli(["--print-sql", ...facts, "--now", NOW, "--ledger", f]);
+      expect(l.stdout).toContain(" AS guard_tools");
+    }
+  }, 60_000);
+
+  it("guard_tools: rows up to the completed_at second count (inclusive); a run with no completed_at keeps them all", () => {
+    const gdb = join(dir, "guard-sql.db");
+    const sql = [
+      SCHEMA,
+      `INSERT INTO tasks (task_id, status, created_at, completed_at, metadata) VALUES ('done', 'completed', '2026-11-16 12:00:00', '2026-11-16 12:01:00', '{"ritualId":"m"}');`,
+      `INSERT INTO tasks (task_id, status, created_at, completed_at, metadata) VALUES ('open', 'needs_context', '2026-11-16 13:00:00', NULL, '{"ritualId":"m"}');`,
+      ...["2026-11-16T12:01:00.999Z", "2026-11-16T12:01:01.000Z"].map((ts) => `INSERT INTO task_trace_events (task_id, name, tool, ts) VALUES ('done', 'tool.called', 'exa', '${ts}');`),
+      ...["2026-11-16T13:00:30.000Z", "2026-11-17T00:00:00.000Z"].map((ts) => `INSERT INTO task_trace_events (task_id, name, tool, ts) VALUES ('open', 'tool.called', 'exa', '${ts}');`),
+    ].join("\n");
+    const b = spawnSync("/usr/bin/sqlite3", ["-init", "/dev/null", "-bail", gdb], { input: sql, encoding: "utf8" });
+    expect(b.status).toBe(0);
+    const q = cli(["--print-sql", "--now", NOW, "--ledger", f]);
+    const r = spawnSync("/usr/bin/sqlite3", ["-init", "/dev/null", "-safe", "-readonly", "-bail", "-json", gdb], { input: q.stdout, encoding: "utf8" });
+    expect(r.status).toBe(0);
+    const rows = JSON.parse(r.stdout) as { task_id: string; completed_at: string | null; guard_tools: string }[];
+    expect(rows.map((x) => [x.task_id, x.completed_at, x.guard_tools])).toEqual([
+      ["done", "2026-11-16 12:01:00", '{"exa":1}'],
+      ["open", null, '{"exa":2}'],
+    ]);
+  }, 60_000);
+});
+
+describe("--ledger, a run finished in the check's second (the same-second finality case)", () => {
+  // z1 clean, finished long before; z2 clean, finished at F. Both made one exa
+  // call. A tool.gated refused row for z2's call is written at F.900, after
+  // completed_at = F but in its second.
+  const F = "2026-11-16 13:01:00";
+  const FISO = "2026-11-16T13:01:00.000Z";
+  const plus = (ms: number) => new Date(Date.parse(FISO) + ms).toISOString();
+  const ROW = { id: "z", type: "ritual:zz", since: "2026-11-16T00:00:00Z", maxComplaints: 0, runs: 2, change: "c", baseline: "b", guards: [{ tool: "exa", min: 1, maxBelow: 0 }] };
+  const head = "z CONFIRMED, guard pending | ritual:zz since 2026-11-16T00:00:00.000Z: counted 2/2, complaints 0 (limit 0), unknown 0 [..]; ";
+  const PENDING = `${head}guard exa >= 1 calls: 0 run(s) below (limit 0) pending; 1 counted run(s) not yet judged`;
+  const BROKEN = "z CONFIRMED, guard broken | ritual:zz since 2026-11-16T00:00:00.000Z: counted 2/2, complaints 0 (limit 0), unknown 0 [..]; guard exa >= 1 calls: 1 run(s) below (limit 0) broken";
+  let zdb: string;
+  let f: string;
+  const at = (now: string) => wrapper(["--db", zdb, "--now", now, "--ledger", f]).stdout.split("\n")[1];
+  beforeAll(() => {
+    zdb = join(dir, "settle.db");
+    f = join(dir, "settle.jsonl");
+    writeFileSync(f, `${JSON.stringify(ROW)}\n`);
+    const sql = [
+      SCHEMA,
+      `INSERT INTO tasks (task_id, status, created_at, completed_at, metadata) VALUES ('z1', 'completed', '2026-11-16 12:00:00', '2026-11-16 12:01:00', '{"ritualId":"zz"}');`,
+      `INSERT INTO tasks (task_id, status, created_at, completed_at, metadata) VALUES ('z2', 'completed', '2026-11-16 13:00:00', '${F}', '{"ritualId":"zz"}');`,
+      `INSERT INTO task_trace_events (task_id, name, tool, ts) VALUES ('z1', 'tool.called', 'exa', '2026-11-16T12:00:30.000Z');`,
+      `INSERT INTO task_trace_events (task_id, name, tool, ts) VALUES ('z2', 'tool.called', 'exa', '2026-11-16T13:00:30.000Z');`,
+    ].join("\n");
+    const r = spawnSync("/usr/bin/sqlite3", ["-init", "/dev/null", "-bail", zdb], { input: sql, encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`fixture sqlite3 failed: ${r.stderr}`);
+  });
+
+  it("checked in F's second the guard is pending; the row lands at F.900; every check from F+1 on agrees it is broken", () => {
+    expect(at(FISO)).toBe(PENDING);
+    const add = spawnSync("/usr/bin/sqlite3", ["-init", "/dev/null", "-bail", zdb], {
+      input: `INSERT INTO task_trace_events (task_id, name, tool, ts, attrs) VALUES ('z2', 'tool.gated', 'exa', '2026-11-16T13:01:00.900Z', '{"decision":"refused_turn_ended"}');\n`,
+      encoding: "utf8",
+    });
+    expect(add.status).toBe(0);
+    expect(at(plus(900))).toBe(PENDING);
+    expect([at(plus(1000)), at(plus(60_000)), at(plus(86_400_000))]).toEqual([BROKEN, BROKEN, BROKEN]);
+  }, 120_000);
 });

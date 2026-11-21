@@ -23,15 +23,18 @@
  * that table, so it runs on older databases.
  *
  * With `guards` (ledger mode only; the digest and verdict SQL are unchanged
- * without it): one more column, `guard_tools`, what a ledger guard counts per
- * tool: `tool.called` rows minus the run's `tool.gated` rows whose decision is
- * in GATED_NOT_RUN (floored at 0), both written no later than the run's
- * completed_at second (inclusive; a row with no completed_at keeps them all).
- * There is no trace event for a call that ran, so a call refused anywhere
- * else (external-request policy, secret-reference check) or one that ran and
- * errored still counts. The completed_at bound keeps a run's counts final: a
- * run failed by the stuck-task watchdog while its runner is still alive could
- * otherwise gain rows after it was counted.
+ * without it): two more columns, `completed_at` and `guard_tools`, what a
+ * ledger guard counts per tool: `tool.called` rows minus the run's
+ * `tool.gated` rows whose decision is in GATED_NOT_RUN (floored at 0), both
+ * written no later than the run's completed_at second (inclusive: rows
+ * written in the finishing second belong to the run; a row with no
+ * completed_at keeps them all). That is a tool's calls with no did-not-run
+ * gate row; the calls that still count are listed in src/complaints/ledger.ts.
+ * The bound drops rows written after the finishing second, such as those of a
+ * run failed by the stuck-task watchdog while its runner is still alive. It
+ * makes a run's counts final once its completed_at second has passed, under
+ * one assumption: no trace row for a finished run is written after that
+ * second ends. ledger.ts judges a run only after that second.
  * Columns match TaskRow in src/complaints/digest.ts.
  */
 
@@ -66,6 +69,7 @@ export function complaintsSql(facts: boolean, guards = false): string {
   const build = facts ? `,\n  (SELECT f.build FROM task_completion_facts f WHERE f.task_id = b.task_id) AS build` : "";
   const guardTools = guards
     ? `,
+  b.completed_at,
   (SELECT json_group_object(c.tool, c.n) FROM (
      SELECT e.tool, max(0, sum(CASE e.name WHEN 'tool.called' THEN 1 ELSE -1 END)) AS n FROM task_trace_events e
      WHERE e.task_id = b.task_id AND e.tool IS NOT NULL

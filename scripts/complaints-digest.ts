@@ -22,7 +22,8 @@
  *        A recheck needs the clock: the wrapper sets
  *        COMPLAINTS_DIGEST_NOW_FROM_CLOCK=1 only when it pinned --now itself.
  *        Without it the run is a replay: recorded closures are not rechecked
- *        (rows pruned since that time are gone), so it never exits 3.
+ *        (rows pruned since that time are gone), so it never exits 3, and a
+ *        closure recorded after the replayed time is marked on its row.
  * Every value is validated here; the SQL only ever sees @since/@now strings
  * regenerated from a parsed Date.
  */
@@ -115,6 +116,9 @@ if (parsed.verdict) {
   fail("--since, --max-complaints and --runs need --verdict");
 }
 
+// Any marker value but "1" (the wrapper's) is a replay.
+const replay = process.env.COMPLAINTS_DIGEST_NOW_FROM_CLOCK !== "1";
+
 /** The ledger's predictions, or every problem in the file on stderr and exit 2. */
 function readLedger(file: string): Prediction[] {
   let src: string;
@@ -123,7 +127,7 @@ function readLedger(file: string): Prediction[] {
   } catch (err) {
     fail(`ledger ${file}: cannot be read (${(err as NodeJS.ErrnoException).code ?? "error"})`);
   }
-  const { predictions, problems } = parseLedger(src, now);
+  const { predictions, problems } = parseLedger(src, now, replay);
   if (problems.length === 0) return predictions;
   for (const p of problems) process.stderr.write(`complaints-digest: ledger ${file} line ${p.line}: ${p.reason}\n`);
   process.exit(2);
@@ -145,7 +149,6 @@ if (parsed["print-sql"]) {
   const input = readFileSync(0, "utf8").trim();
   const rows = (input ? JSON.parse(input) : []) as TaskRow[];
   if (ledgerFile !== undefined && predictions) {
-    const replay = process.env.COMPLAINTS_DIGEST_NOW_FROM_CLOCK !== "1";
     const checks = predictions.map((p) => checkRow(p, rows, now, replay));
     process.stdout.write(renderLedger(ledgerFile, now, checks, replay));
     if (checks.some((c) => c.mismatch)) process.exitCode = 3;

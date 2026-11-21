@@ -8,27 +8,39 @@
  * Each line must be canonical JSON (the text JSON.stringify gives back for
  * it), so a duplicate key cannot hide behind the one that wins. Every value
  * the tool prints is held to a pattern with no line break; `change`,
- * `baseline` and `answer` are never printed.
+ * `baseline` and `answer` are never printed, and a problem message quotes
+ * text from the file (a key name) only ASCII-escaped.
  *
  * A row is a verdict (src/complaints/verdict.ts, buildVerdict called once per
  * row on the same rows) plus up to 3 guards, "at most J of the counted runs
- * make fewer than M calls of `tool` not refused at the confirmation gate".
- * The counts are the ledger SQL's `guard_tools` (src/complaints/query.ts):
- * there is no trace event for a call that ran, so a call that errored, or was
- * refused anywhere but the gate, still counts. A guard is judged over the
- * verdict's own counted runs, with the verdict's unknown slots and its close
- * rule (closeRule). Its counts stop at the run's completed_at second, so a
- * counted run's counts never change and a closed guard stays closed for the
- * same reason a closed verdict does.
+ * make fewer than M calls of `tool`". A guard counts a tool's calls that have
+ * no did-not-run gate row: the ledger SQL's `guard_tools`
+ * (src/complaints/query.ts), tool.called rows minus tool.gated rows whose
+ * decision is in GATED_NOT_RUN. There is no trace event for a call that ran,
+ * so these known cases still count: a call that errored; a placeholder
+ * refusal on the first-call path (it is refused before the gate, so it leaves
+ * no gate row, while the same refusal on the pending-card path does); sibling
+ * calls after a turn-ending refusal (they never reach the gate); and calls
+ * refused by the external-request policy.
+ *
+ * A guard is judged over the verdict's own counted runs, with the verdict's
+ * unknown slots and its close rule (closeRule), except that a counted run
+ * whose completed_at second is not strictly before the check's second (or
+ * that has no completed_at) is unknown to the guards, like a run in flight:
+ * a trace row written later in that second still belongs to the run. The one
+ * assumption left: no trace row for a finished run is written after its
+ * completed_at second ends. Under it, a judged run's counts never change, so
+ * a closed guard stays closed for the same reason a closed verdict does.
  *
  * The window is fixed at the trace retention. Checked at the clock, every
  * counted run inside it still has its trace rows, so a recorded closure is
  * rechecked; outside it the trace may be pruned, so it is not. A replay (a
  * --now in the past) reads today's rows: retention runs on the real clock and
  * may have pruned rows that existed at the replayed time, so a replay never
- * rechecks a recorded closure and never offers one to record.
+ * rechecks a recorded closure and never offers one to record. A closure
+ * recorded after the replayed time is marked so on its row, not refused.
  */
-import { toolCounts, typeKey, type TaskRow } from "./digest.js";
+import { cmp, toolCounts, typeKey, type TaskRow } from "./digest.js";
 import { buildVerdict, closeRule, ISO_TIME, TYPE_PATTERN, windowSince, type Verdict } from "./verdict.js";
 
 /** Days this mode reads; equal to TRACE_RETENTION_DAYS (ledger.test.ts pins the two). */
@@ -73,7 +85,9 @@ type Obj = Record<string, unknown>;
 const isObject = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 const whole = (v: unknown, lo: number, hi: number): boolean => Number.isInteger(v) && (v as number) >= lo && (v as number) <= hi;
 const text = (v: unknown): boolean => typeof v === "string" && v.trim() !== "";
-const q = (s: string): string => JSON.stringify(s);
+/** Quoted and ASCII-escaped: no file text reaches a message raw (no NEL, line separators or bidi controls). */
+const q = (s: string): string =>
+  JSON.stringify(s).replace(/[^\x20-\x7e]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
 
 /** Problems with an object's keys, then with each present key's value (checks: key, valid, what it must be). */
 function objectProblems(o: Obj, allowed: string[], required: string[], checks: [string, boolean, string][], where: string): string[] {
@@ -84,8 +98,8 @@ function objectProblems(o: Obj, allowed: string[], required: string[], checks: [
   ];
 }
 
-/** `now`: the check's time; a recorded closure cannot be later than it. */
-export function parseLedger(src: string, now: string): { predictions: Prediction[]; problems: Problem[] } {
+/** `now`: the check's time; at the clock (not `replay`) a recorded closure cannot be later than it. */
+export function parseLedger(src: string, now: string, replay: boolean): { predictions: Prediction[]; problems: Problem[] } {
   const nowMs = Date.parse(now);
   const lines = src.split("\n");
   if (lines[lines.length - 1] === "") lines.pop();
@@ -102,7 +116,7 @@ export function parseLedger(src: string, now: string): { predictions: Prediction
     }
     if (!isObject(o)) return problems.push({ line, reason: "not a JSON object" });
     const canonical = JSON.stringify(o);
-    const found = raw === canonical ? [] : [`not in canonical form: ${canonical}`];
+    const found = raw === canonical ? [] : ["not in canonical form (one JSON object, no spaces, no duplicate keys, as JSON.stringify writes it)"];
     const runsOk = whole(o.runs, 1, 100);
     const hi = runsOk ? (o.runs as number) - 1 : MAX;
     const below = runsOk ? `a whole number from 0 to ${hi} (below "runs")` : "a whole number";
@@ -135,8 +149,8 @@ export function parseLedger(src: string, now: string): { predictions: Prediction
       const c = o.closed;
       found.push(...objectProblems(c, CLOSED_KEYS, CLOSED_KEYS, [
         ["state", (CLOSED_STATES as readonly unknown[]).includes(c.state), `a closed state: ${CLOSED_STATES.map(q).join(", ")}`],
-        ["checkedAt", recordedIn(isoMs(c.checkedAt), since, nowMs, c.state === "EXPIRED"), `an ISO time at or after "since" and not later than the check: less than ${LEDGER_DAYS} days after "since", or at least that for EXPIRED`],
-        ["line", typeof c.line === "string" && !/[\r\n\u2028\u2029]/.test(c.line), "single-line text"],
+        ["checkedAt", recordedIn(isoMs(c.checkedAt), since, replay ? Infinity : nowMs, c.state === "EXPIRED"), `an ISO time at or after "since" and not later than the check: less than ${LEDGER_DAYS} days after "since", or at least that for EXPIRED`],
+        ["line", typeof c.line === "string" && !/[\r\n\u0085\u2028\u2029]/.test(c.line), "single-line text"],
       ], ` in "closed"`));
     }
     if (typeof o.id === "string" && ID.test(o.id)) {
@@ -171,8 +185,10 @@ export function parseLedger(src: string, now: string): { predictions: Prediction
 
 export interface GuardCheck {
   guard: Guard;
-  /** Counted runs with fewer than `min` calls of the tool not refused at the gate (no trace rows: 0). */
+  /** Judged runs with fewer than `min` calls of the tool with no did-not-run gate row (no trace rows: 0). */
   below: number;
+  /** Counted runs not yet judged: finished in the check's second or later, or with no completed_at. */
+  unsettled: number;
   word: "holds" | "broken" | "pending";
 }
 
@@ -195,7 +211,8 @@ const GUARD_WORD = { CONFIRMED: "holds", REFUTED: "broken", COUNTING: "pending" 
 const isoMs = (v: unknown): number => (typeof v === "string" && ISO_TIME.test(v) ? Date.parse(v) : NaN);
 
 /**
- * A recorded closure's time: not before `since` nor after the check, and
+ * A recorded closure's time: not before `since` nor after `nowMs` (Infinity in
+ * a replay, where a later closure is marked on its row instead), and
  * inside the row's window, where every closed state but EXPIRED is computed;
  * EXPIRED is only ever computed outside it.
  */
@@ -209,7 +226,8 @@ function recordedIn(ms: number, since: string | null, nowMs: number, expired: bo
 /** `replay`: --now was given, so a recorded closure is not rechecked and none is offered. */
 export function checkRow(p: Prediction, rows: TaskRow[], now: string, replay: boolean): RowCheck {
   const head = (state: LedgerState): string => `${p.id} ${state} | ${p.type} since ${p.since}: `;
-  const rec = p.closed && `recorded ${p.closed.state} at ${p.closed.checkedAt}`;
+  const after = p.closed !== null && Date.parse(p.closed.checkedAt) > Date.parse(now);
+  const rec = p.closed && `recorded ${p.closed.state} at ${p.closed.checkedAt}${after ? ", after this time" : ""}`;
   if (!windowSince(Date.parse(p.since), Date.parse(now), LEDGER_DAYS).inside) {
     const state = (p.closed?.state ?? "EXPIRED") as LedgerState;
     const why = `since is outside the ${LEDGER_DAYS}-day window`;
@@ -219,11 +237,19 @@ export function checkRow(p: Prediction, rows: TaskRow[], now: string, replay: bo
   }
   const v = buildVerdict(rows, { now, type: p.type, since: p.since, maxComplaints: p.maxComplaints, runs: p.runs });
   const byId = new Map(rows.map((r) => [r.task_id, r]));
-  const counts = v.runList.map((r) => toolCounts(byId.get(r.taskId)?.guard_tools));
+  // Judged: finished in a second strictly before the check's, so no trace row
+  // written in its finishing second can still arrive.
+  const nowKey = now.slice(0, 19).replace("T", " ");
+  const judged = v.runList.map((r) => byId.get(r.taskId)).filter((r): r is TaskRow => {
+    const done = r?.completed_at;
+    return typeof done === "string" && cmp(done, nowKey) < 0;
+  });
+  const counts = judged.map((r) => toolCounts(r.guard_tools));
+  const unsettled = v.runList.length - judged.length;
   const guards = p.guards.map((guard): GuardCheck => {
     // Own keys only: a tool named like an Object prototype member is still 0 calls.
     const below = counts.filter((t) => (Object.hasOwn(t, guard.tool) ? t[guard.tool] : 0) < guard.min).length;
-    return { guard, below, word: GUARD_WORD[closeRule(below, v.unknown, guard.maxBelow)] };
+    return { guard, below, unsettled, word: GUARD_WORD[closeRule(below, v.unknown + unsettled, guard.maxBelow)] };
   });
   const words = guards.map((g) => g.word);
   const state: LedgerState =
@@ -232,7 +258,8 @@ export function checkRow(p: Prediction, rows: TaskRow[], now: string, replay: bo
     : words.includes("pending") ? "CONFIRMED, guard pending"
     : "CONFIRMED";
   const guardText = guards.length === 0 ? "guard: none"
-    : guards.map(({ guard: g, below, word }) => `guard ${g.tool} >= ${g.min} not refused: ${below} run(s) below (limit ${g.maxBelow}) ${word}`).join("; ");
+    : guards.map(({ guard: g, below, word }) => `guard ${g.tool} >= ${g.min} calls: ${below} run(s) below (limit ${g.maxBelow}) ${word}`).join("; ")
+      + (guards.length > 0 && unsettled > 0 ? `; ${unsettled} counted run(s) not yet judged` : "");
   const none = rows.some((r) => typeKey(r) === p.type) ? "" : `; no run of this type in ${LEDGER_DAYS} days`;
   const line = head(state)
     + `counted ${v.counted}/${v.runs}, complaints ${v.complaints} (limit ${p.maxComplaints}), unknown ${v.unknown} [${v.strip}]; ${guardText}${none}`;
@@ -248,7 +275,7 @@ const paste = (state: LedgerState, now: string, line: string): string => `"close
 export function renderLedger(file: string, now: string, checks: RowCheck[], replay: boolean): string {
   const at = replay ? `replayed at ${now} (a replay, not a recheck)` : `checked at ${now}`;
   const out = [
-    `Ledger ${file} ${at} over the ${LEDGER_DAYS} days before it: ${checks.length} row(s); a guard counts calls not refused at the confirmation gate, errored calls included`,
+    `Ledger ${file} ${at} over the ${LEDGER_DAYS} days before it: ${checks.length} row(s); a guard counts a tool's calls with no did-not-run gate row (errored calls and some refusals included)`,
   ];
   for (const c of checks) out.push(c.text, ...c.notes.map((n) => `  ${n}`));
   return `${out.join("\n")}\n`;
