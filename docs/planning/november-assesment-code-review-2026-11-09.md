@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-21 05:19 UTC — build `d6d1c23d` is LIVE since 2026-11-21 05:17 UTC (queue 4hm); everything committed is deployed, the three failure-recording fixes (4hj, 4hk, 4hl) included; none is proven on a real case yet. Batch 7 unchanged: pure moves done, D3 not yet done, wait list A2, A4, B3, C1, F1, D1. Next: the site-publish write outcome, then the other batch leftovers and batch 10.**
+
 **Status 2026-11-21 04:59 UTC — the shared error-text helper never returns an empty text, COMMITTED `fa3a6131` (queue 4hl; not yet deployed, together with the 4hj and 4hk commits). This closes the empty-text case at its root for every caller of the helper. Recorded for the re-score: thirty-three places still build an error text without the helper, and the site-publishing tools' failures are not counted as errors. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: batch leftovers, then batch 10.**
 
 **Status 2026-11-21 04:12 UTC — the external-tool empty-error fix is COMMITTED `2b8c7f4e` (queue 4hk; not yet deployed, together with the 4hj commit). The first read for it corrected the previous item's list of remaining cases. Recorded for the re-score: the helper that turns a thrown value into text can still return an empty text, and eleven tools carry a confirmation flag that has no effect. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: batch leftovers, then batch 10.**
