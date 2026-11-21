@@ -20,6 +20,7 @@ import {
   recordInjectedEvidence,
   recordToolEvidence,
   recordWriteOutcome,
+  takeHiddenWriteFailures,
   takeToolEvidence,
   takeWriteOutcome,
   writeFailureMode,
@@ -505,6 +506,95 @@ describe("write-outcome collector (queue 2026-10-08 late item 10)", () => {
     expect(writeFailureMode({ TASK_GATES_WRITE_FAILURE: " OFF " })).toBe("off");
     expect(writeFailureMode({ TASK_GATES_WRITE_FAILURE: "Enforce" })).toBe("enforce");
     expect(writeFailureMode({ TASK_GATES_WRITE_FAILURE: "yes" })).toBe("shadow");
+  });
+});
+
+describe("unrepaired write failures (trace only)", () => {
+  it("a later success of the same tool repairs a failure on another key; another tool on a shared key repairs it too", () => {
+    recordWriteOutcome("h1", "file_edit", false, "x", ["a.md"]);
+    recordWriteOutcome("h1", "file_edit", true, undefined, ["b.md"]);
+    expect(takeHiddenWriteFailures("h1")).toBeUndefined();
+    recordWriteOutcome("h2", "file_edit", false, "x", ["a.md", "c.md"]);
+    recordWriteOutcome("h2", "file_write", true, undefined, ["c.md"]);
+    expect(takeHiddenWriteFailures("h2")).toBeUndefined();
+  });
+
+  it("a success of another tool on another key leaves the failure kept, while the latest outcome is still the success", () => {
+    recordWriteOutcome("h3", "wp_create_post", false, "rejected");
+    recordWriteOutcome("h3", "jarvis_file_write", true, undefined, ["notes/a.md"]);
+    expect(takeHiddenWriteFailures("h3")).toEqual({ tool: "wp_create_post", count: 1 });
+    expect(takeWriteOutcome("h3")).toEqual({ tool: "jarvis_file_write", ok: true });
+  });
+
+  it("a repeated failure of the same tool with the same keys replaces its entry; other keys or another tool add one; the newest names the tool", () => {
+    recordWriteOutcome("h4", "file_edit", false, "x", ["a.md"]);
+    recordWriteOutcome("h4", "file_edit", false, "y", ["a.md"]);
+    recordWriteOutcome("h4", "file_edit", false, "z", ["b.md"]);
+    recordWriteOutcome("h4", "file_write", false, "w", ["c.md"]);
+    recordWriteOutcome("h4", "gdocs_write", true, undefined, ["DOC12345678"]);
+    expect(takeHiddenWriteFailures("h4")).toEqual({ tool: "file_write", count: 3 });
+  });
+
+  it("a success repairs only the failures it matches", () => {
+    recordWriteOutcome("h5", "file_edit", false, "x", ["a.md"]);
+    recordWriteOutcome("h5", "gdocs_write", false, "y", ["DOC12345678"]);
+    recordWriteOutcome("h5", "file_write", true, undefined, ["a.md"]);
+    expect(takeHiddenWriteFailures("h5")).toEqual({ tool: "gdocs_write", count: 1 });
+  });
+
+  it("a later FAILED write on a shared key repairs nothing: both failures stay kept beside an unrelated success", () => {
+    recordWriteOutcome("h13", "file_edit", false, "x", ["k.md"]);
+    recordWriteOutcome("h13", "file_write", false, "y", ["k.md"]);
+    recordWriteOutcome("h13", "gdocs_write", true, undefined, ["DOC12345678"]);
+    expect(takeHiddenWriteFailures("h13")).toEqual({ tool: "file_write", count: 2 });
+  });
+
+  it("keys compare as exact text: another tool's success on the same key in another letter case or with surrounding spaces repairs nothing", () => {
+    recordWriteOutcome("h14", "file_edit", false, "x", ["notes/a.md"]);
+    recordWriteOutcome("h14", "file_write", true, undefined, ["NOTES/A.MD"]);
+    recordWriteOutcome("h14", "jarvis_file_write", true, undefined, [" notes/a.md "]);
+    expect(takeHiddenWriteFailures("h14")).toEqual({ tool: "file_edit", count: 1 });
+  });
+
+  it("the same tool failing on key A, then on key B as the latest outcome: only A is counted", () => {
+    recordWriteOutcome("h15", "file_edit", false, "x", ["a.md"]);
+    recordWriteOutcome("h15", "file_edit", false, "y", ["b.md"]);
+    expect(takeHiddenWriteFailures("h15")).toEqual({ tool: "file_edit", count: 1 });
+    expect(takeWriteOutcome("h15")).toEqual({ tool: "file_edit", ok: false, error: "y" });
+  });
+
+  it("when the latest outcome failed it is not counted: only the earlier unrepaired failures are; a lone failure or only successes give none", () => {
+    recordWriteOutcome("h6", "wp_create_post", false, "rejected");
+    recordWriteOutcome("h6", "jarvis_file_write", true, undefined, ["notes/a.md"]);
+    recordWriteOutcome("h6", "file_edit", false, "x", ["e.md"]);
+    expect(takeHiddenWriteFailures("h6")).toEqual({ tool: "wp_create_post", count: 1 });
+    expect(takeWriteOutcome("h6")).toEqual({ tool: "file_edit", ok: false, error: "x" });
+    recordWriteOutcome("h7", "file_edit", false, "x", ["e.md"]);
+    expect(takeHiddenWriteFailures("h7")).toBeUndefined();
+    recordWriteOutcome("h8", "file_write", true, undefined, ["a.md"]);
+    recordWriteOutcome("h8", "gdocs_write", true, undefined, ["DOC12345678"]);
+    expect(takeHiddenWriteFailures("h8")).toBeUndefined();
+  });
+
+  it("freed by takeWriteOutcome, by takeToolEvidence and by the reset hook; read once; nothing kept for an empty task id", () => {
+    const hide = (id: string) => {
+      recordWriteOutcome(id, "wp_create_post", false, "rejected");
+      recordWriteOutcome(id, "jarvis_file_write", true, undefined, ["notes/a.md"]);
+    };
+    hide("h9");
+    takeWriteOutcome("h9");
+    expect(takeHiddenWriteFailures("h9")).toBeUndefined();
+    hide("h10");
+    takeToolEvidence("h10");
+    expect(takeHiddenWriteFailures("h10")).toBeUndefined();
+    hide("h11");
+    _resetToolEvidence();
+    expect(takeHiddenWriteFailures("h11")).toBeUndefined();
+    hide("h12");
+    expect(takeHiddenWriteFailures("h12")).toEqual({ tool: "wp_create_post", count: 1 });
+    expect(takeHiddenWriteFailures("h12")).toBeUndefined();
+    hide("");
+    expect(takeHiddenWriteFailures("")).toBeUndefined();
   });
 });
 

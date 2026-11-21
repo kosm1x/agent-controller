@@ -66,6 +66,7 @@ export function takeToolEvidence(taskId: string): string[] {
   evidenceByTask.delete(taskId);
   writtenByTask.delete(taskId);
   lastWriteByTask.delete(taskId);
+  unrepairedByTask.delete(taskId);
   forgetProvenPasswords(taskId);
   return entry ? entry.chunks : [];
 }
@@ -152,10 +153,12 @@ export const EVIDENCE_TOOL_RE =
 export const UNRESOLVED_TARGET_TOOL_RE = /^(grep|glob|code_search|list_dir)$/;
 
 /**
- * Queue 2026-10-08 (late) item 10: the run's LATEST write-class call only
- * (last wins: a failed write followed by a successful one is not a failed
- * run). `error` = the first 300 chars of the failure text, by source: an
- * error result, a thrown value or the registry's own refusal gives its
+ * Queue 2026-10-08 (late) item 10: the run's LATEST write-class call, which
+ * alone decides the status, the warning line, the `write_failure` output
+ * field and the last-write trace row at completion (last wins: a failed
+ * write followed by a successful one is not a failed run). `error` = the
+ * first 300 chars of the failure text, by source: an error result, a
+ * thrown value or the registry's own refusal gives its
  * `error` field when the text is JSON with a string `error`, else the text
  * itself; a write's `success: false` envelope gives a short text built from
  * it; else a write's top-level `error` field that is not the first key gives
@@ -172,24 +175,66 @@ export interface WriteOutcome {
 
 const lastWriteByTask = new Map<string, WriteOutcome>();
 
+/**
+ * The run's failed write-class calls that no later successful write
+ * repaired, for the trace only: a success repairs a failure of the same tool
+ * or one that shares a target key with it; a repeated failure of the same
+ * tool with the same keys replaces its entry. Freed with the latest outcome.
+ */
+const unrepairedByTask = new Map<
+  string,
+  Array<{ tool: string; keys: string[] }>
+>();
+
 export function recordWriteOutcome(
   taskId: string,
   tool: string,
   ok: boolean,
   error?: string,
+  keys: readonly string[] = [],
 ): void {
   if (!taskId || !tool) return;
   lastWriteByTask.set(
     taskId,
     ok ? { tool, ok } : { tool, ok, error: (error ?? "").slice(0, 300) },
   );
+  const kept = (unrepairedByTask.get(taskId) ?? []).filter((f) =>
+    ok
+      ? f.tool !== tool && !f.keys.some((k) => keys.includes(k))
+      : !(
+          f.tool === tool &&
+          f.keys.length === keys.length &&
+          f.keys.every((k, i) => k === keys[i])
+        ),
+  );
+  if (!ok) kept.push({ tool, keys: [...keys] });
+  if (kept.length > 0) unrepairedByTask.set(taskId, kept);
+  else unrepairedByTask.delete(taskId);
 }
 
-/** Returns the task's last write-class outcome and forgets it. */
+/** Returns the task's last write-class outcome and forgets it and the unrepaired failures. */
 export function takeWriteOutcome(taskId: string): WriteOutcome | undefined {
   const last = lastWriteByTask.get(taskId);
   lastWriteByTask.delete(taskId);
+  unrepairedByTask.delete(taskId);
   return last;
+}
+
+/**
+ * The unrepaired failures other than the latest outcome itself (when that
+ * outcome failed it is the newest entry): the newest one's tool and how many,
+ * or undefined when there is none. Frees only this list, so it is read
+ * before `takeWriteOutcome`, which frees both.
+ */
+export function takeHiddenWriteFailures(
+  taskId: string,
+): { tool: string; count: number } | undefined {
+  const kept = unrepairedByTask.get(taskId) ?? [];
+  unrepairedByTask.delete(taskId);
+  const hidden =
+    lastWriteByTask.get(taskId)?.ok === false ? kept.slice(0, -1) : kept;
+  const newest = hidden[hidden.length - 1];
+  return newest ? { tool: newest.tool, count: hidden.length } : undefined;
 }
 
 export type WriteFailureMode = "off" | "shadow" | "enforce";
@@ -248,6 +293,7 @@ export function _resetToolEvidence(): void {
   evidenceByTask.clear();
   writtenByTask.clear();
   lastWriteByTask.clear();
+  unrepairedByTask.clear();
 }
 
 // ── number grammar ─────────────────────────────────────────────────────────

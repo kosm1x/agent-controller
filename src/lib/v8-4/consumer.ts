@@ -78,6 +78,7 @@ import {
   formatUnverifiedFooter,
   numbersAnnotateEnabled,
   stripForwardedSiblingFindings,
+  takeHiddenWriteFailures,
   takeToolEvidence,
   takeWriteOutcome,
   writeFailureMode,
@@ -634,8 +635,16 @@ export async function applyCompletionLedger(
   // inline `(sin verificar)` unless TASK_GATES_NUMBERS_ANNOTATE=false.
   let numbers: NumbersAudit | null = null;
   // Item 10 input, taken in EVERY mode (frees it) and BEFORE
-  // takeToolEvidence, which frees it too.
+  // takeToolEvidence, which frees it too; the hidden failures first, as
+  // takeWriteOutcome frees them as well.
   const wmode = writeFailureMode();
+  let hiddenWrites: ReturnType<typeof takeHiddenWriteFailures>;
+  let hiddenWritesErr: unknown;
+  try {
+    hiddenWrites = takeHiddenWriteFailures(taskId);
+  } catch (err) {
+    hiddenWritesErr = err ?? new Error("takeHiddenWriteFailures failed");
+  }
   let lastWrite: WriteOutcome | undefined;
   let lastWriteErr: unknown;
   try {
@@ -785,6 +794,41 @@ export async function applyCompletionLedger(
           };
         }
       }
+    }
+  } catch (err) {
+    emitTraceEvent({
+      taskId,
+      runId,
+      name: "write.failure_claim",
+      attrs: {
+        mode: wmode,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    });
+  }
+  // Failed writes that no later success of the same tool, or of any tool on
+  // a shared target key, repaired, other than the last write when it failed
+  // (the block above handles that one), a repeat of one tool on the same
+  // keys counted once: one more row, only for an incoming `completed`, with
+  // the newest one's tool, a count and flags, never the failure text. No
+  // status, line or output change in any mode; no row when the mode is off,
+  // except the error row when taking the list failed.
+  try {
+    if (hiddenWritesErr !== undefined) throw hiddenWritesErr;
+    if (wmode !== "off" && hiddenWrites && args.taskStatus === "completed") {
+      emitTraceEvent({
+        taskId,
+        runId,
+        name: "write.failure_claim",
+        attrs: {
+          mode: wmode,
+          agent_type: args.agentType,
+          tool: hiddenWrites.tool,
+          hidden: true,
+          hidden_count: hiddenWrites.count,
+          demoted: false,
+        },
+      });
     }
   } catch (err) {
     emitTraceEvent({

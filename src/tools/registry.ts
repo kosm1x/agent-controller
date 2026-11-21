@@ -205,11 +205,21 @@ function errorFieldText(text: string): string | undefined {
   return typeof m === "string" && m !== "" ? m : JSON.stringify(e);
 }
 
-/** Item 10: a failed write-class call of the current run (no-op outside a run). */
-function recordFailedWrite(name: string, text: string): void {
+/** Item 10: a failed write-class call of the current run, with its target keys (no-op outside a run). */
+function recordFailedWrite(
+  name: string,
+  args: Record<string, unknown>,
+  text: string,
+): void {
   const runTaskId = currentRunTaskId();
   if (runTaskId && isWriteClassTool(name))
-    recordWriteOutcome(runTaskId, name, false, writeErrorText(text));
+    recordWriteOutcome(
+      runTaskId,
+      name,
+      false,
+      writeErrorText(text),
+      writeTargetKeys(name, args),
+    );
 }
 
 /** Any error-shaped result — `{"error":…}` JSON or a plain "Error:" string. */
@@ -500,7 +510,7 @@ export class ToolRegistry {
     const tool = this.tools.get(name);
     if (!tool) {
       const error = JSON.stringify({ error: `Unknown tool: ${name}` });
-      recordFailedWrite(name, error);
+      recordFailedWrite(name, args, error);
       return error;
     }
 
@@ -527,13 +537,13 @@ export class ToolRegistry {
     );
     if ("error" in rendered) {
       traceSecretRefRefused(name, "rendered_placeholder", "execute");
-      recordFailedWrite(name, rendered.error);
+      recordFailedWrite(name, args, rendered.error);
       return rendered.error;
     }
     const resolved = resolveSecretRefs(name, rendered.args);
     if ("error" in resolved) {
       traceSecretRefRefused(name, resolved.reason, "execute");
-      recordFailedWrite(name, resolved.error);
+      recordFailedWrite(name, args, resolved.error);
       return resolved.error;
     }
     const start = Date.now();
@@ -555,8 +565,10 @@ export class ToolRegistry {
       const runTaskId = currentRunTaskId();
       if (runTaskId) {
         const isError = isErrorResult(result);
-        // Item 10: the run's LAST write-class outcome (a done-claim after a
-        // failed write is checked at completion — consumer.ts). A write that
+        // Item 10: the run's write-class outcome, with the call's target keys
+        // (a done-claim after a failed write is checked at completion —
+        // consumer.ts; the LAST outcome decides it, the keys only let the
+        // trace see a failure a later write left unrepaired). A write that
         // reports `success: false`, or a top-level `error` field that is a
         // non-empty string or a non-null, non-array object in any key
         // position, failed too (`success: false` is read first); for that
@@ -571,6 +583,7 @@ export class ToolRegistry {
             name,
             !isError && reported === undefined,
             isError ? writeErrorText(String(result)) : reported,
+            writeTargetKeys(name, args),
           );
         }
         const written = isError
@@ -598,6 +611,7 @@ export class ToolRegistry {
       // Item 10: a THROWN write is a failed write too (recorded scrubbed).
       recordFailedWrite(
         name,
+        args,
         scrubbed instanceof Error ? scrubbed.message : String(scrubbed),
       );
       throw scrubbed;

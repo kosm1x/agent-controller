@@ -23,6 +23,7 @@ import {
   recordInjectedEvidence,
   recordToolEvidence,
   recordWriteOutcome,
+  takeHiddenWriteFailures,
   takeWriteOutcome,
 } from "./numbers.js";
 import {
@@ -65,6 +66,7 @@ vi.mock("./numbers.js", async (importOriginal) => {
   return {
     ...actual,
     takeWriteOutcome: vi.fn(actual.takeWriteOutcome),
+    takeHiddenWriteFailures: vi.fn(actual.takeHiddenWriteFailures),
     auditNumbers: vi.fn(actual.auditNumbers),
   };
 });
@@ -78,6 +80,7 @@ vi.mock("../../observability/task-trace.js", async (importOriginal) => {
   return { ...actual, emitTraceEvent: vi.fn(actual.emitTraceEvent) };
 });
 const mockTakeWrite = vi.mocked(takeWriteOutcome);
+const mockTakeHidden = vi.mocked(takeHiddenWriteFailures);
 const mockProven = vi.mocked(provenPasswords);
 const mockAuditNumbers = vi.mocked(auditNumbers);
 const mockEmit = vi.mocked(emitTraceEvent);
@@ -1420,14 +1423,19 @@ describe("applyCompletionLedger — done-claim after a failed write (queue 2026-
     expect(claims()).toEqual([]);
   });
 
-  it("a failed write followed by a successful write (last wins) or a lone ok write: untouched, no trace", async () => {
+  it("a failed write followed by a successful write of another tool (last wins): status stays completed and no last-write row, only the hidden row; a lone ok write: status stays completed, no row", async () => {
     process.env.TASK_GATES_WRITE_FAILURE = "enforce";
     failedWrite();
     recordWriteOutcome("t1", "file_write", true);
     expect((await applyCompletionLedger(base())).taskStatus).toBe("completed");
     recordWriteOutcome("t1", "file_edit", true);
     expect((await applyCompletionLedger(base())).taskStatus).toBe("completed");
-    expect(claims()).toEqual([]);
+    expect(claims()).toEqual([
+      {
+        name: "write.failure_claim",
+        attrs: { mode: "enforce", agent_type: "fast", tool: "file_edit", hidden: true, hidden_count: 1, demoted: false },
+      },
+    ]);
   });
 
   it("a failing takeWriteOutcome: original status/output pass through, the failure is traced, the buffer is freed anyway", async () => {
@@ -1491,6 +1499,102 @@ describe("applyCompletionLedger — done-claim after a failed write (queue 2026-
     expect(String(output.text)).not.toContain("{");
     expect(output.write_failure).toEqual({ tool: "file_edit", error: "Edit blocked: path outside the allow-list" });
     expect(claims()[0]!.attrs.error).toBe("Edit blocked: path outside the allow-list");
+  });
+
+  // A failed create, then a successful write of another tool on another target.
+  const hiddenFailure = () => {
+    recordWriteOutcome("t1", "wp_create_post", false, "rejected");
+    recordWriteOutcome("t1", "jarvis_file_write", true, undefined, ["notes/a.md"]);
+  };
+  const hiddenRow = (mode: string) => ({
+    name: "write.failure_claim",
+    attrs: { mode, agent_type: "fast", tool: "wp_create_post", hidden: true, hidden_count: 1, demoted: false },
+  });
+
+  it("a failure a later write left unrepaired: shadow and enforce add ONE hidden row with exactly six attributes (no failure text); status and text untouched; freed", async () => {
+    for (const mode of ["shadow", "enforce"]) {
+      process.env.TASK_GATES_WRITE_FAILURE = mode;
+      hiddenFailure();
+      const out = await applyCompletionLedger(base());
+      expect(out.taskStatus).toBe("completed");
+      expect((out.output as Record<string, unknown>).text).toBe("Listo. Hice todo.");
+      expect(out.output).not.toHaveProperty("write_failure");
+      expect(takeHiddenWriteFailures("t1")).toBeUndefined();
+    }
+    expect(claims()).toEqual([hiddenRow("shadow"), hiddenRow("enforce")]);
+  });
+
+  it("mode off, a repaired failure, only successes, or an incoming non-completed status: no hidden row", async () => {
+    process.env.TASK_GATES_WRITE_FAILURE = "off";
+    hiddenFailure();
+    expect((await applyCompletionLedger(base())).taskStatus).toBe("completed");
+    expect(takeHiddenWriteFailures("t1")).toBeUndefined();
+    process.env.TASK_GATES_WRITE_FAILURE = "enforce";
+    recordWriteOutcome("t1", "wp_create_post", false, "rejected");
+    recordWriteOutcome("t1", "wp_create_post", true);
+    await applyCompletionLedger(base());
+    recordWriteOutcome("t1", "file_edit", false, "x", ["notes/a.md"]);
+    recordWriteOutcome("t1", "jarvis_file_write", true, undefined, ["notes/a.md"]);
+    await applyCompletionLedger(base());
+    recordWriteOutcome("t1", "file_write", true, undefined, ["notes/a.md"]);
+    recordWriteOutcome("t1", "gdocs_write", true, undefined, ["DOC12345678"]);
+    await applyCompletionLedger(base());
+    hiddenFailure();
+    const out = await applyCompletionLedger(base({ taskStatus: "completed_with_concerns" }));
+    expect(out.taskStatus).toBe("completed_with_concerns");
+    expect(claims()).toEqual([]);
+  });
+
+  it("enforce, last write failed with an earlier unrepaired failure: the line, write_failure and first row unchanged, plus the hidden row counting only the earlier one", async () => {
+    process.env.TASK_GATES_WRITE_FAILURE = "enforce";
+    hiddenFailure();
+    failedWrite();
+    const out = await applyCompletionLedger(base());
+    expect(out.taskStatus).toBe("completed_with_concerns");
+    const output = out.output as Record<string, unknown>;
+    expect(String(output.text).split("\n\n").slice(1)).toEqual([
+      "⚠️ No quedó: la última escritura (file_edit) falló — Edit blocked: old_string not found in file",
+    ]);
+    expect(output.write_failure).toEqual({ tool: "file_edit", error: ERR });
+    expect(claims()).toEqual([
+      {
+        name: "write.failure_claim",
+        attrs: { mode: "enforce", agent_type: "fast", tool: "file_edit", error: ERR, demoted: true },
+      },
+      hiddenRow("enforce"),
+    ]);
+  });
+
+  it("a failing hidden take or a failing hidden-row emit: the error is traced, the last-write branch and the output are as without it", async () => {
+    process.env.TASK_GATES_WRITE_FAILURE = "enforce";
+    failedWrite();
+    mockTakeHidden.mockImplementationOnce(() => {
+      throw new Error("hidden boom");
+    });
+    const first = await applyCompletionLedger(base());
+    expect(first.taskStatus).toBe("completed_with_concerns");
+    expect((first.output as Record<string, unknown>).write_failure).toEqual({ tool: "file_edit", error: ERR });
+    expect(claims().map((c) => c.attrs)).toEqual([
+      { mode: "enforce", agent_type: "fast", tool: "file_edit", error: ERR, demoted: true },
+      { mode: "enforce", error: "hidden boom" },
+    ]);
+    expect(takeHiddenWriteFailures("t1")).toBeUndefined();
+    hiddenFailure();
+    const real = mockEmit.getMockImplementation()!;
+    mockEmit.mockImplementation((ev) => {
+      if (ev.name === "write.failure_claim" && ev.attrs && "hidden" in ev.attrs)
+        throw new Error("emit boom");
+      return real(ev);
+    });
+    try {
+      const out = await applyCompletionLedger(base());
+      expect(out.taskStatus).toBe("completed");
+      expect((out.output as Record<string, unknown>).text).toBe("Listo. Hice todo.");
+      expect(out.output).not.toHaveProperty("write_failure");
+      expect(claims().map((c) => c.attrs).slice(2)).toEqual([{ mode: "enforce", error: "emit boom" }]);
+    } finally {
+      mockEmit.mockImplementation(real);
+    }
   });
 });
 

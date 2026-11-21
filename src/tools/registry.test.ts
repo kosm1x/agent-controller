@@ -1290,4 +1290,85 @@ describe("write-class outcome (queue 2026-10-08 late item 10)", () => {
     expect(peekToolEvidence("t-g2")).toEqual([result]);
     expect(takeWriteOutcome("t-g2")).toBeUndefined();
   });
+
+  it("the call's target keys reach the store: another write tool on the same target repairs a failure, another tool on another target leaves it kept", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const { takeHiddenWriteFailures } = await import("../lib/v8-4/numbers.js");
+    add("file_edit", () => '{"error":"old text not found"}');
+    add("file_write", () => '{"success":true}');
+    add("wp_create_post", () => '{"error":"rejected"}');
+    add("jarvis_file_write", () => '{"success":true}');
+    await enterRunToolContext("t-h1", async () => {
+      await reg.execute("file_edit", { path: "/tmp/p.md" });
+      await reg.execute("file_write", { path: "/tmp/p.md" });
+    });
+    expect(takeHiddenWriteFailures("t-h1")).toBeUndefined();
+    expect(takeWriteOutcome("t-h1")).toEqual({ tool: "file_write", ok: true });
+    await enterRunToolContext("t-h2", async () => {
+      await reg.execute("wp_create_post", { title: "t" });
+      await reg.execute("jarvis_file_write", { path: "notes/a.md" });
+    });
+    expect(takeHiddenWriteFailures("t-h2")).toEqual({ tool: "wp_create_post", count: 1 });
+    expect(takeWriteOutcome("t-h2")).toEqual({ tool: "jarvis_file_write", ok: true });
+  });
+
+  it("a thrown write and an unknown write tool carry their target keys too: a later write of another tool on the same target repairs them", async () => {
+    const { reg, add, enterRunToolContext } = await setup();
+    const { takeHiddenWriteFailures } = await import("../lib/v8-4/numbers.js");
+    const t = makeTool("file_edit");
+    t.execute = async () => {
+      throw new Error("EACCES: permission denied");
+    };
+    reg.register(t);
+    add("file_write", () => '{"success":true}');
+    await enterRunToolContext("t-h3", async () => {
+      await expect(reg.execute("file_edit", { path: "/tmp/p.md" })).rejects.toThrow("EACCES");
+      await reg.execute("file_write", { path: "/tmp/p.md" });
+    });
+    expect(takeHiddenWriteFailures("t-h3")).toBeUndefined();
+    await enterRunToolContext("t-h4", async () => {
+      await reg.execute("gdocs_write", { document_id: "DOC12345678" }); // not registered here
+      await reg.execute("file_write", { path: "/tmp/p.md" });
+    });
+    expect(takeHiddenWriteFailures("t-h4")).toEqual({ tool: "gdocs_write", count: 1 });
+    await enterRunToolContext("t-h5", async () => {
+      await reg.execute("file_convert", { output_path: "/tmp/p.md" }); // not registered here
+      await reg.execute("file_write", { path: "/tmp/p.md" });
+    });
+    expect(takeHiddenWriteFailures("t-h5")).toBeUndefined();
+  });
+
+  it("a rendered-placeholder refusal carries its target keys: another tool's later success on the same document repairs it", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const { takeHiddenWriteFailures } = await import("../lib/v8-4/numbers.js");
+    let ran = 0;
+    add("gdocs_write", () => (ran++, '{"success":true}'));
+    add("gdocs_replace", () => '{"success":true}');
+    await enterRunToolContext("t-h6", async () => {
+      await reg.execute("gdocs_write", { document_id: "DOC12345678", content: "key [oculto · x]" });
+      await reg.execute("gdocs_replace", { document_id: "DOC12345678" });
+    });
+    expect(ran).toBe(0);
+    expect(takeHiddenWriteFailures("t-h6")).toBeUndefined();
+    expect(takeWriteOutcome("t-h6")).toEqual({ tool: "gdocs_replace", ok: true });
+  });
+
+  it("a secret-ref refusal carries its target keys: another tool's later success on the same path repairs it", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const { takeHiddenWriteFailures } = await import("../lib/v8-4/numbers.js");
+    let ran = 0;
+    add("file_edit", () => (ran++, '{"success":true}'));
+    add("file_write", () => '{"success":true}');
+    vi.mocked(resolveSecretRefs).mockReturnValueOnce({
+      error: JSON.stringify({ error: "no stored secret SECRET_NOPE" }),
+      reason: "unknown_name",
+    });
+    await enterRunToolContext("t-h7", async () => {
+      await reg.execute("file_edit", { path: "/tmp/p.md" });
+      await reg.execute("file_write", { path: "/tmp/p.md" });
+    });
+    expect(ran).toBe(0);
+    expect(takeHiddenWriteFailures("t-h7")).toBeUndefined();
+    expect(takeWriteOutcome("t-h7")).toEqual({ tool: "file_write", ok: true });
+  });
 });
