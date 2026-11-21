@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-21 05:52 UTC — the other session's verdict mode landed `077a6809` (queue 4ho; its files only, no deploy needed); `acf1efeb` (4hn) is still not deployed. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: a failed write hidden by a later successful write, then batch leftovers and batch 10.**
+
 **Status 2026-11-21 05:42 UTC — a write whose failure carries its error after other fields is recorded as failed, COMMITTED `acf1efeb` (queue 4hn; not yet deployed). One of eighteen write tools returned that form. Recorded for the re-score: five failure forms of three write tools are still recorded as successful writes (an empty or non-object answer to a publish, the batch insert's plain text, the memory store's warning). Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: batch leftovers, then batch 10.**
 
 **Status 2026-11-21 05:19 UTC — build `d6d1c23d` is LIVE since 2026-11-21 05:17 UTC (queue 4hm); everything committed is deployed, the three failure-recording fixes (4hj, 4hk, 4hl) included; none is proven on a real case yet. Batch 7 unchanged: pure moves done, D3 not yet done, wait list A2, A4, B3, C1, F1, D1. Next: the site-publish write outcome, then the other batch leftovers and batch 10.**
