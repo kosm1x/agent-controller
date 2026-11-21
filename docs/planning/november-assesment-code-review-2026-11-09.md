@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-21 12:21 UTC — batch 10 piece 6 COMMITTED `14a38d2e` (queue 4hx; not deployed, ships with the batch): the batch insert tool returns an error with the counts when an entry failed or nothing was written, its two refusals are error objects, a chunk cap below 1 is refused before the document is read, and the ingest descriptions match the code. Review: pass with warnings; four surviving faults closed by added cases. Next: the site tools' failure envelope.**
+
 **Status 2026-11-21 11:49 UTC — batch 10 piece 5 COMMITTED `89be39e8` (queue 4hw; not deployed, ships with the batch): the apply tool refuses, before any write, a modify or remove it cannot apply and a proposal with an unknown type, and it matches the proposal name exactly (an empty or ambiguous name is refused). One parameter description of the propose tool corrected. Review: pass with warnings; three surviving faults closed by one more case. Next: the knowledge-base ingest file.**
 
 **Status 2026-11-21 11:18 UTC — batch 10 piece 4 COMMITTED `7f2c164b` (queue 4hv; not deployed, ships with the batch): ten failure returns of the apply, backup and logs tools are error objects; the deploy tool's description says what the tool does. The propose tool's three refusals were cut after the review (the retry leg would have replaced a truthful refusal) and move to the protected-files piece. Review: fail on the cut part, pass with warnings after the cut. Next: a small piece on two faults of the apply tool recorded in 4hv.**
