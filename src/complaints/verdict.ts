@@ -23,10 +23,10 @@
  * complaints never falls, so REFUTED stays; complaints + unknown never rises,
  * so CONFIRMED stays.
  *
- * Outside that guarantee: (1) the `mc-ctl cancel` database fallback, used
- * when the API is unreachable, can cancel a completed_with_concerns row,
- * which takes a counted complaint out of the slots ([C, C, .] with K 1, N 2
- * is REFUTED; cancel the first and it reads CONFIRMED); (2) retention
+ * Outside that guarantee: (1) a manual edit of the database. No known
+ * writer in the repo rewrites an ended status: the `mc-ctl cancel` database
+ * fallback was the one found, and it now leaves all four ended statuses
+ * alone (src/dispatch/mc-ctl-cancel-fallback.test.ts holds that); (2) retention
  * deleting a counted row (only if TASKS_RETENTION_DAYS is below the --since
  * age); (3) the host clock stepping backward, so new rows are stamped before
  * rows already counted. A replay with a past --now reads today's statuses,
@@ -96,6 +96,15 @@ const queued = (r: TaskRow): QueuedRun => ({ createdAt: r.created_at, taskId: r.
 const isFinished = (r: TaskRow): boolean => stripChar(r.status) !== "?";
 const isCancelled = (r: TaskRow): boolean => r.status === "cancelled";
 
+/**
+ * True iff the second of `nowMs` is later than the clock: a --now ahead of the
+ * clock would count rows that runs queued later can still sort ahead of. The
+ * wrapper's pinned --now (floored, read before the clock) is never refused.
+ */
+export function nowIsAfterClock(nowMs: number, clockMs: number): boolean {
+  return Math.floor(nowMs / 1000) * 1000 > clockMs;
+}
+
 export function buildVerdict(rows: TaskRow[], opts: VerdictOptions): Verdict {
   const since = secondKey(opts.since);
   // Rows queued in the second of `now` are left for a later check: a run
@@ -155,7 +164,7 @@ export function renderVerdict(v: Verdict): string {
     // unknown slots to resolve clean that complaints + unknown <= K.
     const refute = v.maxComplaints + 1 - v.complaints;
     const confirm = v.complaints + v.unknown - v.maxComplaints;
-    out.push(`  to close: ${refute} more complaint(s) would refute it; ${confirm} more clean result(s) would confirm it`);
+    out.push(`  to close: ${refute} more complaint(s) would refute it; ${confirm} more clean result(s) in the open slots would confirm it`);
     if (v.inFlight.length > 0) out.push(`  waiting for ${v.inFlight.length} run(s) still in flight`);
   }
   for (const r of v.runList) {

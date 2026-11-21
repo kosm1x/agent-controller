@@ -3,7 +3,7 @@
  * throwaway database is built with the sqlite3 CLI in a fresh temp directory
  * and the wrapper runs against it. Never touches any other database.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -131,6 +131,12 @@ function wrapper(args: string[], env: NodeJS.ProcessEnv = process.env, cwd = REP
 }
 
 const sha = (path: string): string => createHash("sha256").update(readFileSync(path)).digest("hex");
+
+// The tests here block on spawnSync, and vitest chains tests without giving the
+// event loop a turn: on a slow host the worker then misses its 60 s reply
+// window to the runner ("Timeout calling onTaskUpdate") with every test green.
+// One turn before each test bounds that window by a single test.
+beforeEach(() => new Promise<void>((resolve) => setImmediate(resolve)));
 
 let dir: string;
 let db: string;
@@ -464,7 +470,7 @@ describe("--verdict: a prediction closed by code", () => {
         "",
       ].join("\n"),
     );
-  });
+  }, 60_000);
 
   it("text: a needs_context run holds its slot, is named, and the verdict waits for it", () => {
     const r = verdict(["--type", "ritual:vr", "--since", S, "--max-complaints", "3"]);
@@ -472,7 +478,7 @@ describe("--verdict: a prediction closed by code", () => {
     const lines = r.stdout.split("\n");
     expect(lines[1]).toBe("verdict: COUNTING  counted 4/7  unknown 3  complaints 3 (limit 3)");
     expect(lines[2]).toBe("  slots, oldest left: [.CF?C]");
-    expect(lines[3]).toBe("  to close: 1 more complaint(s) would refute it; 3 more clean result(s) would confirm it");
+    expect(lines[3]).toBe("  to close: 1 more complaint(s) would refute it; 3 more clean result(s) in the open slots would confirm it");
     expect(lines[4]).toBe("  waiting for 1 run(s) still in flight");
     expect(lines.slice(9)).toEqual([
       "  in flight, holding a slot: 1",
@@ -485,7 +491,7 @@ describe("--verdict: a prediction closed by code", () => {
       "  caveat: the counted runs span 2 builds, oldest first: aaa1111 · bbb2222",
       "",
     ]);
-  });
+  }, 60_000);
 
   it("JSON: CONFIRMED with exactly K of N, the documented keys, and --since floored to the second", () => {
     const confirmed = json(["--type", "ritual:vr", "--since", S, "--max-complaints", "2", "--runs", "3"]);
@@ -504,7 +510,7 @@ describe("--verdict: a prediction closed by code", () => {
     // 12:00:00.900 is floored to 12:00:00, so v1 (stamped 12:00:00) is in.
     const floored = json(["--type", "ritual:vr", "--since", "2026-11-15T12:00:00.900Z", "--max-complaints", "2", "--runs", "3"]);
     expect([floored.since, floored.runList[0].taskId]).toEqual(["2026-11-15T12:00:00.000Z", "v1"]);
-  });
+  }, 60_000);
 
   it("a type with no runs is COUNTING 0/N; a --since after --now counts nothing; no facts table means no builds", () => {
     expect(json(["--type", "ritual:nobody", "--since", S, "--max-complaints", "2"])).toMatchObject({ verdict: "COUNTING", counted: 0, runs: 7, complaints: 0, unknown: 7, builds: [], runList: [] });
@@ -514,70 +520,83 @@ describe("--verdict: a prediction closed by code", () => {
     expect(r.stdout).toContain("verdict: REFUTED  counted 1/7  unknown 6  complaints 1 (limit 0)\n");
     expect(r.stdout).toContain(`    ${MID} failed @- [reply] real reply\n`);
     expect(r.stdout).not.toContain("caveat");
+  }, 60_000);
+
+  it("the CLI hands the guard the clock as it is: one call, Date.now() with no slack", () => {
+    // A slack added here would only be seen by a refused --now inside the
+    // slack, a test that races the spawn; the call is pinned instead.
+    const cli = readFileSync(join(REPO, "scripts", "complaints-digest.ts"), "utf8");
+    expect(cli.split("\n").filter((l) => l.includes("nowIsAfterClock(")).map((l) => l.trim())).toEqual([
+      'if (nowIsAfterClock(nowMs, Date.now())) fail("--now must not be later than the current time with --verdict");',
+    ]);
   });
 
-  it("every flag error exits 2 with one line and opens no database (no WAL sidecars appear)", () => {
-    // Control: a valid run does leave the sidecars, so their absence below means something.
+  // One spawn per test, so no single test runs long enough on a slow host to
+  // outlast vitest's 60 s message timeout (see the beforeEach at the top).
+  const CLOCK_LINE = "--now must not be later than the current time with --verdict";
+  const refused = (args: string[], line: string) => {
+    clearSidecars();
+    const before = sha(vdb);
+    const r = wrapper(["--db", vdb, ...args]);
+    expect([r.status, r.stdout, r.stderr]).toEqual([2, "", `complaints-digest: ${line}\n`]);
+    expect(sidecars()).toEqual([]);
+    expect(sha(vdb)).toBe(before);
+  };
+
+  it("control: a valid run does leave the WAL sidecars, so their absence in the flag-error tests means something", () => {
     clearSidecars();
     expect(verdict(["--type", "ritual:vr", "--since", S, "--max-complaints", "1"]).status).toBe(0);
     expect(sidecars()).toHaveLength(2);
-    const before = sha(vdb);
-    const bad: string[][] = [
-      ["--verdict"],
-      ["--verdict", "--since", S, "--max-complaints", "1"],
-      ["--verdict", "--type", "ritual:vr", "--max-complaints", "1"],
-      ["--verdict", "--type", "ritual:vr", "--since", S],
-      // "=-1": a bare "-1" after a flag is parseArgs's own (multi-line) error, unchanged here.
-      ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints=-1"],
-      ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "x"],
-      // K >= N: a prediction that cannot be refuted.
-      ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "7"],
-      ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "3", "--runs", "3"],
-      ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "1", "--runs", "0"],
-      ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "1", "--runs", "101"],
-      ["--verdict", "--type", "ritual:vr", "--since", "2026-11-15", "--max-complaints", "1"],
-      ["--verdict", "--type", "ritual:vr", "--since", "2026-13-45T12:00:00Z", "--max-complaints", "1"],
-      // The window with --days 30 is (2026-10-21T18:00:00Z, NOW]: its start is out.
-      ["--verdict", "--type", "ritual:vr", "--since", "2026-10-21T18:00:00Z", "--max-complaints", "1"],
-      ["--verdict", "--type", "ritual:vr", "--since", "2026-10-21T18:00:00.900Z", "--max-complaints", "1"],
-      ["--verdict", "--type", "ritual:vr", "--since", "2026-11-12T00:00:00Z", "--max-complaints", "1", "--days", "7"],
-      ["--verdict", "--type", "vr", "--since", S, "--max-complaints", "1"],
-      ["--since", S],
-      ["--max-complaints", "1"],
-      ["--runs", "3"],
-    ];
-    for (const args of bad) {
-      clearSidecars();
-      const r = wrapper(["--db", vdb, "--now", NOW, ...args]);
-      expect([args, r.status], r.stderr).toEqual([args, 2]);
-      expect(r.stdout).toBe("");
-      expect(r.stderr).toMatch(/^complaints-digest: [^\n]+\n$/);
-      expect([args, sidecars()]).toEqual([args, []]);
-    }
-    expect(sha(vdb)).toBe(before);
-    // A --now later than the clock is refused in verdict mode only.
-    const future = ["--type", "ritual:vr", "--since", S, "--max-complaints", "1"];
-    clearSidecars();
-    const ahead = wrapper(["--db", vdb, "--now", "2099-01-01T00:00:00Z", "--verdict", ...future]);
-    expect([ahead.status, ahead.stdout, ahead.stderr]).toEqual([2, "", "complaints-digest: --now must not be later than the current time with --verdict\n"]);
-    expect(sidecars()).toEqual([]);
+  }, 60_000);
+
+  const FLAG_ERRORS: [string[], string][] = [
+    [["--verdict"], "--verdict needs --type"],
+    [["--verdict", "--since", S, "--max-complaints", "1"], "--verdict needs --type"],
+    [["--verdict", "--type", "ritual:vr", "--max-complaints", "1"], "--verdict needs --since"],
+    [["--verdict", "--type", "ritual:vr", "--since", S], "--verdict needs --max-complaints"],
+    // "=-1": a bare "-1" after a flag is parseArgs's own (multi-line) error, unchanged here.
+    [["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints=-1"], "--max-complaints must be an integer"],
+    [["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "x"], "--max-complaints must be an integer"],
+    // K >= N: a prediction that cannot be refuted.
+    [["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "7"], "--max-complaints must be below --runs (7): K >= N is a prediction that cannot be refuted"],
+    [["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "3", "--runs", "3"], "--max-complaints must be below --runs (3): K >= N is a prediction that cannot be refuted"],
+    [["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "1", "--runs", "0"], "--runs must be between 1 and 100"],
+    [["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "1", "--runs", "101"], "--runs must be between 1 and 100"],
+    [["--verdict", "--type", "ritual:vr", "--since", "2026-11-15", "--max-complaints", "1"], "--since must be an ISO time with Z or an offset, e.g. 2026-11-20T18:00:00Z"],
+    [["--verdict", "--type", "ritual:vr", "--since", "2026-13-45T12:00:00Z", "--max-complaints", "1"], "--since must be a date"],
+    // The window with --days 30 is (2026-10-21T18:00:00Z, NOW]: its start is out.
+    [["--verdict", "--type", "ritual:vr", "--since", "2026-10-21T18:00:00Z", "--max-complaints", "1"], "--since must be later than --now minus --days (30 days)"],
+    [["--verdict", "--type", "ritual:vr", "--since", "2026-10-21T18:00:00.900Z", "--max-complaints", "1"], "--since must be later than --now minus --days (30 days)"],
+    [["--verdict", "--type", "ritual:vr", "--since", "2026-11-12T00:00:00Z", "--max-complaints", "1", "--days", "7"], "--since must be later than --now minus --days (7 days)"],
+    [["--verdict", "--type", "vr", "--since", S, "--max-complaints", "1"], "--type must match ^(ritual|schedule):[A-Za-z0-9_-]+$"],
+    [["--since", S], "--since, --max-complaints and --runs need --verdict"],
+    [["--max-complaints", "1"], "--since, --max-complaints and --runs need --verdict"],
+    [["--runs", "3"], "--since, --max-complaints and --runs need --verdict"],
+  ];
+  it.each(FLAG_ERRORS)("flag error %j: exit 2, one line, no database opened", (args, line) => {
+    refused(["--now", NOW, ...args], line);
+  }, 60_000);
+
+  const future = ["--type", "ritual:vr", "--since", S, "--max-complaints", "1"];
+  it("a --now later than the clock is refused in verdict mode only", () => {
+    refused(["--now", "2099-01-01T00:00:00Z", "--verdict", ...future], CLOCK_LINE);
     expect(wrapper(["--db", vdb, "--now", "2099-01-01T00:00:00Z"]).status).toBe(0);
-    // Two seconds past the next whole second: ahead of the clock however a
-    // second ticks over before the check, and close enough to pin the bound.
-    const soon = new Date(Math.ceil(Date.now() / 1000) * 1000 + 2000).toISOString();
-    clearSidecars();
-    const close = wrapper(["--db", vdb, "--now", soon, "--verdict", ...future]);
-    expect([close.status, close.stdout, close.stderr]).toEqual([2, "", "complaints-digest: --now must not be later than the current time with --verdict\n"]);
-    expect(sidecars()).toEqual([]);
-    // The current second (what the wrapper pins when --now is not given) is
-    // accepted; --since is a day back so the window never ages this out.
+  }, 60_000);
+
+  it("a --now a minute ahead is refused: the CLI wires its own clock in", () => {
+    // The exact boundary is pinned in verdict.test.ts; no slow spawn can outrun a minute.
+    refused(["--now", new Date(Date.now() + 60_000).toISOString(), "--verdict", ...future], CLOCK_LINE);
+  }, 60_000);
+
+  it("the current second (what the wrapper pins when --now is not given) is accepted, and so is no --now", () => {
+    // --since is a day back so the window never ages this out.
     const current = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString();
     const recent = ["--type", "ritual:vr", "--since", new Date(Date.now() - 86_400_000).toISOString(), "--max-complaints", "1"];
     expect(wrapper(["--db", vdb, "--now", current, "--verdict", ...recent]).status).toBe(0);
     expect(wrapper(["--db", vdb, "--verdict", ...recent]).status).toBe(0);
-    const kn = wrapper(["--db", vdb, "--now", NOW, "--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "7"]);
-    expect(kn.stderr).toContain("cannot be refuted");
-    // Just inside the window, and K = N - 1, are accepted.
+  }, 60_000);
+
+  it("just inside the window, and K = N - 1, are accepted", () => {
     expect(json(["--type", "ritual:vr", "--since", "2026-10-21T18:00:01Z", "--max-complaints", "6"]).verdict).toBe("CONFIRMED");
-  }, 120_000);
+  }, 60_000);
 });

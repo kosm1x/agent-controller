@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskRow } from "./digest.js";
-import { buildVerdict, renderVerdict, type VerdictOptions } from "./verdict.js";
+import { buildVerdict, nowIsAfterClock, renderVerdict, type VerdictOptions } from "./verdict.js";
 
 const TYPE = "ritual:pred";
 const NOW = "2026-11-20T18:00:00.000Z";
@@ -191,6 +191,18 @@ describe("buildVerdict", () => {
   });
 });
 
+describe("nowIsAfterClock: the --verdict guard against a --now ahead of the clock", () => {
+  const T = Date.parse("2026-11-21T12:00:00Z");
+  it("the exact boundary: the second of now against the clock", () => {
+    expect(nowIsAfterClock(T, T)).toBe(false); // same instant
+    expect(nowIsAfterClock(T, T + 500)).toBe(false); // same second, clock later
+    expect(nowIsAfterClock(T + 1000, T + 999)).toBe(true); // next whole second vs hh:mm:ss.999
+    expect(nowIsAfterClock(T + 501, T + 500)).toBe(false); // 1 ms ahead inside the second: floored
+    expect(nowIsAfterClock(T + 1000, T)).toBe(true); // one second ahead
+    expect(nowIsAfterClock(T - 1000, T)).toBe(false); // the past
+  });
+});
+
 describe("a closed verdict never flips", () => {
   // The audit's fixtures (now NOW, S SINCE, K 1, N 2): before, the rule must
   // not print a closed verdict that the later state contradicts.
@@ -295,7 +307,7 @@ describe("renderVerdict", () => {
       `Prediction: ${TYPE} has at most 1 complaint(s) (concerns+failed) in its first 3 runs queued at or after ${SINCE}; checked at ${NOW}`,
       "verdict: COUNTING  counted 2/3  unknown 1  complaints 1 (limit 1)",
       "  slots, oldest left: [.C?]",
-      "  to close: 1 more complaint(s) would refute it; 1 more clean result(s) would confirm it",
+      "  to close: 1 more complaint(s) would refute it; 1 more clean result(s) in the open slots would confirm it",
       "  waiting for 1 run(s) still in flight",
       "    2026-11-15 12:00:00 completed @aaa1111",
       `    2026-11-15 13:00:00 completed_with_concerns @aaa1111 [concern] ${"x".repeat(500)}`,
@@ -312,7 +324,7 @@ describe("renderVerdict", () => {
   it("COUNTING with only empty slots: the closing line, no waiting line", () => {
     const text = renderVerdict(verdict(runs(".C")));
     expect(text).toContain("verdict: COUNTING  counted 2/7  unknown 5  complaints 1 (limit 2)\n");
-    expect(text).toContain("  to close: 2 more complaint(s) would refute it; 4 more clean result(s) would confirm it\n");
+    expect(text).toContain("  to close: 2 more complaint(s) would refute it; 4 more clean result(s) in the open slots would confirm it\n");
     expect(text).not.toContain("waiting");
   });
 

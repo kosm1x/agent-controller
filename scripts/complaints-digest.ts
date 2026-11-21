@@ -21,7 +21,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { complaintsSql } from "../src/complaints/query.js";
 import { buildDigest, renderDigest, type TaskRow } from "../src/complaints/digest.js";
-import { buildVerdict, renderVerdict } from "../src/complaints/verdict.js";
+import { buildVerdict, nowIsAfterClock, renderVerdict } from "../src/complaints/verdict.js";
 
 function fail(msg: string): never {
   process.stderr.write(`complaints-digest: ${msg}\n`);
@@ -79,10 +79,8 @@ const now = new Date(nowMs).toISOString();
 
 let verdictOpts: { type: string; since: string; maxComplaints: number; runs: number } | undefined;
 if (parsed.verdict) {
-  // A --now ahead of the clock would count rows that runs queued later can
-  // still sort ahead of (src/complaints/verdict.ts). The clock is read here,
-  // after the wrapper pinned its --now, so the pinned value is never later.
-  if (Math.floor(nowMs / 1000) * 1000 > Date.now()) fail("--now must not be later than the current time with --verdict");
+  // The clock is read here, after the wrapper pinned its --now.
+  if (nowIsAfterClock(nowMs, Date.now())) fail("--now must not be later than the current time with --verdict");
   if (type === undefined) fail("--verdict needs --type");
   if (parsed.since === undefined) fail("--verdict needs --since");
   if (parsed["max-complaints"] === undefined) fail("--verdict needs --max-complaints");
