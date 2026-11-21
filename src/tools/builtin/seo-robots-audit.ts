@@ -265,7 +265,10 @@ NOT FOR: general robots.txt validation, sitemap extraction, page crawling. Use s
           );
           return JSON.stringify(result);
         }
-        return JSON.stringify(result);
+        return JSON.stringify({
+          error: `robots.txt could not be read: ${result.fetch_error}`,
+          ...result,
+        });
       }
       const body = await res.text();
       result.fetched = true;
@@ -285,6 +288,10 @@ NOT FOR: general robots.txt validation, sitemap extraction, page crawling. Use s
       ]);
     } catch (err) {
       result.fetch_error = err instanceof Error ? err.message : String(err);
+      return JSON.stringify({
+        error: `robots.txt could not be read: ${result.fetch_error || "no error message"}`,
+        ...result,
+      });
     }
 
     return JSON.stringify(result);

@@ -62,6 +62,10 @@ vi.mock("node:fs", async () => {
 
 beforeEach(() => {
   mockFetch.mockReset();
+  // Fail closed: a request no case queued is refused, never sent.
+  mockFetch.mockImplementation(async () => {
+    throw new Error("unexpected request in test");
+  });
   mockPrepare.mockClear();
 });
 
@@ -737,5 +741,289 @@ describe("fetch failure cause code", () => {
     expect(result.error).toBe("TTS failed: fetch failed (UND_ERR_X)");
     expect(result.transcript).toContain("Hello");
     expectNoLeak(raw);
+  });
+});
+
+// A call that could not do what it was asked returns `error` as its FIRST
+// key (the readers that look for a failure read the start of the text);
+// what was made before the failure stays, in its old order.
+describe("failure results lead with error", () => {
+  const TTS_NOTE = "Script generated but TTS failed. Transcript available above.";
+  const PARTIAL_KEYS = ["error", "transcript", "files_used", "note"];
+  const UPLOAD_KEYS = [
+    "success",
+    "name",
+    "display_name",
+    "uri",
+    "mime_type",
+    "size_bytes",
+    "state",
+    "expires_at",
+    "note",
+  ];
+
+  const scriptOk = () => ({
+    ok: true,
+    json: async () => ({
+      candidates: [
+        {
+          content: {
+            parts: [
+              { text: JSON.stringify({ turns: [{ speaker: "A", text: "Hello." }] }) },
+            ],
+          },
+        },
+      ],
+    }),
+  });
+
+  async function audioPartial(tts: unknown): Promise<string> {
+    mockActiveFiles();
+    mockFetch.mockResolvedValueOnce(scriptOk());
+    mockFetch.mockResolvedValueOnce(tts);
+    const raw = await geminiAudioOverviewTool.execute({ length: "brief" });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    return raw;
+  }
+
+  function expectPartial(raw: string, error: string) {
+    expect(raw.startsWith('{"error":"')).toBe(true);
+    const r = JSON.parse(raw);
+    expect(Object.keys(r)).toEqual(PARTIAL_KEYS);
+    expect(r).toEqual({
+      error,
+      transcript: "[A] Hello.",
+      files_used: ["test.pdf"],
+      note: TTS_NOTE,
+    });
+  }
+
+  it("audio: TTS with no candidates", async () => {
+    const raw = await audioPartial({ ok: true, json: async () => ({ candidates: [] }) });
+    expectPartial(raw, "TTS returned no audio data.");
+  });
+
+  it("audio: TTS with no audio part", async () => {
+    const raw = await audioPartial({
+      ok: true,
+      json: async () => ({ candidates: [{ content: { parts: [{ text: "no audio" }] } }] }),
+    });
+    expectPartial(raw, "No audio data in TTS response.");
+  });
+
+  it("audio: TTS answers an HTTP error with a JSON body", async () => {
+    const raw = await audioPartial({
+      ok: false,
+      status: 503,
+      text: async () => JSON.stringify({ error: { message: "Service unavailable" } }),
+    });
+    expectPartial(raw, "TTS failed (503): Service unavailable");
+  });
+
+  it("audio: TTS request throws", async () => {
+    mockActiveFiles();
+    mockFetch.mockResolvedValueOnce(scriptOk());
+    mockFetch.mockRejectedValueOnce(new TypeError("fetch failed"));
+    const raw = await geminiAudioOverviewTool.execute({ length: "brief" });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expectPartial(raw, "TTS failed: fetch failed");
+  });
+
+  it("audio: TTS request aborted by its time limit → the time-out words, transcript kept", async () => {
+    mockActiveFiles();
+    mockFetch.mockResolvedValueOnce(scriptOk());
+    mockFetch.mockRejectedValueOnce(
+      new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+    );
+    const raw = await geminiAudioOverviewTool.execute({ length: "brief" });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expectPartial(raw, "TTS timed out after 300s");
+  });
+
+  it("audio: a success result is unchanged and carries no error", async () => {
+    mockActiveFiles();
+    mockFetch.mockResolvedValueOnce(scriptOk());
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  inlineData: {
+                    data: Buffer.alloc(48000).toString("base64"),
+                    mimeType: "audio/L16;rate=24000",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    });
+    const r = JSON.parse(await geminiAudioOverviewTool.execute({ length: "brief" }));
+    expect(Object.keys(r)).toEqual([
+      "success",
+      "audio_file",
+      "duration_seconds",
+      "duration_display",
+      "transcript",
+      "language",
+      "length",
+      "files_used",
+    ]);
+    expect(r.success).toBe(true);
+    expect(r.duration_seconds).toBe(1);
+    expect(r.transcript).toBe("[A] Hello.");
+  });
+
+  // Upload: phase 1 opens the session, phase 2 sends the bytes and returns
+  // the file resource in the given state.
+  function queueUpload(state: string) {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: {
+        get: (k: string) =>
+          k.toLowerCase() === "x-goog-upload-url"
+            ? "https://upload.googleapis.com/session/abc"
+            : null,
+      },
+      text: async () => "",
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          file: {
+            name: "files/abc123",
+            uri: "https://generativelanguage.googleapis.com/v1beta/files/abc123",
+            mimeType: "application/pdf",
+            sizeBytes: 1024,
+            state,
+            expirationTime: "2026-04-01T00:00:00Z",
+          },
+        }),
+    });
+  }
+
+  const uploadBase = (state: string, uri: string) => ({
+    name: "files/abc123",
+    display_name: "test.pdf",
+    uri,
+    mime_type: "application/pdf",
+    size_bytes: 1024,
+    state,
+    expires_at: "2026-04-01T00:00:00Z",
+  });
+
+  // The arguments of the one stored-file insert, in the insert's column order.
+  function insertArgs(): unknown[] {
+    const at = mockPrepare.mock.calls
+      .map((c: unknown[], i: number) => (String(c[0]).includes("INSERT INTO gemini_files") ? i : -1))
+      .filter((i: number) => i >= 0);
+    expect(at).toHaveLength(1);
+    const run = mockPrepare.mock.results[at[0]].value.run;
+    expect(run).toHaveBeenCalledTimes(1);
+    return run.mock.calls[0];
+  }
+
+  const storedRow = (state: string) => [
+    "files/abc123",
+    "test.pdf",
+    "https://generativelanguage.googleapis.com/v1beta/files/abc123",
+    "application/pdf",
+    1024,
+    state,
+    "2026-04-01T00:00:00Z",
+  ];
+
+  const TIMEOUT_WORDS =
+    "File not ready after 60s (still processing, or its state could not be read), so it is stored as not ready: gemini_research and gemini_audio_overview will not use it. Uploading it again starts a new upload, which can time out the same way.";
+
+  it("upload: an ACTIVE file is a success with no error key", async () => {
+    queueUpload("ACTIVE");
+    const raw = await geminiUploadTool.execute({ source: "/tmp/test.pdf" });
+    const r = JSON.parse(raw);
+    expect(Object.keys(r)).toEqual(UPLOAD_KEYS);
+    expect(r).toEqual({
+      success: true,
+      ...uploadBase(
+        "ACTIVE",
+        "https://generativelanguage.googleapis.com/v1beta/files/abc123",
+      ),
+      note: "File ready. Use this name in gemini_research or gemini_audio_overview.",
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("upload: a FAILED file is a failure, error first, every other key kept", async () => {
+    queueUpload("FAILED");
+    const raw = await geminiUploadTool.execute({ source: "/tmp/test.pdf" });
+    expect(raw.startsWith('{"error":"')).toBe(true);
+    const r = JSON.parse(raw);
+    expect(Object.keys(r)).toEqual(["error", ...UPLOAD_KEYS]);
+    const words = "File processing failed (state: FAILED).";
+    expect(r).toEqual({
+      error: words,
+      success: false,
+      ...uploadBase(
+        "FAILED",
+        "https://generativelanguage.googleapis.com/v1beta/files/abc123",
+      ),
+      note: words,
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(insertArgs()).toEqual(storedRow("FAILED"));
+  });
+
+  async function expectTimeout(raw: string) {
+    expect(raw.startsWith('{"error":"')).toBe(true);
+    const r = JSON.parse(raw);
+    expect(Object.keys(r)).toEqual(["error", ...UPLOAD_KEYS]);
+    expect(r).toEqual({
+      error: TIMEOUT_WORDS,
+      success: false,
+      ...uploadBase(
+        "TIMEOUT",
+        "https://generativelanguage.googleapis.com/v1beta/files/abc123",
+      ),
+      note: TIMEOUT_WORDS,
+    });
+    expect(insertArgs()).toEqual(storedRow("TIMEOUT"));
+    // A check every 2s until the 60s limit: 30 checks after the 2 upload calls.
+    expect(mockFetch).toHaveBeenCalledTimes(32);
+  }
+
+  it("upload: a file not ready when no state check answered is a failure that says it will not be used", async () => {
+    vi.useFakeTimers();
+    try {
+      queueUpload("PROCESSING");
+      // Every state check after the upload is refused by the fail-closed
+      // default, so the check runs out.
+      const pending = geminiUploadTool.execute({ source: "/tmp/test.pdf" });
+      await vi.advanceTimersByTimeAsync(62_000);
+      await expectTimeout(await pending);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("upload: a file whose state checks answer still processing until the limit is a failure that says it will not be used", async () => {
+    vi.useFakeTimers();
+    try {
+      queueUpload("PROCESSING");
+      // After the two queued upload answers, every state check answers
+      // that the file is still processing.
+      mockFetch.mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ name: "files/abc123", state: "PROCESSING" }),
+      }));
+      const pending = geminiUploadTool.execute({ source: "/tmp/test.pdf" });
+      await vi.advanceTimersByTimeAsync(62_000);
+      await expectTimeout(await pending);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

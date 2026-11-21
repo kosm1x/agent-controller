@@ -154,7 +154,7 @@ function deliveryLabel(taskId: string): string {
  */
 function storedText(
   output: string | null | undefined,
-): { text: string } | { problem: string } {
+): { text: string } | { problem: string; unreadable?: true } {
   if (output == null || output.trim() === "") {
     return { problem: "This run stored no output." };
   }
@@ -164,7 +164,7 @@ function storedText(
   } catch {
     const trimmed = output.trim();
     if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-      return { problem: "This run's stored output is malformed and cannot be read." };
+      return { problem: "This run's stored output is malformed and cannot be read.", unreadable: true };
     }
     return { text: trimmed };
   }
@@ -274,12 +274,15 @@ function fetchRun(
   const meta = metaFor(row, run?.status);
   const base = { mode: "fetch", ...meta, otherRunsSameDay };
   const got = storedText(run?.output);
-  if ("problem" in got) return JSON.stringify({ ...base, error: got.problem });
+  // A run with nothing stored is a result; output that cannot be read is a failure.
+  if ("problem" in got) {
+    return JSON.stringify(got.unreadable ? { error: got.problem, ...base } : { ...base, error: got.problem });
+  }
   if (offset > 0 && offset >= got.text.length) {
     return JSON.stringify({
+      error: `offset ${offset} is past the end of the text (totalChars ${got.text.length}).`,
       ...base,
       totalChars: got.text.length,
-      error: `offset ${offset} is past the end of the text (totalChars ${got.text.length}).`,
     });
   }
   return pageResult(base, got.text, offset);

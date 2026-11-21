@@ -494,7 +494,16 @@ EDGE CASES:
         expiresAt,
       });
 
+      // A file that is not ACTIVE is never used by the reading tools (they
+      // select ACTIVE rows only and nothing re-checks a stored state).
+      const note =
+        finalState === "ACTIVE"
+          ? "File ready. Use this name in gemini_research or gemini_audio_overview."
+          : finalState === "TIMEOUT"
+            ? "File not ready after 60s (still processing, or its state could not be read), so it is stored as not ready: gemini_research and gemini_audio_overview will not use it. Uploading it again starts a new upload, which can time out the same way."
+            : `File processing failed (state: ${finalState}).`;
       return JSON.stringify({
+        ...(finalState === "ACTIVE" ? {} : { error: note }),
         success: finalState === "ACTIVE",
         name,
         display_name: displayName,
@@ -503,12 +512,7 @@ EDGE CASES:
         size_bytes: sizeBytes,
         state: finalState,
         expires_at: expiresAt,
-        note:
-          finalState === "ACTIVE"
-            ? "File ready. Use this name in gemini_research or gemini_audio_overview."
-            : finalState === "TIMEOUT"
-              ? "File still processing. Try gemini_research in a minute — it auto-checks state."
-              : `File processing failed (state: ${finalState}).`,
+        note,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -979,9 +983,9 @@ EDGE CASES:
         Array<Record<string, unknown>> | undefined;
       if (!candidates?.length) {
         return JSON.stringify({
+          error: "TTS returned no audio data.",
           transcript: scriptText,
           files_used: files.map((f) => f.display_name),
-          error: "TTS returned no audio data.",
           note: "Script generated but TTS failed. Transcript available above.",
         });
       }
@@ -991,9 +995,9 @@ EDGE CASES:
       const audioPart = parts?.find((p) => p.inlineData);
       if (!audioPart) {
         return JSON.stringify({
+          error: "No audio data in TTS response.",
           transcript: scriptText,
           files_used: files.map((f) => f.display_name),
-          error: "No audio data in TTS response.",
           note: "Script generated but TTS failed. Transcript available above.",
         });
       }
@@ -1034,20 +1038,20 @@ EDGE CASES:
         if (body) {
           const error = body.error as Record<string, unknown> | undefined;
           return JSON.stringify({
+            error: `TTS failed (${err.status}): ${(error?.message as string) ?? "Unknown error"}`,
             transcript: scriptText,
             files_used: files.map((f) => f.display_name),
-            error: `TTS failed (${err.status}): ${(error?.message as string) ?? "Unknown error"}`,
             note: "Script generated but TTS failed. Transcript available above.",
           });
         }
       }
       const msg = errMsg(err);
       return JSON.stringify({
-        transcript: scriptText,
-        files_used: files.map((f) => f.display_name),
         error: msg.includes("aborted")
           ? `TTS timed out after ${TTS_TIMEOUT_MS / 1000}s`
           : `TTS failed: ${msg}${fetchCauseCode(err)}`,
+        transcript: scriptText,
+        files_used: files.map((f) => f.display_name),
         note: "Script generated but TTS failed. Transcript available above.",
       });
     }

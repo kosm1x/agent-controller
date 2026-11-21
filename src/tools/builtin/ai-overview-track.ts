@@ -296,6 +296,7 @@ NOT FOR: general web search (use web_search), on-page audits (seo_page_audit), o
       fetch_status: "empty",
     };
 
+    let failure: string | undefined;
     await acquireSerpSlot();
     try {
       const fetched = await stealthFetch(serpUrl, {
@@ -306,7 +307,10 @@ NOT FOR: general web search (use web_search), on-page audits (seo_page_audit), o
         result.note =
           "Stealth fetch returned empty. Provision SERP_API_KEY (SerpAPI fallback) for a reliable alternative.";
         persistSnapshot(result);
-        return JSON.stringify(result);
+        return JSON.stringify({
+          error: "The stealth fetch returned no page: AI Overview presence was not checked.",
+          ...result,
+        });
       }
 
       const html = fetched.content;
@@ -315,7 +319,10 @@ NOT FOR: general web search (use web_search), on-page audits (seo_page_audit), o
         result.note =
           "Google served an anti-bot interstitial. Provision SERP_API_KEY for SerpAPI fallback (follow-up).";
         persistSnapshot(result);
-        return JSON.stringify(result);
+        return JSON.stringify({
+          error: "Google served an anti-bot interstitial: AI Overview presence was not checked.",
+          ...result,
+        });
       }
 
       const detection = detectAIOverview(html);
@@ -335,12 +342,17 @@ NOT FOR: general web search (use web_search), on-page audits (seo_page_audit), o
     } catch (err) {
       result.fetch_status = "parse_error";
       result.note = err instanceof Error ? err.message : String(err);
+      failure = `The SERP check failed: ${result.note || "no error message"}`;
     } finally {
       releaseSerpSlot();
     }
 
     const snapshotId = persistSnapshot(result);
-    return JSON.stringify({ ...result, snapshot_id: snapshotId ?? undefined });
+    return JSON.stringify({
+      ...(failure ? { error: failure } : {}),
+      ...result,
+      snapshot_id: snapshotId ?? undefined,
+    });
   },
 };
 

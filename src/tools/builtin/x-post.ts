@@ -236,7 +236,7 @@ check every account this task's project can use. Returns per-account/backend {ok
 
   async execute(args: Record<string, unknown>): Promise<string> {
     if (!anyXAccountConfigured()) {
-      return JSON.stringify({ healthy: false, error: notConfigured() });
+      return JSON.stringify({ error: notConfigured(), healthy: false });
     }
     const account =
       typeof args.account === "string" && args.account.trim() !== ""
@@ -263,8 +263,8 @@ check every account this task's project can use. Returns per-account/backend {ok
       const router = getXRouter(account);
       if (!router)
         return JSON.stringify({
-          healthy: false,
           error: noAccountError(account),
+          healthy: false,
         });
       const probe = await router.probe();
       return JSON.stringify({
@@ -278,9 +278,12 @@ check every account this task's project can use. Returns per-account/backend {ok
         })),
       });
     } catch (err) {
+      // Same fallback as tweet_post: the error is never empty.
       return JSON.stringify({
+        error:
+          (err instanceof Error ? err.message || err.name : String(err)) ||
+          "probe failed (no error message)",
         healthy: false,
-        error: err instanceof Error ? err.message : String(err),
       });
     }
   },

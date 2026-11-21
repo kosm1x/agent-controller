@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
+// Fail closed: a browser fetch no case set is refused, never started.
 vi.mock("../../lib/stealth-browser.js", () => ({
-  stealthFetch: vi.fn(),
+  stealthFetch: vi.fn(async () => {
+    throw new Error("unexpected browser fetch in test");
+  }),
 }));
 
 const mockDbRun = vi.fn().mockReturnValue({ lastInsertRowid: 1 });
@@ -16,6 +19,8 @@ import { stealthFetch } from "../../lib/stealth-browser.js";
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  vi.mocked(stealthFetch).mockReset();
+  mockDbRun.mockClear();
   mockDbRun.mockReturnValue({ lastInsertRowid: 1 });
   mockDbPrepare.mockReturnValue({ run: mockDbRun });
 });
@@ -154,5 +159,115 @@ describe("ai_overview_track execute", () => {
   it("requires query parameter", async () => {
     const raw = await aiOverviewTrackTool.execute({});
     expect(raw).toContain("query parameter is required");
+  });
+});
+
+// A check that observed nothing leads with `error`; what is stored and every
+// other key stay as before. A fetched page whose organic list did not parse
+// is a degraded result and keeps its shape.
+describe("ai_overview_track failure vs. result", () => {
+  const BASE = ["query", "present", "sources", "serp_top", "fetch_status"];
+
+  function expectStored(status: string) {
+    expect(mockDbRun).toHaveBeenCalledTimes(1);
+    expect(mockDbRun).toHaveBeenCalledWith("test", 0, "[]", "[]", status);
+  }
+
+  it("an empty fetch → error first, snapshot stored as before", async () => {
+    vi.mocked(stealthFetch).mockResolvedValueOnce(null);
+    const raw = await aiOverviewTrackTool.execute({ query: "test" });
+    expect(raw.startsWith('{"error":"')).toBe(true);
+    const r = JSON.parse(raw);
+    expect(Object.keys(r)).toEqual(["error", ...BASE, "note"]);
+    expect(r).toEqual({
+      error: "The stealth fetch returned no page: AI Overview presence was not checked.",
+      query: "test",
+      present: false,
+      sources: [],
+      serp_top: [],
+      fetch_status: "empty",
+      note: "Stealth fetch returned empty. Provision SERP_API_KEY (SerpAPI fallback) for a reliable alternative.",
+    });
+    expectStored("empty");
+  });
+
+  it("an anti-bot page → error first, snapshot stored as before", async () => {
+    vi.mocked(stealthFetch).mockResolvedValueOnce({
+      content: "<p>Our systems have detected unusual traffic</p>",
+      finalUrl: "https://www.google.com/sorry",
+      solved: false,
+    });
+    const raw = await aiOverviewTrackTool.execute({ query: "test" });
+    expect(raw.startsWith('{"error":"')).toBe(true);
+    const r = JSON.parse(raw);
+    expect(Object.keys(r)).toEqual(["error", ...BASE, "note"]);
+    expect(r).toEqual({
+      error: "Google served an anti-bot interstitial: AI Overview presence was not checked.",
+      query: "test",
+      present: false,
+      sources: [],
+      serp_top: [],
+      fetch_status: "blocked",
+      note: "Google served an anti-bot interstitial. Provision SERP_API_KEY for SerpAPI fallback (follow-up).",
+    });
+    expectStored("blocked");
+  });
+
+  it("the fetch throws → error first from its message, stored status unchanged", async () => {
+    vi.mocked(stealthFetch).mockRejectedValueOnce(new Error("navigation timeout"));
+    const raw = await aiOverviewTrackTool.execute({ query: "test" });
+    expect(raw.startsWith('{"error":"')).toBe(true);
+    const r = JSON.parse(raw);
+    expect(Object.keys(r)).toEqual(["error", ...BASE, "note", "snapshot_id"]);
+    expect(r).toEqual({
+      error: "The SERP check failed: navigation timeout",
+      query: "test",
+      present: false,
+      sources: [],
+      serp_top: [],
+      fetch_status: "parse_error",
+      note: "navigation timeout",
+      snapshot_id: 1,
+    });
+    expectStored("parse_error");
+  });
+
+  it("the fetch throws with no message → words still complete, note and stored row unchanged", async () => {
+    vi.mocked(stealthFetch).mockRejectedValueOnce(new Error(""));
+    const raw = await aiOverviewTrackTool.execute({ query: "test" });
+    expect(raw.startsWith('{"error":"')).toBe(true);
+    const r = JSON.parse(raw);
+    expect(Object.keys(r)).toEqual(["error", ...BASE, "note", "snapshot_id"]);
+    expect(r.error).toBe("The SERP check failed: no error message");
+    expect(r.note).toBe("");
+    expectStored("parse_error");
+  });
+
+  it("a fetched page with no organic results is unchanged: no error key", async () => {
+    vi.mocked(stealthFetch).mockResolvedValueOnce({
+      content: `<div data-attrid="AIOverview"><p>Summary</p></div>`,
+      finalUrl: "https://www.google.com/search",
+      solved: false,
+    });
+    const r = JSON.parse(await aiOverviewTrackTool.execute({ query: "test" }));
+    expect(Object.keys(r)).toEqual([...BASE, "detection_signal", "note", "snapshot_id"]);
+    expect(r.fetch_status).toBe("parse_error");
+    expect(r.present).toBe(true);
+    expect(r.note).toBe(
+      "SERP fetched but no organic results parsed — Google DOM may have changed; heuristics need refresh.",
+    );
+  });
+
+  it("an ok check is unchanged: no error key", async () => {
+    vi.mocked(stealthFetch).mockResolvedValueOnce({
+      content: `<a href="/url?q=https://example.com/organic"><h3>Organic Result</h3></a>`,
+      finalUrl: "https://www.google.com/search",
+      solved: false,
+    });
+    const r = JSON.parse(await aiOverviewTrackTool.execute({ query: "test" }));
+    // No panel found: detection_signal is undefined and drops out of the JSON.
+    expect(Object.keys(r)).toEqual([...BASE, "snapshot_id"]);
+    expect(r.fetch_status).toBe("ok");
+    expect(r.present).toBe(false);
   });
 });

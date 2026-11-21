@@ -9,14 +9,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const xp = vi.hoisted(() => {
-  const unexpected = (name: string) => () => {
-    throw new Error(`unexpected call: ${name}`);
-  };
+  const unexpected =
+    (name: string) =>
+    (..._args: unknown[]): unknown => {
+      throw new Error(`unexpected call: ${name}`);
+    };
   return {
-    post: vi.fn(),
-    getXRouter: vi.fn(),
-    anyXAccountConfigured: vi.fn(),
-    resolveAccount: vi.fn(),
+    post: vi.fn(unexpected("post")),
+    probe: vi.fn(unexpected("probe")),
+    getXRouter: vi.fn(unexpected("getXRouter")),
+    anyXAccountConfigured: vi.fn(unexpected("anyXAccountConfigured")),
+    resolveAccount: vi.fn(unexpected("resolveAccount")),
+    listXAccounts: vi.fn(unexpected("listXAccounts")),
+    currentXAccountScope: vi.fn(unexpected("currentXAccountScope")),
     unexpected,
   };
 });
@@ -26,12 +31,12 @@ vi.mock("../../lib/x-poster/index.js", () => ({
   anyXAccountConfigured: xp.anyXAccountConfigured,
   resolveAccount: xp.resolveAccount,
   probeAllAccounts: xp.unexpected("probeAllAccounts"),
-  listXAccounts: xp.unexpected("listXAccounts"),
-  currentXAccountScope: xp.unexpected("currentXAccountScope"),
+  listXAccounts: xp.listXAccounts,
+  currentXAccountScope: xp.currentXAccountScope,
   readMentions: xp.unexpected("readMentions"),
 }));
 
-import { tweetPostTool } from "./x-post.js";
+import { tweetPostTool, tweetProbeTool } from "./x-post.js";
 
 describe("tweet_post execute: the thrown-error path", () => {
   beforeEach(() => {
@@ -62,5 +67,78 @@ describe("tweet_post execute: the thrown-error path", () => {
     const { error } = await run();
     expect(typeof error).toBe("string");
     expect((error as string).length).toBeGreaterThan(0);
+  });
+});
+
+// A probe that could not run leads with `error`; a probe that ran and found
+// an account unhealthy is an answer and has no error key.
+describe("tweet_probe execute: could not run vs. an answer", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    xp.anyXAccountConfigured.mockReturnValue(true);
+  });
+
+  const call = async (args: Record<string, unknown>) =>
+    (await tweetProbeTool.execute(args)) as string;
+
+  function expectFailure(raw: string, error: string) {
+    expect(raw.startsWith('{"error":"')).toBe(true);
+    const r = JSON.parse(raw);
+    expect(Object.keys(r)).toEqual(["error", "healthy"]);
+    expect(r).toEqual({ error, healthy: false });
+  }
+
+  it("no account configured at all → error first", async () => {
+    xp.anyXAccountConfigured.mockReturnValue(false);
+    xp.currentXAccountScope.mockReturnValueOnce({ mode: "service" });
+    expectFailure(
+      await call({}),
+      "X posting not configured. Set X_AUTH_TOKEN__<handle> + X_CT0__<handle> (session cookies from a logged-in x.com browser) and X_DEFAULT_ACCOUNT in the environment.",
+    );
+    expect(xp.getXRouter).not.toHaveBeenCalled();
+  });
+
+  it("an account that cannot be resolved → error first", async () => {
+    xp.getXRouter.mockReturnValueOnce(undefined);
+    xp.listXAccounts.mockReturnValueOnce(["acct-a", "acct-b"]);
+    expectFailure(
+      await call({ account: "acct-z" }),
+      'Unknown X account "acct-z". Configured: acct-a, acct-b. Use one of these EXACT labels (do not re-spell).',
+    );
+    expect(xp.getXRouter).toHaveBeenCalledWith("acct-z");
+    expect(xp.probe).not.toHaveBeenCalled();
+  });
+
+  it("the probe throws → error first, with its message", async () => {
+    xp.getXRouter.mockReturnValueOnce({ probe: xp.probe });
+    xp.probe.mockRejectedValueOnce(new Error("socket hang up"));
+    expectFailure(await call({ account: "acct-a" }), "socket hang up");
+    expect(xp.probe).toHaveBeenCalledTimes(1);
+  });
+
+  it("the probe throws an error with no message → a non-empty error", async () => {
+    xp.getXRouter.mockReturnValueOnce({ probe: xp.probe });
+    xp.probe.mockRejectedValueOnce(new TypeError(""));
+    expectFailure(await call({ account: "acct-a" }), "TypeError");
+    xp.getXRouter.mockReturnValueOnce({ probe: xp.probe });
+    xp.probe.mockRejectedValueOnce("");
+    expectFailure(await call({ account: "acct-a" }), "probe failed (no error message)");
+  });
+
+  it("an unhealthy answer is unchanged: no error key, account first", async () => {
+    xp.getXRouter.mockReturnValueOnce({ probe: xp.probe });
+    xp.resolveAccount.mockReturnValueOnce("acct-a");
+    xp.probe.mockResolvedValueOnce({
+      healthy: false,
+      results: [{ backend: "cookie", ok: false, detail: "401", authExpired: true }],
+    });
+    const raw = await call({ account: "acct-a" });
+    expect(raw).toBe(
+      JSON.stringify({
+        account: "acct-a",
+        healthy: false,
+        backends: [{ backend: "cookie", ok: false, detail: "401", auth_expired: true }],
+      }),
+    );
   });
 });

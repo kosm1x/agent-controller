@@ -519,3 +519,49 @@ describe("ritual_read and the numbers audit", () => {
     expect(auditNumbers(reply, [raw]).unverified).toEqual([]);
   });
 });
+
+// A read that could not be done leads with `error`; a run that stored
+// nothing is a result and keeps its shape.
+describe("ritual_read failure vs. nothing stored", () => {
+  const META = ["mode", "ritual", "name", "day", "time", "taskId", "status", "delivery", "otherRunsSameDay"];
+
+  it("malformed stored output → error first, the rest of the record kept", async () => {
+    seed({ taskId: "t-bad", title: "Weekly review — bad", at: "2026-11-11 16:00:00", ritualId: "wr-bad", output: '{"text":"trunc' });
+    const raw = await ritualReadTool.execute({ task_id: "t-bad" });
+    expect(raw.startsWith('{"error":"')).toBe(true);
+    const r = JSON.parse(raw);
+    expect(Object.keys(r)).toEqual(["error", ...META]);
+    expect(r.error).toBe("This run's stored output is malformed and cannot be read.");
+    expect(r).toMatchObject({ mode: "fetch", ritual: "wr-bad", taskId: "t-bad", status: "completed", otherRunsSameDay: 0 });
+  });
+
+  it("an offset past the end → error first, totalChars kept last", async () => {
+    const raw = await ritualReadTool.execute({ ritual: "nightly-close", offset: 40_000 });
+    expect(raw.startsWith('{"error":"')).toBe(true);
+    const r = JSON.parse(raw);
+    expect(Object.keys(r)).toEqual(["error", ...META, "totalChars"]);
+    const n = "Cierre del 10 de noviembre.".length;
+    expect(r.error).toBe(`offset 40000 is past the end of the text (totalChars ${n}).`);
+    expect(r).toMatchObject({ mode: "fetch", ritual: "nightly-close", taskId: "t-nc", totalChars: n });
+  });
+
+  it("no stored output and no text are results: error key last, as before", async () => {
+    seed({ taskId: "t-empty", title: "Weekly review — empty", at: "2026-11-11 16:01:00", ritualId: "wr-empty", output: "" });
+    seed({ taskId: "t-notext", title: "Weekly review — notext", at: "2026-11-11 16:02:00", ritualId: "wr-notext", output: JSON.stringify({ toolCalls: [], exitReason: "done" }) });
+    for (const [id, words] of [
+      ["t-empty", "This run stored no output."],
+      ["t-notext", "This run's stored output has no text (the run produced no report)."],
+    ] as const) {
+      const r = JSON.parse(await ritualReadTool.execute({ task_id: id }));
+      expect(Object.keys(r)).toEqual([...META, "error"]);
+      expect(r.error).toBe(words);
+      expect(r.mode).toBe("fetch");
+    }
+  });
+
+  it("a page of text is unchanged and has no error key", async () => {
+    const r = JSON.parse(await ritualReadTool.execute({ ritual: "nightly-close" }));
+    expect(Object.keys(r)).toEqual([...META, "totalChars", "offset", "nextOffset", "text"]);
+    expect(r).toMatchObject({ taskId: "t-nc", offset: 0, nextOffset: null, text: "Cierre del 10 de noviembre." });
+  });
+});
