@@ -17,7 +17,7 @@
  * a false "resolved", because a failed fetch leaves the state untouched).
  *
  * Re-alert cadence (2026-06-12): pure notify-once let a single missed ping become
- * a multi-day silent outage (the salones-wa 525640501088 logout — one 23:00-MX
+ * a multi-day silent outage (the salones-wa logout — one 23:00-MX
  * notification, then ~22h of silence). So a still-firing CRITICAL alert is
  * re-announced every ALERT_RENOTIFY_HOURS (default 6h) as a reminder, resetting
  * its per-fingerprint clock on each send. Only `critical` re-nags — warnings stay

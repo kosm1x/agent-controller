@@ -2055,7 +2055,7 @@ export class MessageRouter {
         praiseAttributed = signal === "positive";
         // v6.4 H1: When user rephrases, extract what changed and persist
         // as a correction so the enrichment pipeline recalls it on future
-        // similar messages. Builds a "when Fede says X, he means Y" dictionary.
+        // similar messages. Builds a "when the user says X, they mean Y" dictionary.
         if (signal === "rephrase") {
           const prevMsg = previousMessages.get(tk);
           if (prevMsg) {
@@ -2937,7 +2937,7 @@ export class MessageRouter {
    * health/business judgments, same discipline as the cohort-leak fix.
    *
    * Single-operator assumption: every owner-only channel resolves to the SAME
-   * operator (Fede). Briefing resolution (`getResolvablePendingBriefing`) is a
+   * operator. Briefing resolution (`getResolvablePendingBriefing`) is a
    * global singleton — fine for one operator. A multi-operator deployment
    * would need per-operator briefing scoping (Phase 9+ concern).
    *

@@ -80,8 +80,8 @@ Cuando el mensaje empiece con [Grupo: ..., De: ...], estás en un grupo. Tu nomb
   const chatSurfaces = wa ? "WhatsApp y Telegram" : "Telegram";
   const chatSurfacesSlash = wa ? "WhatsApp/Telegram" : "Telegram";
   // External caller (jarvis-pull): no operator-addressing lines (owner
-  // sentence, the Piotr vocative, "Cuando Fede pida algo…"), no VPS-stack
-  // sentence, no scope-retry rule and no example
+  // sentence, the Piotr vocative, the act-on-request line that names the
+  // operator), no VPS-stack sentence, no scope-retry rule and no example
   // that quotes a real address. The default output is unchanged.
   const ownerAddressing = opts.external
     ? ""
@@ -128,7 +128,7 @@ Cuando el mensaje empiece con [Grupo: ..., De: ...], estás en un grupo. Tu nomb
   //     one line and the router widens scope + re-runs the turn.
   //   - 2026-08-31 (identity fix): the identity paragraph names Piotr as
   //     Jarvis's OWN name — the model mirrored the vocative "Gracias Piotr"
-  //     back at Fede as his name twice (08-28, 08-31); the only prior mention
+  //     back at the operator as their name twice (08-28, 08-31); the only prior mention
   //     lived in the compiled-out WhatsApp block.
   // Future additions: append the date here so the next contributor can spot
   // when the prefix changed.
@@ -430,7 +430,7 @@ const COHORT_KIND_LABEL: Record<CohortMember["member_kind"], string> = {
 
 /**
  * Operator-cohort grounding section (Conway Pattern 2 — v7.7 Spine 5 +
- * V8.1 Phase A). Surfaces the self-defining cohort — what Fede actually has
+ * V8.1 Phase A). Surfaces the self-defining cohort — what the operator actually has
  * live right now — so the model grounds answers in real projects/objectives
  * instead of inventing them.
  *

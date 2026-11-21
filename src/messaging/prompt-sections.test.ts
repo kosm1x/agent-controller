@@ -523,7 +523,7 @@ describe("identitySection — WhatsApp dormant (operator ruling 2026-08-22)", ()
 });
 
 describe("identitySection — Piotr is Jarvis's OWN name (identity fix 2026-08-31)", () => {
-  // Jarvis mirrored the vocative "Gracias Piotr" back at Fede as HIS name twice
+  // Jarvis mirrored the vocative "Gracias Piotr" back at the operator as THEIR name twice
   // (08-28, 08-31): the production prompt never said who Piotr is — the only
   // mention lived in the compiled-out WhatsApp group block, and the user_facts
   // bullet `preferences.jarvis_name` sits in the last-tier profile list.

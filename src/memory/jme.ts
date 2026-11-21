@@ -1,7 +1,7 @@
 /**
  * JME — Jarvis Memory Engine (Phase 0)
  *
- * Two-layer conversation memory for "solo conversaciones con Fede":
+ * Two-layer conversation memory for conversations with the operator only:
  *   - Episodic store (jme_turns): raw turns, immutable, keyed by task_id
  *   - Semantic store (jme_facts): extracted facts with embeddings + TTL
  *
@@ -1068,7 +1068,7 @@ export async function upsertFact(
   // nightly run (qa-audit R2 W-g). Its wording is the operator's call, so the
   // near-twin is surfaced as a possible correction instead of dropped (W4).
   // Same for an INFERRED incoming preference against a STATED member: an
-  // inference must not replace what Fede said (qa R3 C1).
+  // inference must not replace what the operator said (qa R3 C1).
   const incomingInferred =
     fact.category === "preference" &&
     (clamped.confidence ?? 1) <= INFERRED_PREFERENCE_MAX_CONFIDENCE;
@@ -1160,12 +1160,13 @@ export async function supersedeCluster(
  * Returns a JSON array of fact objects.
  */
 /** Identity-inversion guard (2026-08-31). The nightly extractor once turned
- * Jarvis's OWN Track 1 report of `preferences.jarvis_name` ("Con Fede, Jarvis se
- * llama Piotr") into jme_facts#307 "Fede prefers to be called Piotr by Jarvis" —
+ * Jarvis's OWN Track 1 report of `preferences.jarvis_name` (that Jarvis is called
+ * Piotr in its chats with the operator) into jme_facts#307, a fact saying the
+ * operator prefers to be called Piotr by Jarvis —
  * the prompt's anti-echo rule was ignored. A prompt rule is not a guard: a fact
- * that names FEDE as the one called Piotr is refused before upsertFact. Replayed
- * over all 327 live facts: hits #307 only; "Fede calls Jarvis Piotr", "Fede wants
- * Jarvis to sign as Piotr" and "Piotr Wozniak" pass. */
+ * that names the OPERATOR as the one called Piotr is refused before upsertFact.
+ * Replayed over all 327 live facts: hits #307 only; facts saying the operator
+ * calls Jarvis Piotr or wants Jarvis to sign as Piotr, and "Piotr Wozniak", pass. */
 export const IDENTITY_INVERSION_RE =
   /\bFede(?:rico)?(?:'s)?\b[^.;]{0,40}?\b(?:(?:prefers|wants|likes|asks|asked|prefiere|quiere|pide)\s+to\s+be\s+(?:called|addressed\s+as|named)|is\s+(?:called|known\s+as|named|addressed\s+as)|se\s+llama|se\s+hace\s+llamar|goes\s+by|(?:also\s+)?known\s+as|conocido\s+como|(?:name|nickname|alias|apodo|nombre)\s+(?:is|es))\b[^.;]{0,20}?\bPiotr\b/i;
 
@@ -1205,8 +1206,9 @@ export const CONSOLIDATOR_JARVIS_TURN_MAX_CHARS = 500;
 
 /**
  * One transcript line per turn: redacted (redactForJme), newlines escaped so
- * a turn can never forge a standalone "Fede:" line (audit C2 — a Jarvis web
- * summary containing "\nFede: …" did), Jarvis turns truncated. Redaction runs
+ * a turn can never forge a standalone line that starts with the speaker label
+ * the code builds for the operator (audit C2 — a Jarvis web summary containing a
+ * newline plus that label did), Jarvis turns truncated. Redaction runs
  * before the cut so a secret is never left half-visible.
  */
 function transcriptLine(role: JmeTurnRole, content: string): string {
@@ -1287,7 +1289,7 @@ export const CONSOLIDATOR_MIN_TURN_AGE_MS = 30 * 60 * 1000;
 export const CONSOLIDATOR_MAX_TURNS = 400;
 
 /** Track 2: ceiling for a preference the extractor INFERRED from a correction
- * (vs one Fede stated). Enforced in consolidateAll, not only in the prompt. */
+ * (vs one the operator stated). Enforced in consolidateAll, not only in the prompt. */
 export const INFERRED_PREFERENCE_MAX_CONFIDENCE = 0.7;
 /** Track 2: ceiling for ANY model-authored preference. 1.0 is reserved for the
  * operator's confirmation (`mc-ctl jme-preferences --confirm`). */
@@ -1374,7 +1376,7 @@ export async function consolidateAll(
     }
 
     // 2. Format the window for Haiku. Jarvis turns stay as context; the
-    // prompt instructs extraction from Fede's statements ONLY (anti-echo:
+    // prompt instructs extraction from the operator's statements ONLY (anti-echo:
     // Jarvis restating remembered facts must not re-extract them).
     const conversation = turns
       .map((t) => transcriptLine(t.role, t.content))

@@ -165,7 +165,7 @@ export interface SearchResult {
  *  "lessons" describing Jarvis's own tool usage ("Task X used tools A, B, C",
  *  "user has recurring workflow pattern using tool_x", "30 tools at 100%
  *  success rate"). When these get recalled by enrichment, the LLM reads them
- *  as user directives ("Fede uses file tools for chat") and reflexively pulls
+ *  as user directives ("the user uses file tools for chat") and reflexively pulls
  *  those tools on unrelated requests. This was one of the drivers of task 2378
  *  (the Rumi-poem delivery gap) — the extractor fed back its own tool-use
  *  observations as if they were user preferences. Mechanical rejection at the

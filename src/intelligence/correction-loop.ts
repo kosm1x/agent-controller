@@ -5,7 +5,7 @@
  * extracts WHAT changed between the original and the rephrase, and persists
  * it as a "correction" entry in pgvector. On future similar messages, the
  * enrichment pipeline recalls the correction as precedent — building a
- * personal "when Fede says X, he means Y" dictionary over time.
+ * personal "when the user says X, they mean Y" dictionary over time.
  */
 
 import { contentHash, pgUpsert, isPgvectorEnabled } from "../db/pgvector.js";

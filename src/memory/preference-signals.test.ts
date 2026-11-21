@@ -90,7 +90,7 @@ describe("detectPreferenceSignal", () => {
     "The deploy finished, check the logs",
     // 'resumen' (noun) is not a length correction
     "Mándame el resumen del día",
-    // Corpus replay false positive: Fede GIVING context is not a depth ask
+    // Corpus replay false positive: the operator GIVING context is not a depth ask
     "Voy a darte más contexto al momento, para que confirmes los ajustes",
     "Let me give you more context on the client",
     "resume the deploy when the tests pass",

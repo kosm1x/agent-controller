@@ -189,8 +189,8 @@ export const EXTRACTION_PROMPT_TOKENS = 1000;
  * = (19147 + 22755) / 2 = 20951 (the 15th and 16th of 30); minus
  * EXTRACTION_PROMPT_TOKENS = 19951 transcript tokens; tokens per seeded turn =
  * rendered chars / 4 (the bench's own approximation, adapter JME budget),
- * each turn rendered as consolidateAll does ("Fede: " / "Jarvis: " + text,
- * one line), unpadded, over the seeded `mixed` turns of the 35 stated nights
+ * each turn rendered as consolidateAll does (the speaker label the code builds
+ * + text, one line), unpadded, over the seeded `mixed` turns of the 35 stated nights
  * of C2 / C6 / C8 at size 50 = 16.77 at this size (`smalltalk` 17.2); 19951 /
  * 16.77 = 1189.7, nearest even integer 1190. (Re-derived the same day after
  * audit R1 W2 / W3, pool items drawn once and rival facts left out: the

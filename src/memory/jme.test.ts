@@ -341,7 +341,7 @@ describe("JME — preference signals + injection order (memory plan v2.0, Track 
     expect(system).toMatch(/confidence at most 0\.7/);
     expect(system).toMatch(/treated as inferred/);
     // Identity fix 2026-08-31: the extractor once inverted "Jarvis se llama
-    // Piotr" into "Fede prefers to be called Piotr" (jme_facts#307).
+    // Piotr" into a fact saying the operator prefers to be called Piotr (jme_facts#307).
     expect(system).toMatch(/"Piotr" ALWAYS refers to Jarvis, never to Fede/);
   });
 

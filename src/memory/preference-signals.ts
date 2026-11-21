@@ -2,7 +2,7 @@
  * Preference signals — behavioral corrections in operator turns.
  *
  * Memory-architecture plan v2.0, Track 2 (2026-08-28). JME already extracts
- * preferences Fede STATES; it never remembered that he CORRECTED a reply
+ * preferences the operator STATES; it never remembered that they CORRECTED a reply
  * ("muy largo", "dame la tabla", "profundiza"), because the turns carrying
  * the correction are consumed by the nightly consolidator. `writeEpisodic`
  * runs `detectPreferenceSignal` over every USER turn and records a hit in
@@ -50,7 +50,7 @@ export const SIGNAL_SNIPPET_MAX = 200;
  * `conversations` source='router', 5,700 messages, 2026-08-28): plurals and
  * clitic forms are spelled out because `\b` treats accented letters as
  * non-word characters, so a bare stem would miss "más cortos" / "resúmelos".
- * "más contexto" / "more context" were dropped — they fire when Fede GIVES
+ * "más contexto" / "more context" were dropped — they fire when the operator GIVES
  * context — and "elaborate" is also an adjective.
  *
  * 2026-09-30 data review (the fixture in preference-signals.test.ts is the

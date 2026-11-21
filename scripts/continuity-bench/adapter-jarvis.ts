@@ -380,7 +380,7 @@ const SPANISH_RE = /[¿¡áéíóúñ]|\b(?:el|la|los|las|de|del|que|mi|es|un|un
 
 /**
  * Pads one seeded turn to about `tokens` tokens of its rendered transcript
- * line (`Fede: ` / `Jarvis: ` + text, chars / 4, the bench's approximation)
+ * line (the speaker label the code builds + text, chars / 4, the bench's approximation)
  * with whole sentences of the corpus filler (FILLER_SPEC templates of the
  * turn's language and role, slots from its vocab, filler.ts `fill`): the
  * templates in a seeded order, each at most once per turn, a sentence the
