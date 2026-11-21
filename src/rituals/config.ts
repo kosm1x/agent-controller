@@ -107,7 +107,7 @@ export const rituals: RitualDefinition[] = [
     title: "Market EOD scan",
     // 4:30 PM ET weekdays — 30 min after regular close. On early-close days
     // (13:00 ET close), the ritual's own trading-day-gate still allows the
-    // scan; it will reflect the half-day's close via market_history.
+    // scan; it will reflect the half-day's close via market_quote.
     cron: "30 16 * * 1-5",
     enabled: true,
     timezone: "America/New_York",

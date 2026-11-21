@@ -1022,6 +1022,30 @@ describe("task templates", () => {
     }
   });
 
+  // 2026-11-21: the reverse check — every registered tool the market-eod-scan
+  // prompt names must be offered in its tools list, except the tools the
+  // prompt names only to forbid them.
+  it("market-eod-scan offers every registered tool its prompt names", async () => {
+    const { createMarketEodScan } = await import("./market-eod-scan.js");
+    const { ToolRegistry } = await import("../tools/registry.js");
+    const { BuiltinToolSource } = await import("../tools/sources/builtin.js");
+    const reg = new ToolRegistry();
+    await new BuiltinToolSource().registerTools(reg);
+    const tpl = createMarketEodScan("2026-04-20");
+    const NAMED_ONLY_TO_FORBID = new Set(["paper_rebalance"]);
+    const named = reg
+      .list()
+      .filter((t) => new RegExp(`\\b${t}\\b`).test(tpl.description));
+    expect(named).toContain("market_quote");
+    for (const t of named) {
+      if (NAMED_ONLY_TO_FORBID.has(t)) {
+        expect(tpl.tools, `${t} is named only to forbid it`).not.toContain(t);
+        continue;
+      }
+      expect(tpl.tools, `prompt names ${t} but tools omits it`).toContain(t);
+    }
+  });
+
   // F8.1c — PM daily rebalance ritual
   it("pm-daily-rebalance tools all exist in the registry", async () => {
     const { createPmDailyRebalance } = await import("./pm-daily-rebalance.js");
