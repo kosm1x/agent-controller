@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-21 06:32 UTC — a failed write that a later write left unrepaired leaves a trace row, COMMITTED `5bb82e86` (queue 4hp; not yet deployed, with `acf1efeb`). The rule that the last write decides the status stays; the new rows are the measure for a later decision. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: batch leftovers, then batch 10.**
+
 **Status 2026-11-21 05:52 UTC — the other session's verdict mode landed `077a6809` (queue 4ho; its files only, no deploy needed); `acf1efeb` (4hn) is still not deployed. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: a failed write hidden by a later successful write, then batch leftovers and batch 10.**
 
 **Status 2026-11-21 05:42 UTC — a write whose failure carries its error after other fields is recorded as failed, COMMITTED `acf1efeb` (queue 4hn; not yet deployed). One of eighteen write tools returned that form. Recorded for the re-score: five failure forms of three write tools are still recorded as successful writes (an empty or non-object answer to a publish, the batch insert's plain text, the memory store's warning). Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: batch leftovers, then batch 10.**
