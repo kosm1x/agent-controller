@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockLayer = {
+  getQuote: vi.fn(),
   getDaily: vi.fn(),
   getIntraday: vi.fn(),
   getWeekly: vi.fn(),
@@ -103,6 +104,8 @@ vi.mock("../../finance/sentiment.js", async () => {
 });
 
 import {
+  marketQuoteTool,
+  marketHistoryTool,
   marketIndicatorsTool,
   marketScanTool,
   macroRegimeTool,
@@ -114,6 +117,19 @@ import {
   marketWatchlistReseedTool,
 } from "./market.js";
 import type { MarketBar, MacroPoint } from "../../finance/types.js";
+
+/**
+ * A failure is one JSON object whose first key is `error`, with nothing
+ * before the opening brace: the registry and the fast runner read the start
+ * of the text to decide that a call failed. Returns the error words.
+ */
+function errorWords(out: string): string {
+  expect(out.startsWith('{"error":')).toBe(true);
+  const parsed = JSON.parse(out) as Record<string, unknown>;
+  expect(Object.keys(parsed)[0]).toBe("error");
+  expect(typeof parsed.error).toBe("string");
+  return parsed.error as string;
+}
 
 /** Build a monotonic-up series of `n` bars close to the given base price. */
 function makeBars(symbol: string, n: number, basePrice = 100): MarketBar[] {
@@ -135,9 +151,76 @@ function makeBars(symbol: string, n: number, basePrice = 100): MarketBar[] {
   return bars;
 }
 
+describe("marketQuoteTool", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the quote line as plain text on success", async () => {
+    mockLayer.getQuote.mockResolvedValue(makeBars("SPY", 1)[0]);
+    const out = (await marketQuoteTool.execute({ symbol: "spy" })) as string;
+    expect(mockLayer.getQuote).toHaveBeenCalledWith("SPY");
+    expect(out.startsWith("SPY: $")).toBe(true);
+  });
+
+  it("reports a data-layer failure as an error object, Spanish words kept", async () => {
+    mockLayer.getQuote.mockRejectedValue(new Error("both providers down"));
+    const out = (await marketQuoteTool.execute({ symbol: "SPY" })) as string;
+    expect(errorWords(out)).toBe(
+      "No pude obtener cotización de SPY: both providers down",
+    );
+  });
+});
+
+describe("marketHistoryTool", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the bar table as plain text on success", async () => {
+    mockLayer.getDaily.mockResolvedValue({
+      bars: makeBars("SPY", 3),
+      provider: "alpha_vantage",
+    });
+    const out = (await marketHistoryTool.execute({ symbol: "SPY" })) as string;
+    expect(out.startsWith("SPY — 3 bars (daily) · source: alpha_vantage")).toBe(
+      true,
+    );
+  });
+
+  it("reports a data-layer failure as an error object, Spanish words kept", async () => {
+    mockLayer.getDaily.mockRejectedValue(new Error("both providers down"));
+    const out = (await marketHistoryTool.execute({ symbol: "SPY" })) as string;
+    expect(errorWords(out)).toBe(
+      "No pude obtener historial de SPY (daily): both providers down",
+    );
+  });
+});
+
 describe("marketIndicatorsTool", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("reports a data-layer failure as an error object, Spanish words kept", async () => {
+    mockLayer.getDaily.mockRejectedValue(new Error("both providers down"));
+    const out = (await marketIndicatorsTool.execute({
+      symbol: "SPY",
+    })) as string;
+    expect(errorWords(out)).toBe(
+      "No pude calcular indicadores de SPY: both providers down",
+    );
+  });
+
+  it("returns zero bars from the provider as a plain result, not an error", async () => {
+    mockLayer.getDaily.mockResolvedValue({
+      bars: [],
+      provider: "alpha_vantage",
+    });
+    const out = (await marketIndicatorsTool.execute({
+      symbol: "SPY",
+    })) as string;
+    expect(out).toBe("SPY: no data available for daily.");
   });
 
   it("computes the default daily indicator set (no VWAP)", async () => {
@@ -148,7 +231,7 @@ describe("marketIndicatorsTool", () => {
     const result = await marketIndicatorsTool.execute({ symbol: "SPY" });
     const text = result as string;
     // Default includes these 8 (VWAP excluded on daily per audit W3/W6)
-    expect(text).toContain("SPY (daily, 60 bars)");
+    expect(text.startsWith("SPY (daily, 60 bars)")).toBe(true);
     expect(text).toContain("SMA(20)");
     expect(text).toContain("EMA(20)");
     expect(text).toContain("RSI(14)");
@@ -602,7 +685,7 @@ describe("predictionMarketsTool", () => {
     const out = (await predictionMarketsTool.execute({
       query: "btc",
     })) as string;
-    expect(out).toContain("active markets");
+    expect(out.startsWith("Polymarket — 1 active markets")).toBe(true);
     expect(out).toMatch(/BTC/);
     expect(out).not.toMatch(/Election/);
   });
@@ -642,12 +725,12 @@ describe("predictionMarketsTool", () => {
     expect(out).toMatch(/no markets matched/);
   });
 
-  it("handles adapter errors gracefully", async () => {
+  it("reports an adapter failure as an error object", async () => {
     mockAdapter.fetchActiveMarkets.mockRejectedValue(
       new Error("Polymarket 503"),
     );
     const out = (await predictionMarketsTool.execute({})) as string;
-    expect(out).toMatch(/503/);
+    expect(errorWords(out)).toBe("prediction_markets: Polymarket 503");
   });
 });
 
@@ -734,7 +817,7 @@ describe("sentimentSnapshotTool", () => {
       degradedSources: [],
     });
     const out = (await sentimentSnapshotTool.execute({})) as string;
-    expect(out).toContain("Fear & Greed: 67");
+    expect(out.startsWith("Fear & Greed: 67")).toBe(true);
     expect(out).toContain("Greed");
     expect(out).toContain("BTC");
     expect(out).toContain("Interpretation");
@@ -753,10 +836,10 @@ describe("sentimentSnapshotTool", () => {
     expect(out).toMatch(/Degraded: 2 source/);
   });
 
-  it("handles thrown errors gracefully", async () => {
+  it("reports a thrown snapshot failure as an error object", async () => {
     mockGetSentimentSnapshot.mockRejectedValue(new Error("catastrophe"));
     const out = (await sentimentSnapshotTool.execute({})) as string;
-    expect(out).toMatch(/catastrophe/);
+    expect(errorWords(out)).toBe("sentiment_snapshot: catastrophe");
   });
 });
 
@@ -787,8 +870,9 @@ describe("marketWatchlistAddTool", () => {
       asset_class: "equity",
       tags: ["semi", "ai"],
     })) as string;
-    expect(out).toMatch(/OK: added NVDA/);
-    expect(out).toMatch(/\+520 weekly bars, \+187 signals/);
+    expect(out).toBe(
+      "OK: added NVDA (equity) [semi, ai]\nseed: +520 weekly bars, +187 signals",
+    );
     expect(mockSeedSymbol).toHaveBeenCalledWith("NVDA", { minBars: 300 });
   });
 
@@ -830,9 +914,23 @@ describe("marketWatchlistAddTool", () => {
       symbol: "XYZ",
       asset_class: "equity",
     })) as string;
-    expect(out).toMatch(/OK: added XYZ/);
-    expect(out).toMatch(/Rate limited/);
-    expect(out).toMatch(/market_watchlist_reseed/);
+    // The requested write happened, so this is a result, not a failure:
+    // the head and the words stay plain text.
+    expect(out).toBe(
+      "OK: added XYZ (equity)\nseed: Rate limited by alpha_vantage (bars 0 → 0). Retry with market_watchlist_reseed.",
+    );
+  });
+
+  it("reports a failed watchlist write as an error object without the upper-case marker", async () => {
+    mockLayer.addToWatchlist.mockImplementation(() => {
+      throw new Error("invalid symbol");
+    });
+    const out = (await marketWatchlistAddTool.execute({
+      symbol: "BAD",
+      asset_class: "equity",
+    })) as string;
+    expect(errorWords(out)).toBe("could not add — invalid symbol");
+    expect(mockSeedSymbol).not.toHaveBeenCalled();
   });
 
   it("reports the skip reason when history is already sufficient", async () => {
@@ -864,9 +962,28 @@ describe("marketWatchlistReseedTool", () => {
     mockSeedSymbol.mockReset();
   });
 
-  it("rejects empty symbol", async () => {
+  it("rejects an empty symbol with an error object", async () => {
     const out = (await marketWatchlistReseedTool.execute({})) as string;
-    expect(out).toMatch(/symbol is required/);
+    expect(errorWords(out)).toBe("market_watchlist_reseed: symbol is required");
+    expect(mockSeedSymbol).not.toHaveBeenCalled();
+  });
+
+  it("reports a reseed whose seed failed as an error object carrying the formatted seed result", async () => {
+    mockSeedSymbol.mockResolvedValue({
+      symbol: "XYZ",
+      skipped: false,
+      barsBefore: 0,
+      barsAfter: 0,
+      barsInserted: 0,
+      signalsInserted: 0,
+      error: "Rate limited by alpha_vantage",
+    });
+    const out = (await marketWatchlistReseedTool.execute({
+      symbol: "XYZ",
+    })) as string;
+    expect(errorWords(out)).toBe(
+      "market_watchlist_reseed:\n  XYZ: seed error — Rate limited by alpha_vantage",
+    );
   });
 
   it("forwards min_bars override to seedSymbol", async () => {
@@ -894,7 +1011,6 @@ describe("marketWatchlistReseedTool", () => {
     const out = (await marketWatchlistReseedTool.execute({
       symbol: "QQQ",
     })) as string;
-    expect(out).toMatch(/market_watchlist_reseed:/);
-    expect(out).toMatch(/QQQ: skipped/);
+    expect(out).toBe("market_watchlist_reseed:\n  QQQ: skipped");
   });
 });

@@ -251,7 +251,9 @@ Prerequisite: \`prediction_markets\` + \`sentiment_snapshot\` tools must have po
       try {
         config = parseConfigOverride(rawOverride);
       } catch (err) {
-        return `pm_alpha_run: ${err instanceof Error ? err.message : String(err)}`;
+        return JSON.stringify({
+          error: `pm_alpha_run: ${err instanceof Error ? err.message : String(err)}`,
+        });
       }
     }
 
@@ -264,7 +266,9 @@ Prerequisite: \`prediction_markets\` + \`sentiment_snapshot\` tools must have po
 
     const markets = loadActiveMarkets(marketLimit);
     if (markets.length === 0) {
-      return `pm_alpha_run: no prediction_markets rows available. Seed via \`prediction_markets\` tool first.`;
+      return JSON.stringify({
+        error: `pm_alpha_run: no prediction_markets rows available. Seed via \`prediction_markets\` tool first.`,
+      });
     }
     const sentiment = loadLatestSentimentReadings(10);
     // Audit W1 round 1: lift the whale-row cap so a 7-day window isn't

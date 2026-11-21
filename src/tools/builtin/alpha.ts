@@ -1,8 +1,8 @@
 /**
  * F7 Alpha Combination tools — `alpha_run`, `alpha_latest`, `alpha_explain`.
  *
- * All deferred: true. Loaded when `alpha` scope activates. Output is
- * pre-formatted text per feedback_preformat_over_prompt.
+ * All deferred: true. Loaded when `alpha` scope activates. A result is
+ * pre-formatted text; a returned failure is `{error}` JSON.
  *
  * alpha_run       (write) — executes 11-step FLAM pipeline, persists to
  *                           signal_weights + signal_isq, returns summary
@@ -211,7 +211,9 @@ Probability mode is reserved for F6.5.x; returns mode is the only v1 path.`,
     // bars (lexicographic compare), or throw a generic RangeError.
     const rawAsOf = args.as_of as string | undefined;
     if (rawAsOf != null && !/^\d{4}-\d{2}-\d{2}$/.test(rawAsOf)) {
-      return `alpha_run: as_of must be YYYY-MM-DD (got '${rawAsOf}'). Omit to default to today in America/New_York.`;
+      return JSON.stringify({
+        error: `alpha_run: as_of must be YYYY-MM-DD (got '${rawAsOf}'). Omit to default to today in America/New_York.`,
+      });
     }
     const asOf = rawAsOf ?? todayInNewYork();
     const windowM =
@@ -276,7 +278,9 @@ Probability mode is reserved for F6.5.x; returns mode is the only v1 path.`,
           `[alpha_run] config error: ${err.message}`,
           JSON.stringify({ mode, asOf, windowM, windowD, horizon }),
         );
-        return `alpha_run: config error — ${err.message}`;
+        return JSON.stringify({
+          error: `alpha_run: config error — ${err.message}`,
+        });
       }
       if (err instanceof F7CorrelatedSignalsError) {
         console.warn(
@@ -289,17 +293,23 @@ Probability mode is reserved for F6.5.x; returns mode is the only v1 path.`,
             excluded: err.excluded,
           }),
         );
-        return `alpha_run: correlation guard exhausted after 3 exclusions. Excluded signals: ${err.excluded.join(", ") || "(none)"}. No weights persisted.`;
+        return JSON.stringify({
+          error: `alpha_run: correlation guard exhausted after 3 exclusions. Excluded signals: ${err.excluded.join(", ") || "(none)"}. No weights persisted.`,
+        });
       }
       console.warn(
         `[alpha_run] unexpected error: ${err instanceof Error ? err.message : String(err)}`,
         JSON.stringify({ mode, asOf, windowM, windowD, horizon }),
       );
-      return `alpha_run: ${err instanceof Error ? err.message : String(err)}`;
+      return JSON.stringify({
+        error: `alpha_run: ${err instanceof Error ? err.message : String(err)}`,
+      });
     }
 
     if (result.N === 0) {
-      return `alpha_run: no signals available in the window (${windowStart} .. ${asOf}). Nothing to persist. Check market_signals population.`;
+      return JSON.stringify({
+        error: `alpha_run: no signals available in the window (${windowStart} .. ${asOf}). Nothing to persist. Check market_signals population.`,
+      });
     }
 
     const stats = persistAlphaRun(result);
@@ -424,13 +434,17 @@ Latency <50ms.`,
   async execute(args: Record<string, unknown>): Promise<string> {
     const runIdArg = args.run_id as string | undefined;
     if (runIdArg != null && !UUID_RE.test(runIdArg)) {
-      return `alpha_explain: run_id must be a UUID (got '${runIdArg}'). Omit to use latest.`;
+      return JSON.stringify({
+        error: `alpha_explain: run_id must be a UUID (got '${runIdArg}'). Omit to use latest.`,
+      });
     }
 
     const run = runIdArg ? readAlphaRunByRunId(runIdArg) : readLatestAlphaRun();
     if (!run) {
       return runIdArg
-        ? `alpha_explain: no run with id '${runIdArg}' found.`
+        ? JSON.stringify({
+            error: `alpha_explain: no run with id '${runIdArg}' found.`,
+          })
         : "alpha_explain: no completed runs found. Invoke alpha_run first.";
     }
 

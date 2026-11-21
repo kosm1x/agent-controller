@@ -146,8 +146,6 @@ const desc = (t: Tool): string => t.definition.function.description;
 const NON_TOOL_WORDS: Record<string, Record<string, string>> = {
   ads_brand_dna: { brief_id: "a parameter of ads_creative_gen and a field of this tool's result" },
   alpha_latest: { run_id: "a parameter of alpha_explain and a field of this tool's result" },
-  backtest_latest: { backtest_runs: "table", backtest_overfit: "table" },
-  backtest_run: { backtest_runs: "table", backtest_paths: "table", backtest_overfit: "table" },
   exa_search: { user_fact: "the user_fact_* tool family, written without the wildcard" },
   infographic_generate: { svg_html: "a format value of diagram_generate" },
   kb_batch_insert: {

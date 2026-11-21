@@ -28,7 +28,36 @@ vi.mock("../../db/index.js", () => ({
   getDatabase: () => db,
 }));
 
+// The real module, with the run function wrapped in a spy that calls the real
+// implementation; one case replaces it once to reach the correlation guard.
+vi.mock("../../finance/alpha-combination.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../finance/alpha-combination.js")
+  >("../../finance/alpha-combination.js");
+  return {
+    ...actual,
+    runAlphaCombination: vi.fn(actual.runAlphaCombination),
+  };
+});
+
 import { alphaRunTool, alphaLatestTool, alphaExplainTool } from "./alpha.js";
+import {
+  runAlphaCombination,
+  F7CorrelatedSignalsError,
+} from "../../finance/alpha-combination.js";
+
+/**
+ * A failure is one JSON object whose first key is `error`, with nothing
+ * before the opening brace: the registry and the fast runner read the start
+ * of the text to decide that a call failed. Returns the error words.
+ */
+function errorWords(out: string): string {
+  expect(out.startsWith('{"error":')).toBe(true);
+  const parsed = JSON.parse(out) as Record<string, unknown>;
+  expect(Object.keys(parsed)[0]).toBe("error");
+  expect(typeof parsed.error).toBe("string");
+  return parsed.error as string;
+}
 
 function makeDays(asOf: string, count: number): string[] {
   const base = new Date(asOf + "T12:00:00Z");
@@ -83,8 +112,7 @@ describe("alphaRunTool", () => {
       window_m: 20,
       window_d: 10,
     })) as string;
-    expect(out).toContain("alpha_run:");
-    expect(out).toContain("run_id=");
+    expect(out.startsWith("alpha_run: run_id=")).toBe(true);
     expect(out).toContain("persisted:");
 
     const weightRows = db
@@ -163,7 +191,7 @@ describe("alphaRunTool", () => {
     after.forEach((r, i) => expect(r.sigma).toBeCloseTo(before[i]!.sigma, 10));
   });
 
-  it("returns structured empty message when no signals available", async () => {
+  it("reports a run with no signals in the window as an error object and persists nothing", async () => {
     // Watchlist but no firings / bars
     db.prepare(
       `INSERT INTO watchlist (symbol, asset_class) VALUES ('AAPL', 'equity')`,
@@ -171,42 +199,92 @@ describe("alphaRunTool", () => {
     const out = (await alphaRunTool.execute({
       as_of: "2026-04-17",
     })) as string;
-    expect(out).toContain("no signals available");
+    const words = errorWords(out);
+    expect(words).toMatch(
+      /^alpha_run: no signals available in the window \(\d{4}-\d{2}-\d{2} \.\. 2026-04-17\)\. Nothing to persist\./,
+    );
+    const rows = db
+      .prepare("SELECT COUNT(*) AS n FROM signal_weights")
+      .get() as { n: number };
+    expect(rows.n).toBe(0);
   });
 
-  it("rejects probability mode with a clear error", async () => {
+  it("reports probability mode as an error object (the pipeline throws)", async () => {
     seedBarsAndFirings();
     const out = (await alphaRunTool.execute({
       mode: "probability",
       as_of: "2026-04-17",
     })) as string;
-    expect(out).toMatch(/not implemented/i);
+    const words = errorWords(out);
+    expect(
+      words.startsWith("alpha_run: F7 probability mode: not implemented"),
+    ).toBe(true);
   });
 
-  it("returns config-error message for invalid windows", async () => {
+  it("reports a config error for invalid windows as an error object", async () => {
     seedBarsAndFirings();
     const out = (await alphaRunTool.execute({
       as_of: "2026-04-17",
       window_m: 2, // below minimum of 3
     })) as string;
-    expect(out).toContain("config error");
+    const words = errorWords(out);
+    expect(words.startsWith("alpha_run: config error — ")).toBe(true);
   });
 
-  it("rejects malformed as_of at tool boundary (audit W2 round 3)", async () => {
+  it("reports an exhausted correlation guard as an error object and persists nothing", async () => {
+    seedBarsAndFirings();
+    const spy = vi.mocked(runAlphaCombination);
+    const callsBefore = spy.mock.calls.length;
+    spy.mockImplementationOnce(() => {
+      throw new F7CorrelatedSignalsError([
+        "ma_crossover:AAPL",
+        "ma_crossover:TSLA",
+      ]);
+    });
+    const out = (await alphaRunTool.execute({
+      as_of: "2026-04-17",
+      window_m: 20,
+      window_d: 10,
+    })) as string;
+    expect(spy.mock.calls.length).toBe(callsBefore + 1);
+    expect(errorWords(out)).toBe(
+      "alpha_run: correlation guard exhausted after 3 exclusions. Excluded signals: ma_crossover:AAPL, ma_crossover:TSLA. No weights persisted.",
+    );
+    const rows = db
+      .prepare("SELECT COUNT(*) AS n FROM signal_weights")
+      .get() as { n: number };
+    expect(rows.n).toBe(0);
+    const isqRows = db
+      .prepare("SELECT COUNT(*) AS n FROM signal_isq")
+      .get() as { n: number };
+    expect(isqRows.n).toBe(0);
+  });
+
+  it("rejects a malformed as_of at the tool boundary with an error object", async () => {
     const out = (await alphaRunTool.execute({
       as_of: "banana",
     })) as string;
-    expect(out).toMatch(/as_of must be YYYY-MM-DD/);
+    expect(errorWords(out)).toBe(
+      "alpha_run: as_of must be YYYY-MM-DD (got 'banana'). Omit to default to today in America/New_York.",
+    );
   });
 
   it("defaults as_of to today-in-NY when omitted", async () => {
     seedBarsAndFirings();
-    // Should not throw; just verify it ran
-    const out = (await alphaRunTool.execute({
-      window_m: 20,
-      window_d: 10,
-    })) as string;
-    expect(out).toContain("alpha_run:");
+    // Only the date object is faked, set to the seed's last day (noon in New
+    // York), so the default as_of lands on the seeded window.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-04-17T16:00:00Z"));
+      const out = (await alphaRunTool.execute({
+        window_m: 20,
+        window_d: 10,
+      })) as string;
+      expect(out.startsWith("alpha_run: run_id=")).toBe(true);
+      expect(out).toContain("persisted:");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -261,23 +339,29 @@ describe("alphaExplainTool", () => {
     db = freshDb();
   });
 
-  it("returns no-runs message when nothing persisted and no run_id given", async () => {
+  it("returns a plain no-runs result when nothing persisted and no run_id given", async () => {
     const out = (await alphaExplainTool.execute({})) as string;
-    expect(out).toContain("no completed runs");
+    expect(out).toBe(
+      "alpha_explain: no completed runs found. Invoke alpha_run first.",
+    );
   });
 
-  it("rejects non-UUID run_id at the tool boundary", async () => {
+  it("rejects a non-UUID run_id at the tool boundary with an error object", async () => {
     const out = (await alphaExplainTool.execute({
       run_id: "not-a-uuid",
     })) as string;
-    expect(out).toContain("must be a UUID");
+    expect(errorWords(out)).toBe(
+      "alpha_explain: run_id must be a UUID (got 'not-a-uuid'). Omit to use latest.",
+    );
   });
 
-  it("returns not-found when run_id is a valid UUID but absent", async () => {
+  it("reports a valid but absent run_id as an error object", async () => {
     const out = (await alphaExplainTool.execute({
       run_id: "11111111-2222-3333-4444-555555555555",
     })) as string;
-    expect(out).toContain("no run with id");
+    expect(errorWords(out)).toBe(
+      "alpha_explain: no run with id '11111111-2222-3333-4444-555555555555' found.",
+    );
   });
 
   it("returns per-signal breakdown for the latest run", async () => {
@@ -288,7 +372,7 @@ describe("alphaExplainTool", () => {
       window_d: 10,
     });
     const out = (await alphaExplainTool.execute({})) as string;
-    expect(out).toContain("alpha_explain:");
+    expect(out.startsWith("alpha_explain: run_id=")).toBe(true);
     expect(out).toContain("signal_key");
     expect(out).toMatch(/ma_crossover:(AAPL|TSLA|NVDA)/);
   });

@@ -2,8 +2,8 @@
  * F7.5 Strategy Backtester tools — `backtest_run`, `backtest_latest`,
  * `backtest_explain`.
  *
- * All deferred. Loaded when the `backtest` scope activates. Pre-formatted text
- * output per feedback_preformat_over_prompt.
+ * All deferred. Loaded when the `backtest` scope activates. A result is
+ * pre-formatted text; a returned failure is `{error}` JSON.
  *
  * backtest_run      (write) — walk-forward + CPCV + PBO + DSR; persists 3 tables
  * backtest_latest   (read)  — headline metrics of the most-recent run
@@ -241,7 +241,7 @@ NOT WHEN:
 
 Pipeline (strategy=flam):
   walk-forward (weekly rebalance) → CPCV 24 trials × 15 folds → PBO + DSR → persist.
-  Takes ~1-3 seconds. Persists to backtest_runs / backtest_paths / backtest_overfit.
+  Takes ~1-3 seconds. Persists the run, its per-trial/per-fold paths and its overfit metrics.
 
 Output: run_id, walk-forward Sharpe/drawdown/Calmar, CPCV aggregate,
 PBO + DSR p-value, ship_blocked flag. Ship-gate: PBO > 0.50 OR DSR_pvalue > 0.05.
@@ -297,16 +297,22 @@ Operator can override via override_ship: true (logged).`,
     const strategy =
       (args.strategy as "flam" | "equal_weight" | undefined) ?? "flam";
     if (strategy === "equal_weight") {
-      return `backtest_run: strategy='equal_weight' is reserved for v1.1 and not implemented at v1 — use strategy='flam' (default).`;
+      return JSON.stringify({
+        error: `backtest_run: strategy='equal_weight' is reserved for v1.1 and not implemented at v1 — use strategy='flam' (default).`,
+      });
     }
 
     const rawStart = args.start_date as string | undefined;
     const rawEnd = args.end_date as string | undefined;
     if (rawStart != null && !DATE_RE.test(rawStart)) {
-      return `backtest_run: start_date must be YYYY-MM-DD (got '${rawStart}').`;
+      return JSON.stringify({
+        error: `backtest_run: start_date must be YYYY-MM-DD (got '${rawStart}').`,
+      });
     }
     if (rawEnd != null && !DATE_RE.test(rawEnd)) {
-      return `backtest_run: end_date must be YYYY-MM-DD (got '${rawEnd}').`;
+      return JSON.stringify({
+        error: `backtest_run: end_date must be YYYY-MM-DD (got '${rawEnd}').`,
+      });
     }
     const endDate = rawEnd ?? todayInNewYork();
 
@@ -330,7 +336,9 @@ Operator can override via override_ship: true (logged).`,
       try {
         trialGrid = parseTrialGridOverride(args.trial_grid);
       } catch (err) {
-        return `backtest_run: ${err instanceof Error ? err.message : String(err)}`;
+        return JSON.stringify({
+          error: `backtest_run: ${err instanceof Error ? err.message : String(err)}`,
+        });
       }
     } else {
       trialGrid = F75_DEFAULT_GRID;
@@ -348,7 +356,9 @@ Operator can override via override_ship: true (logged).`,
       startDate = row?.first_bar;
     }
     if (!startDate) {
-      return `backtest_run: no weekly bars found in market_data. Seed data first with market_watchlist_add or scripts/seed-watchlist-weekly.ts.`;
+      return JSON.stringify({
+        error: `backtest_run: no weekly bars found in market_data. Seed data first with market_watchlist_add or scripts/seed-watchlist-weekly.ts.`,
+      });
     }
 
     // Same week canonicalization as alpha_run (weekly-periods.ts): one bar per
@@ -362,7 +372,9 @@ Operator can override via override_ship: true (logged).`,
     // rows. 3 symbols × 10 weeks = 30 rows but only 10 weeks of usable depth.
     const uniqueWeeks = new Set(bars.map((b) => b.timestamp.slice(0, 10))).size;
     if (uniqueWeeks < MIN_BARS_FOR_BACKTEST) {
-      return `backtest_run: insufficient bars (found ${uniqueWeeks} distinct weeks, need ≥ ${MIN_BARS_FOR_BACKTEST}). Seed more history first.`;
+      return JSON.stringify({
+        error: `backtest_run: insufficient bars (found ${uniqueWeeks} distinct weeks, need ≥ ${MIN_BARS_FOR_BACKTEST}). Seed more history first.`,
+      });
     }
     const watchlistSize = countActiveWatchlist();
 
@@ -470,7 +482,7 @@ NOT WHEN:
 - User wants a fresh run (use backtest_run)
 - User wants per-trial/fold breakdown (use backtest_explain)
 
-Reads backtest_runs + backtest_overfit. No side effects. < 1ms typical.`,
+Reads the latest stored run and its overfit metrics. No side effects. < 1ms typical.`,
       parameters: {
         type: "object",
         properties: {
@@ -553,7 +565,7 @@ NOT WHEN:
 Params:
   run_id: UUID of a specific run. Omit to use the latest.
 
-Reads backtest_runs + backtest_paths + backtest_overfit. No side effects.`,
+Reads the stored run, its per-trial/per-fold paths and its overfit metrics. No side effects.`,
       parameters: {
         type: "object",
         properties: {
@@ -573,14 +585,21 @@ Reads backtest_runs + backtest_paths + backtest_overfit. No side effects.`,
     let result;
     if (rawRunId) {
       if (!UUID_RE.test(rawRunId)) {
-        return `backtest_explain: run_id must be a UUID (got '${rawRunId}').`;
+        return JSON.stringify({
+          error: `backtest_explain: run_id must be a UUID (got '${rawRunId}').`,
+        });
       }
       result = readBacktestRun(rawRunId);
     } else {
       result = readLatestBacktest();
     }
     if (!result) {
-      return `backtest_explain: run not found${rawRunId ? ` for run_id=${rawRunId}` : " (no runs exist yet)"}.`;
+      if (rawRunId) {
+        return JSON.stringify({
+          error: `backtest_explain: run not found for run_id=${rawRunId}.`,
+        });
+      }
+      return `backtest_explain: run not found (no runs exist yet).`;
     }
 
     const r = result.run;

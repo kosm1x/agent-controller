@@ -63,7 +63,9 @@ Read-only, <1ms. Covers NYSE 2024–2027.`,
   async execute(args: Record<string, unknown>): Promise<string> {
     const raw = args.date as string | undefined;
     if (raw != null && !DATE_RE.test(raw)) {
-      return `market_calendar: date must be YYYY-MM-DD (got '${raw}').`;
+      return JSON.stringify({
+        error: `market_calendar: date must be YYYY-MM-DD (got '${raw}').`,
+      });
     }
     const iso = raw ? toNyDate(raw) : toNyDate(new Date());
     const trading = isNyseTradingDay(iso);
@@ -129,7 +131,9 @@ Read-only, <1ms. Budget resets at midnight America/New_York.`,
     const ritualId = args.ritual_id as string | undefined;
     const raw = args.date as string | undefined;
     if (raw != null && !DATE_RE.test(raw)) {
-      return `alert_budget_status: date must be YYYY-MM-DD (got '${raw}').`;
+      return JSON.stringify({
+        error: `alert_budget_status: date must be YYYY-MM-DD (got '${raw}').`,
+      });
     }
     const iso = raw ? toNyDate(raw) : toNyDate(new Date());
 

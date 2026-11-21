@@ -22,6 +22,26 @@ vi.mock("../../db/index.js", () => ({
 
 import { pmAlphaRunTool, pmAlphaLatestTool } from "./pm-alpha.js";
 
+/**
+ * A failure is one JSON object whose first key is `error`, with nothing
+ * before the opening brace: the registry and the fast runner read the start
+ * of the text to decide that a call failed. Returns the error words.
+ */
+function errorWords(out: string): string {
+  expect(out.startsWith('{"error":')).toBe(true);
+  const parsed = JSON.parse(out) as Record<string, unknown>;
+  expect(Object.keys(parsed)[0]).toBe("error");
+  expect(typeof parsed.error).toBe("string");
+  return parsed.error as string;
+}
+
+const weightRowCount = () =>
+  (
+    db.prepare(`SELECT COUNT(*) AS n FROM pm_signal_weights`).get() as {
+      n: number;
+    }
+  ).n;
+
 /** Seed enough prediction_markets + sentiment for a meaningful run. */
 function seedMarkets(
   opts: {
@@ -81,17 +101,19 @@ describe("pmAlphaRunTool", () => {
     db = freshDb();
   });
 
-  it("reports clear error when no markets exist", async () => {
+  it("reports a run with no markets as an error object and persists nothing", async () => {
     const out = (await pmAlphaRunTool.execute({})) as string;
-    expect(out).toMatch(/no prediction_markets rows/);
+    expect(errorWords(out)).toBe(
+      "pm_alpha_run: no prediction_markets rows available. Seed via `prediction_markets` tool first.",
+    );
+    expect(weightRowCount()).toBe(0);
   });
 
   it("runs end-to-end and persists to pm_signal_weights", async () => {
     seedMarkets({ count: 3 });
     seedSentiment(50);
     const out = (await pmAlphaRunTool.execute({})) as string;
-    expect(out).toContain("pm_alpha_run:");
-    expect(out).toContain("run_id=");
+    expect(out.startsWith("pm_alpha_run: run_id=")).toBe(true);
     expect(out).toContain("nMarkets=3");
 
     const rowCount = (
@@ -122,20 +144,27 @@ describe("pmAlphaRunTool", () => {
     expect(out).toContain("pm_alpha_run:");
   });
 
-  it("rejects malformed override_config JSON", async () => {
+  it("rejects malformed override_config JSON with an error object", async () => {
     seedMarkets({ count: 1 });
     const out = (await pmAlphaRunTool.execute({
       override_config: "{not json",
     })) as string;
-    expect(out).toMatch(/invalid JSON/);
+    expect(
+      errorWords(out).startsWith(
+        "pm_alpha_run: override_config: invalid JSON — ",
+      ),
+    ).toBe(true);
+    expect(weightRowCount()).toBe(0);
   });
 
-  it("rejects override_config with non-numeric field", async () => {
+  it("rejects override_config with non-numeric field with an error object", async () => {
     seedMarkets({ count: 1 });
     const out = (await pmAlphaRunTool.execute({
       override_config: JSON.stringify({ kellyScale: "high" }),
     })) as string;
-    expect(out).toMatch(/must be a finite number/);
+    expect(errorWords(out)).toBe(
+      "pm_alpha_run: override_config.kellyScale must be a finite number",
+    );
   });
 
   it("surfaces exclusion breakdown when markets excluded", async () => {
@@ -155,9 +184,9 @@ describe("pmAlphaLatestTool", () => {
     db = freshDb();
   });
 
-  it("returns no-runs message when empty", async () => {
+  it("returns a plain no-runs result when empty", async () => {
     const out = (await pmAlphaLatestTool.execute({})) as string;
-    expect(out).toMatch(/no runs found/);
+    expect(out.startsWith("pm_alpha_latest: no runs found")).toBe(true);
   });
 
   it("returns latest run summary after pm_alpha_run", async () => {

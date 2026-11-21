@@ -33,6 +33,23 @@ import {
   backtestExplainTool,
 } from "./backtest.js";
 
+/**
+ * A failure is one JSON object whose first key is `error`, with nothing
+ * before the opening brace: the registry and the fast runner read the start
+ * of the text to decide that a call failed. Returns the error words.
+ */
+function errorWords(out: string): string {
+  expect(out.startsWith('{"error":')).toBe(true);
+  const parsed = JSON.parse(out) as Record<string, unknown>;
+  expect(Object.keys(parsed)[0]).toBe("error");
+  expect(typeof parsed.error).toBe("string");
+  return parsed.error as string;
+}
+
+const runCount = () =>
+  (db.prepare("SELECT COUNT(*) AS n FROM backtest_runs").get() as { n: number })
+    .n;
+
 /** Seed a long enough weekly history (80 weeks) for CPCV + walk-forward to run. */
 function seedWeekly(nWeeks = 80) {
   const insertBar = db.prepare(
@@ -73,27 +90,36 @@ describe("backtestRunTool", () => {
     db = freshDb();
   });
 
-  it("rejects malformed start_date/end_date", async () => {
+  it("rejects a malformed start_date or end_date with an error object", async () => {
     const out1 = (await backtestRunTool.execute({
       start_date: "banana",
     })) as string;
-    expect(out1).toMatch(/start_date must be YYYY-MM-DD/);
+    expect(errorWords(out1)).toBe(
+      "backtest_run: start_date must be YYYY-MM-DD (got 'banana').",
+    );
     const out2 = (await backtestRunTool.execute({
       end_date: "not-a-date",
     })) as string;
-    expect(out2).toMatch(/end_date must be YYYY-MM-DD/);
+    expect(errorWords(out2)).toBe(
+      "backtest_run: end_date must be YYYY-MM-DD (got 'not-a-date').",
+    );
   });
 
-  it("rejects strategy='equal_weight' at v1", async () => {
+  it("rejects strategy='equal_weight' at v1 with an error object", async () => {
     const out = (await backtestRunTool.execute({
       strategy: "equal_weight",
     })) as string;
-    expect(out).toMatch(/equal_weight.*reserved/);
+    expect(errorWords(out)).toMatch(
+      /^backtest_run: strategy='equal_weight' is reserved for v1\.1/,
+    );
   });
 
-  it("returns clear error when no bars exist", async () => {
+  it("reports a run with no weekly bars as an error object and persists nothing", async () => {
     const out = (await backtestRunTool.execute({})) as string;
-    expect(out).toMatch(/no weekly bars found|insufficient bars/);
+    expect(errorWords(out)).toMatch(
+      /^backtest_run: no weekly bars found in market_data\. Seed data first/,
+    );
+    expect(runCount()).toBe(0);
   });
 
   it("counts WEEKS, not rows: mid-week partial bars do not add history depth (weekly-periods wiring)", async () => {
@@ -109,13 +135,16 @@ describe("backtestRunTool", () => {
       insertPartial.run(d.toISOString().slice(0, 10));
     }
     const out = (await backtestRunTool.execute({})) as string;
-    expect(out).toContain("found 20 distinct weeks");
+    expect(errorWords(out)).toContain("found 20 distinct weeks");
   });
 
-  it("returns insufficient-bars error when below threshold", async () => {
+  it("reports too few weeks of history as an error object and persists nothing", async () => {
     seedWeekly(10);
     const out = (await backtestRunTool.execute({})) as string;
-    expect(out).toMatch(/insufficient bars|no weekly bars/);
+    expect(errorWords(out)).toBe(
+      "backtest_run: insufficient bars (found 10 distinct weeks, need ≥ 26). Seed more history first.",
+    );
+    expect(runCount()).toBe(0);
   });
 
   it("runs end-to-end and persists to all 3 tables", async () => {
@@ -127,8 +156,7 @@ describe("backtestRunTool", () => {
         corrThreshold: [0.95],
       }),
     })) as string;
-    expect(out).toContain("backtest_run:");
-    expect(out).toContain("run_id=");
+    expect(out.startsWith("backtest_run: run_id=")).toBe(true);
     expect(out).toContain("PBO=");
     expect(out).toContain("DSR_pvalue=");
 
@@ -176,20 +204,25 @@ describe("backtestRunTool", () => {
     expect(after.cpcv_sharpe_std).toBeCloseTo(before.cpcv_sharpe_std, 10);
   });
 
-  it("rejects invalid trial_grid JSON", async () => {
+  it("rejects invalid trial_grid JSON with an error object", async () => {
     seedWeekly(80);
     const out = (await backtestRunTool.execute({
       trial_grid: "{not json",
     })) as string;
-    expect(out).toMatch(/trial_grid.*JSON|invalid JSON/);
+    expect(
+      errorWords(out).startsWith("backtest_run: trial_grid: invalid JSON — "),
+    ).toBe(true);
+    expect(runCount()).toBe(0);
   });
 
-  it("rejects trial_grid missing required fields", async () => {
+  it("rejects trial_grid missing required fields with an error object", async () => {
     seedWeekly(80);
     const out = (await backtestRunTool.execute({
       trial_grid: JSON.stringify({ windowM: [26] }),
     })) as string;
-    expect(out).toMatch(/trial_grid\.windowD/);
+    expect(errorWords(out)).toBe(
+      "backtest_run: trial_grid.windowD must be a non-empty array of numbers",
+    );
   });
 
   it("override_ship=true surfaces OVERRIDE even when blocked", async () => {
@@ -221,9 +254,9 @@ describe("backtestLatestTool", () => {
     db = freshDb();
   });
 
-  it("returns no-runs message when table empty", async () => {
+  it("returns a plain no-runs result when table empty", async () => {
     const out = (await backtestLatestTool.execute({})) as string;
-    expect(out).toMatch(/no runs found/);
+    expect(out).toBe("backtest_latest: no runs found.");
   });
 
   it("returns headline metrics after a run", async () => {
@@ -267,16 +300,27 @@ describe("backtestExplainTool", () => {
     db = freshDb();
   });
 
-  it("returns error when run_id is not a UUID", async () => {
+  it("rejects a non-UUID run_id with an error object", async () => {
     const out = (await backtestExplainTool.execute({
       run_id: "not-a-uuid",
     })) as string;
-    expect(out).toMatch(/run_id must be a UUID/);
+    expect(errorWords(out)).toBe(
+      "backtest_explain: run_id must be a UUID (got 'not-a-uuid').",
+    );
   });
 
-  it("returns not-found when no runs persisted and no run_id given", async () => {
+  it("reports a valid but absent run_id as an error object", async () => {
+    const out = (await backtestExplainTool.execute({
+      run_id: "11111111-2222-3333-4444-555555555555",
+    })) as string;
+    expect(errorWords(out)).toBe(
+      "backtest_explain: run not found for run_id=11111111-2222-3333-4444-555555555555.",
+    );
+  });
+
+  it("returns a plain result when no runs persisted and no run_id given", async () => {
     const out = (await backtestExplainTool.execute({})) as string;
-    expect(out).toMatch(/no runs exist|run not found/);
+    expect(out).toBe("backtest_explain: run not found (no runs exist yet).");
   });
 
   it("returns per-trial breakdown for the latest run", async () => {
@@ -289,7 +333,7 @@ describe("backtestExplainTool", () => {
       }),
     });
     const out = (await backtestExplainTool.execute({})) as string;
-    expect(out).toContain("backtest_explain:");
+    expect(out.startsWith("backtest_explain: ")).toBe(true);
     expect(out).toContain("trials (top");
     expect(out).toMatch(/windowM=\d+/);
   });

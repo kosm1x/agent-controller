@@ -3,7 +3,7 @@
  * market_budget_stats.
  *
  * All deferred: true (loaded only when `finance` scope activates).
- * Output pre-formatted for LLM consumption per feedback_preformat_over_prompt.
+ * A result is pre-formatted text; a returned failure is `{error}` JSON.
  */
 
 import type { Tool } from "../types.js";
@@ -112,7 +112,9 @@ Output: formatted single-line summary (symbol, price, change %, timestamp, sourc
       const bar = await getDataLayer().getQuote(symbol);
       return formatQuote(bar);
     } catch (err) {
-      return `No pude obtener cotización de ${symbol}: ${err instanceof Error ? err.message : err}`;
+      return JSON.stringify({
+        error: `No pude obtener cotización de ${symbol}: ${err instanceof Error ? err.message : err}`,
+      });
     }
   },
 };
@@ -193,7 +195,9 @@ Output: header + table of ≤lookback rows (date/time, O, H, L, C, V). If cached
         provider: result.provider,
       });
     } catch (err) {
-      return `No pude obtener historial de ${symbol} (${interval}): ${err instanceof Error ? err.message : err}`;
+      return JSON.stringify({
+        error: `No pude obtener historial de ${symbol} (${interval}): ${err instanceof Error ? err.message : err}`,
+      });
     }
   },
 };
@@ -300,7 +304,9 @@ rejects if projected daily API usage would exceed the Alpha Vantage tier ceiling
         notes: args.notes as string | undefined,
       });
     } catch (err) {
-      return `ERROR: could not add — ${err instanceof Error ? err.message : err}`;
+      return JSON.stringify({
+        error: `could not add — ${err instanceof Error ? err.message : err}`,
+      });
     }
     const tagStr = row.tags.length ? ` [${row.tags.join(", ")}]` : "";
     const head = `OK: added ${row.symbol} (${row.assetClass})${tagStr}${row.notes ? ` — ${row.notes}` : ""}`;
@@ -378,13 +384,20 @@ Output: one line with bars inserted + signals inserted, or skip reason.`,
   async execute(args: Record<string, unknown>): Promise<string> {
     const rawSymbol = args.symbol as string | undefined;
     if (!rawSymbol) {
-      return "market_watchlist_reseed: symbol is required";
+      return JSON.stringify({
+        error: "market_watchlist_reseed: symbol is required",
+      });
     }
     const minBars =
       typeof args.min_bars === "number"
         ? Math.max(1, Math.floor(args.min_bars))
         : WATCHLIST_SEED_DEFAULTS.minBars;
     const result = await seedSymbol(rawSymbol, { minBars });
+    if (result.error) {
+      return JSON.stringify({
+        error: `market_watchlist_reseed:\n${formatSeedResult(result)}`,
+      });
+    }
     return `market_watchlist_reseed:\n${formatSeedResult(result)}`;
   },
 };
@@ -662,7 +675,9 @@ VWAP is meaningful on intraday intervals (1min/5min/15min/60min); on daily bars 
         result.stale,
       );
     } catch (err) {
-      return `No pude calcular indicadores de ${symbol}: ${err instanceof Error ? err.message : err}`;
+      return JSON.stringify({
+        error: `No pude calcular indicadores de ${symbol}: ${err instanceof Error ? err.message : err}`,
+      });
     }
   },
 };
@@ -1428,7 +1443,9 @@ prediction_markets table for F7 alpha-combination consumption.`,
         category,
       });
     } catch (err) {
-      return `prediction_markets: ${err instanceof Error ? err.message : err}`;
+      return JSON.stringify({
+        error: `prediction_markets: ${err instanceof Error ? err.message : err}`,
+      });
     }
   },
 };
@@ -1661,7 +1678,9 @@ No args — returns current snapshot with interpretation.`,
       }
       return formatSentimentSnapshot(snap);
     } catch (err) {
-      return `sentiment_snapshot: ${err instanceof Error ? err.message : err}`;
+      return JSON.stringify({
+        error: `sentiment_snapshot: ${err instanceof Error ? err.message : err}`,
+      });
     }
   },
 };

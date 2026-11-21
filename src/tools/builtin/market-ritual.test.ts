@@ -22,6 +22,19 @@ vi.mock("../../db/index.js", () => ({
 
 import { marketCalendarTool, alertBudgetStatusTool } from "./market-ritual.js";
 
+/**
+ * A failure is one JSON object whose first key is `error`, with nothing
+ * before the opening brace: the registry and the fast runner read the start
+ * of the text to decide that a call failed. Returns the error words.
+ */
+function errorWords(out: string): string {
+  expect(out.startsWith('{"error":')).toBe(true);
+  const parsed = JSON.parse(out) as Record<string, unknown>;
+  expect(Object.keys(parsed)[0]).toBe("error");
+  expect(typeof parsed.error).toBe("string");
+  return parsed.error as string;
+}
+
 describe("marketCalendarTool", () => {
   beforeEach(() => {
     db = freshDb();
@@ -31,6 +44,9 @@ describe("marketCalendarTool", () => {
     const out = (await marketCalendarTool.execute({
       date: "2026-04-20",
     })) as string;
+    expect(
+      out.startsWith("market_calendar: date=2026-04-20  trading=true"),
+    ).toBe(true);
     expect(out).toContain("trading=true");
     expect(out).toContain("early_close=false");
     expect(out).toContain("prev_trading=");
@@ -60,11 +76,13 @@ describe("marketCalendarTool", () => {
     expect(out).toContain("trading=false");
   });
 
-  it("rejects malformed date", async () => {
+  it("rejects a malformed date with an error object", async () => {
     const out = (await marketCalendarTool.execute({
       date: "banana",
     })) as string;
-    expect(out).toMatch(/must be YYYY-MM-DD/);
+    expect(errorWords(out)).toBe(
+      "market_calendar: date must be YYYY-MM-DD (got 'banana').",
+    );
   });
 });
 
@@ -77,8 +95,7 @@ describe("alertBudgetStatusTool", () => {
     const out = (await alertBudgetStatusTool.execute({
       date: "2026-04-20",
     })) as string;
-    expect(out).toContain("alert_budget_status:");
-    expect(out).toContain("date=2026-04-20");
+    expect(out.startsWith("alert_budget_status: date=2026-04-20")).toBe(true);
     expect(out).toMatch(/no rituals consumed budget yet|market-morning-scan/);
   });
 
@@ -92,10 +109,12 @@ describe("alertBudgetStatusTool", () => {
     expect(out).toContain("exhausted=false");
   });
 
-  it("rejects malformed date", async () => {
+  it("rejects a malformed date with an error object", async () => {
     const out = (await alertBudgetStatusTool.execute({
       date: "banana",
     })) as string;
-    expect(out).toMatch(/must be YYYY-MM-DD/);
+    expect(errorWords(out)).toBe(
+      "alert_budget_status: date must be YYYY-MM-DD (got 'banana').",
+    );
   });
 });
