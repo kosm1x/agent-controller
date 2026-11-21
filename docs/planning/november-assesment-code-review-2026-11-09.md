@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-21 02:21 UTC — the operator tool's cancel fallback fix is COMMITTED `9c91ad24` (queue 4hi): the direct write no longer rewrites a task that has ended, and a test holds the tool's lists against the service's own. Recorded for the re-score: the four ended statuses are written out by hand in several modules, with no single exported list. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: batch leftovers, then batch 10.**
+
 **Status 2026-11-21 01:36 UTC — batch 11: the third comment piece is COMMITTED `b608138a` (queue 4hh): no comment under the source and script folders names a person any more. The comment work of batch 11 on record is done; one corrected comment waits for the operator's staging command. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: the operator tool's cancel fallback (a fault reported by the peer session and verified), batch leftovers, then batch 10.**
 
 **Status 2026-11-21 01:05 UTC — batch 11: the second comment piece is COMMITTED `8490216a` (queue 4hg): comments that placed moved code in the router, the false statements noticed by earlier pieces, and the two kinds of sensitive comment. Left in batch 11: one small piece (two older router comments that name a person, with a sweep). Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: batch leftovers, then batch 10.**
