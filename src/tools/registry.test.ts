@@ -1059,4 +1059,141 @@ describe("write-class outcome (queue 2026-10-08 late item 10)", () => {
     expect(hasRunWrites("t-k1")).toBe(false);
     expect(takeWriteOutcome("t-k1")).toEqual({ tool: "kb_ingest_pdf_structured", ok: false, error: line });
   });
+
+  // The batch write reports a partial failure as {success:false, total, ok,
+  // errors, results:[{path, status, error?}]}: that is a failed write, with a
+  // short text built from the envelope's own fields, never its raw JSON.
+  const PARTIAL_BATCH = JSON.stringify({
+    success: false,
+    total: 3,
+    ok: 1,
+    errors: 2,
+    results: [
+      { path: "notes/a.md", status: "ok" },
+      { path: "notes/b.md", status: "error", error: "path must end with .md" },
+      { path: "notes/c.md", status: "rejected", error: "unverified figure" },
+    ],
+  });
+  const BATCH_FILES = { files: [{ path: "notes/a.md" }, { path: "notes/b.md" }, { path: "notes/c.md" }] };
+
+  it("a write that reports success:false is a failed write; the text is the envelope's error, its counts, or a plain sentence", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const shapes: Record<string, string> = {
+      batch: PARTIAL_BATCH,
+      error: JSON.stringify({ success: false, error: "quota" }),
+      emptyError: JSON.stringify({ success: false, error: "", total: 2, errors: 1, results: [] }),
+      counts: JSON.stringify({ success: false, total: 2, ok: 1, errors: 1, results: [{ path: "notes/b.md", status: "error" }] }),
+      plain: JSON.stringify({ success: false }),
+    };
+    add("jarvis_files_batch_write", (a) => shapes[a.shape as string]!);
+    const outcome = async (shape: string) => {
+      const out = await enterRunToolContext(`t-s-${shape}`, () =>
+        reg.execute("jarvis_files_batch_write", { ...BATCH_FILES, shape }),
+      );
+      expect(out).toBe(shapes[shape]); // the model receives the tool's own result
+      return takeWriteOutcome(`t-s-${shape}`);
+    };
+    const failed = (error: string) => ({ tool: "jarvis_files_batch_write", ok: false, error });
+    expect(await outcome("batch")).toEqual(failed("2 of 3 items failed: path must end with .md"));
+    expect(await outcome("error")).toEqual(failed("quota"));
+    expect(await outcome("emptyError")).toEqual(failed("1 of 2 items failed"));
+    expect(await outcome("counts")).toEqual(failed("1 of 2 items failed"));
+    expect(await outcome("plain")).toEqual(failed("the tool reported success: false"));
+  });
+
+  it("only success === false moves the outcome: no success field, success true, a non-JSON or array result and the string \"false\" stay ok; an empty {error} stays failed", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const shapes: Record<string, string> = {
+      noField: JSON.stringify({ path: "/tmp/a.md", bytes_written: 3 }),
+      ok: JSON.stringify({ success: true, total: 1, ok: 1, errors: 0, results: [] }),
+      text: "written 2 files",
+      array: JSON.stringify([{ success: false }]),
+      stringFalse: JSON.stringify({ success: "false" }),
+      emptyError: JSON.stringify({ error: "" }),
+    };
+    add("file_write", (a) => shapes[a.shape as string]!);
+    const outcome = async (shape: string) => {
+      await enterRunToolContext(`t-n-${shape}`, () => reg.execute("file_write", { path: "/tmp/a.md", shape }));
+      return takeWriteOutcome(`t-n-${shape}`);
+    };
+    for (const shape of ["noField", "ok", "text", "array", "stringFalse"])
+      expect(await outcome(shape), shape).toEqual({ tool: "file_write", ok: true });
+    expect(await outcome("emptyError")).toEqual({ tool: "file_write", ok: false, error: "" });
+  });
+
+  it("a success:false batch still counts its paths as run writes and still counts as a returned call in the metrics", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const { hasRunWrites, peekToolEvidence } = await import("../lib/v8-4/numbers.js");
+    const { toolMetrics } = await import("../observability/tool-metrics.js");
+    add("jarvis_files_batch_write", () => PARTIAL_BATCH);
+    add("jarvis_file_read", (a) => `file ${String(a.path)}: 41 rows`);
+    const before = toolMetrics.getStats("jarvis_files_batch_write");
+    await enterRunToolContext("t-p1", async () => {
+      await reg.execute("jarvis_files_batch_write", BATCH_FILES);
+      await reg.execute("jarvis_file_read", { path: "notes/a.md" }); // its own write: not evidence
+      await reg.execute("jarvis_file_read", { path: "other/z.md" }); // an unrelated read: evidence
+    });
+    expect(hasRunWrites("t-p1")).toBe(true);
+    expect(peekToolEvidence("t-p1")).toEqual(["file other/z.md: 41 rows"]);
+    const after = toolMetrics.getStats("jarvis_files_batch_write")!;
+    expect(after.successes - (before?.successes ?? 0)).toBe(1);
+    expect(after.failures - (before?.failures ?? 0)).toBe(0);
+    expect(takeWriteOutcome("t-p1")).toMatchObject({ tool: "jarvis_files_batch_write", ok: false });
+  });
+
+  it("a non-write evidence tool may carry success:false as data: still evidence, no write outcome", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const { peekToolEvidence } = await import("../lib/v8-4/numbers.js");
+    const data = JSON.stringify({ success: false, retries: 0, count: 7 });
+    add("srv__read", () => data);
+    await enterRunToolContext("t-p2", () => reg.execute("srv__read", { id: "x" }));
+    expect(peekToolEvidence("t-p2")).toEqual([data]);
+    expect(takeWriteOutcome("t-p2")).toBeUndefined();
+  });
+
+  // gsheets_write is write-class by its target-key row, wp_create_page by the
+  // create-tool name pattern: neither is the batch write.
+  it("a success:false result from any write-class tool, not only the batch write, is a failed write with its error", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const { isWriteClassTool } = await import("./registry.js");
+    const result = JSON.stringify({ success: false, error: "x" });
+    add("gsheets_write", () => result);
+    add("wp_create_page", () => result);
+    expect(isWriteClassTool("gsheets_write")).toBe(true);
+    expect(isWriteClassTool("wp_create_page")).toBe(true);
+    await enterRunToolContext("t-o1", () => reg.execute("gsheets_write", { spreadsheet_id: "SHEET1234567" }));
+    expect(takeWriteOutcome("t-o1")).toEqual({ tool: "gsheets_write", ok: false, error: "x" });
+    await enterRunToolContext("t-o2", () => reg.execute("wp_create_page", { title: "t" }));
+    expect(takeWriteOutcome("t-o2")).toEqual({ tool: "wp_create_page", ok: false, error: "x" });
+  });
+
+  it("success of 0 or null is not success:false: the write stays ok", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const shapes: Record<string, string> = {
+      zero: JSON.stringify({ success: 0 }),
+      null: JSON.stringify({ success: null }),
+    };
+    add("file_write", (a) => shapes[a.shape as string]!);
+    for (const shape of ["zero", "null"]) {
+      await enterRunToolContext(`t-z-${shape}`, () => reg.execute("file_write", { path: "/tmp/a.md", shape }));
+      expect(takeWriteOutcome(`t-z-${shape}`), shape).toEqual({ tool: "file_write", ok: true });
+    }
+  });
+
+  it("counts that are not numbers give the plain sentence; null items and an object error give the counts text alone", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const shapes: Record<string, string> = {
+      textCounts: JSON.stringify({ success: false, errors: "2", total: "3" }),
+      odd: JSON.stringify({ success: false, errors: 1, total: 2, results: [null, { path: "notes/b.md", error: { code: 5 } }] }),
+    };
+    add("jarvis_files_batch_write", (a) => shapes[a.shape as string]!);
+    const outcome = async (shape: string) => {
+      await enterRunToolContext(`t-c-${shape}`, () =>
+        reg.execute("jarvis_files_batch_write", { ...BATCH_FILES, shape }),
+      );
+      return takeWriteOutcome(`t-c-${shape}`);
+    };
+    expect(await outcome("textCounts")).toEqual({ tool: "jarvis_files_batch_write", ok: false, error: "the tool reported success: false" });
+    expect(await outcome("odd")).toEqual({ tool: "jarvis_files_batch_write", ok: false, error: "1 of 2 items failed" });
+  });
 });

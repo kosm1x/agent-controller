@@ -294,6 +294,49 @@ describe("recordGatedExecution — shared wrapper contract", () => {
     expect(decisionRows()[0].status).toBe("pending");
   });
 
+  // An empty `error` reads as success to a reader that tests the field by
+  // truth, so a throw without a message still returns a non-empty text.
+  it.each([
+    ["an Error without a message", () => new Error()],
+    ["a thrown empty string", () => ""],
+  ])("interactive: %s returns the fallback text and the decision stays pending", async (_label, thrown) => {
+    process.env.V83_ENABLED = "true";
+    process.env.V83_GATED_CAPABILITIES = "gmail_send";
+    const out = await recordGatedExecution(
+      "gmail_send",
+      { to: "a@b.c" },
+      async () => {
+        throw thrown();
+      },
+      { source: "interactive", threadId: "t1" },
+    );
+    expect(JSON.parse(out)).toEqual({ error: "tool failed without an error message" });
+    expect(decisionRows().map((r) => r.status)).toEqual(["pending"]);
+  });
+
+  it.each(["background", "operator"] as const)(
+    "%s: a thrown Error without a message re-throws the ORIGINAL error, not the fallback text",
+    async (source) => {
+      process.env.V83_ENABLED = "true";
+      process.env.V83_GATED_CAPABILITIES = "gmail_send";
+      const boom = new Error();
+      const caught = await recordGatedExecution(
+        "gmail_send",
+        { to: "a@b.c" },
+        async () => {
+          throw boom;
+        },
+        { source, threadId: "t1" },
+      ).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(caught).toBe(boom);
+      expect(boom.message).toBe("");
+      expect(decisionRows().map((r) => r.status)).toEqual(["pending"]);
+    },
+  );
+
   it("a batch partial-error envelope ({success:false}) grades as not-committed (qa R3 — matches task-executor)", async () => {
     process.env.V83_ENABLED = "true";
     process.env.V83_GATED_CAPABILITIES = "gmail_send";

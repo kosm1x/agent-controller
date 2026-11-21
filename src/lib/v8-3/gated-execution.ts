@@ -118,10 +118,12 @@ export function shouldRecordGatedExecution(toolName: string): boolean {
 }
 
 /**
- * A tool result string is a structured error iff it parses to `{error: truthy}`
- * OR `{success: false}` — the latter is the documented batch-tool partial-error
- * envelope (`jarvis_files_batch_delete` returns `{success: errors === 0, …}`),
- * which task-executor already grades this way; the ledger must match (qa R3).
+ * A tool result string is a structured error iff it parses to an object with
+ * a truthy `error` OR `success === false` — the latter is the documented
+ * batch-tool partial-error envelope (`jarvis_files_batch_delete` returns
+ * `{success: errors === 0, …}`). The mutation log's check
+ * (`recordMutationFromResult`) reads both shapes the same way, though it
+ * records nothing for the batch tools.
  */
 function toolReportedError(result: string): boolean {
   try {
@@ -228,7 +230,11 @@ export async function recordGatedExecution(
         } catch (e) {
           thunkThrew = true;
           thunkError = e;
-          output = JSON.stringify({ error: errMsg(e) });
+          // Never an empty `error`: readers that test the field by truth
+          // would take the failed call for a success.
+          output = JSON.stringify({
+            error: errMsg(e) || "tool failed without an error message",
+          });
           return { ok: false, output };
         }
       },

@@ -157,6 +157,32 @@ function writeErrorText(text: string): string {
   return text;
 }
 
+/**
+ * A write result that parses to an object with `success === false` (the batch
+ * write's partial- or full-failure envelope) is a failed write: its short
+ * failure text, or undefined for any other result. The text is the envelope's
+ * own `error` when non-empty, else "<errors> of <total> items failed" (plus
+ * the first failed item's `error`), else a plain sentence.
+ */
+function successFalseText(text: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object") return undefined;
+  const o = parsed as { success?: unknown; error?: unknown; errors?: unknown; total?: unknown; results?: unknown };
+  if (o.success !== false) return undefined;
+  if (typeof o.error === "string" && o.error !== "") return o.error;
+  if (typeof o.errors === "number" && typeof o.total === "number") {
+    const items = Array.isArray(o.results) ? (o.results as Array<{ error?: unknown } | null>) : [];
+    const first = items.find((r) => typeof r?.error === "string" && r.error !== "")?.error;
+    return `${o.errors} of ${o.total} items failed${first ? `: ${first as string}` : ""}`;
+  }
+  return "the tool reported success: false";
+}
+
 /** Item 10: a failed write-class call of the current run (no-op outside a run). */
 function recordFailedWrite(name: string, text: string): void {
   const runTaskId = currentRunTaskId();
@@ -508,13 +534,16 @@ export class ToolRegistry {
       if (runTaskId) {
         const isError = isErrorResult(result);
         // Item 10: the run's LAST write-class outcome (a done-claim after a
-        // failed write is checked at completion — consumer.ts).
+        // failed write is checked at completion — consumer.ts). A write that
+        // reports `success: false` failed too; for that outcome only — the
+        // written keys and the evidence below still follow the error check.
         if (isWriteClassTool(name)) {
+          const reported = isError ? undefined : successFalseText(String(result));
           recordWriteOutcome(
             runTaskId,
             name,
-            !isError,
-            isError ? writeErrorText(String(result)) : undefined,
+            !isError && reported === undefined,
+            isError ? writeErrorText(String(result)) : reported,
           );
         }
         const written = isError
