@@ -13,7 +13,10 @@
 # days before --now, one line per row; the rules are in
 # src/complaints/ledger.ts. The file is validated before any sqlite3 call and
 # never written. Exit 0 when every row computed and every recorded closure
-# agrees, 2 on any flag or file problem, 3 on a MISMATCH.
+# agrees, 2 on any flag or file problem, 3 on a MISMATCH. Only a check at the
+# clock (no --now given) rechecks recorded closures; with --now it is a
+# replay: today's rows read as of that time, retention having pruned by the
+# real clock, so recorded closures are reported as not rechecked.
 #
 # Verdict mode closes a prediction written beforehand, "at most K complaints
 # (concerns + failed) in the type's first N (default 7) runs queued at or
@@ -38,8 +41,11 @@
 # -init /dev/null: sqlite3 would otherwise run ~/.sqliterc or
 # $XDG_CONFIG_HOME/sqlite3/sqliterc first, and an rc file can .open the
 # database read-write. sqlite3 is called by absolute path so PATH cannot swap it.
-# --now defaults to the current time, pinned once so every CLI call agrees.
+# --now defaults to the current time, pinned once so every CLI call agrees;
+# COMPLAINTS_DIGEST_NOW_FROM_CLOCK=1 tells the CLI that --now is that pinned
+# clock, and is cleared first so a caller's environment cannot claim it.
 set -euo pipefail
+unset COMPLAINTS_DIGEST_NOW_FROM_CLOCK
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DB="$ROOT/data/mc.db"
@@ -53,7 +59,10 @@ while (($#)); do
     *) args+=("$1"); shift ;;
   esac
 done
-((have_now)) || args+=(--now "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+if ((!have_now)); then
+  args+=(--now "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+  export COMPLAINTS_DIGEST_NOW_FROM_CLOCK=1
+fi
 [[ -f "$DB" ]] || { echo "complaints-digest: no database at $DB" >&2; exit 2; }
 
 TSX="$ROOT/node_modules/.bin/tsx"

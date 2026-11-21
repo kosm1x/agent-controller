@@ -5,19 +5,31 @@
  * is what proves when a row was written. Pure: file text, the digest's rows
  * and `now` in, problems or one checked line per row out.
  *
+ * Each line must be canonical JSON (the text JSON.stringify gives back for
+ * it), so a duplicate key cannot hide behind the one that wins. Every value
+ * the tool prints is held to a pattern with no line break; `change`,
+ * `baseline` and `answer` are never printed.
+ *
  * A row is a verdict (src/complaints/verdict.ts, buildVerdict called once per
  * row on the same rows) plus up to 3 guards, "at most J of the counted runs
- * call `tool` fewer than M times". A guard is judged over the verdict's own
- * counted runs, with the verdict's unknown slots and its close rule
- * (closeRule): a finished run's tool calls never change, so a closed guard
- * stays closed for the same reason a closed verdict does.
+ * make fewer than M calls of `tool` not refused at the confirmation gate".
+ * The counts are the ledger SQL's `guard_tools` (src/complaints/query.ts):
+ * there is no trace event for a call that ran, so a call that errored, or was
+ * refused anywhere but the gate, still counts. A guard is judged over the
+ * verdict's own counted runs, with the verdict's unknown slots and its close
+ * rule (closeRule). Its counts stop at the run's completed_at second, so a
+ * counted run's counts never change and a closed guard stays closed for the
+ * same reason a closed verdict does.
  *
- * The window is fixed at the trace retention: inside it every counted run
- * still has its trace rows, so a recorded closure can be rechecked; outside
- * it the trace may be pruned, so it is not.
+ * The window is fixed at the trace retention. Checked at the clock, every
+ * counted run inside it still has its trace rows, so a recorded closure is
+ * rechecked; outside it the trace may be pruned, so it is not. A replay (a
+ * --now in the past) reads today's rows: retention runs on the real clock and
+ * may have pruned rows that existed at the replayed time, so a replay never
+ * rechecks a recorded closure and never offers one to record.
  */
 import { toolCounts, typeKey, type TaskRow } from "./digest.js";
-import { buildVerdict, closeRule, ISO_TIME, TYPE_PATTERN, type Verdict } from "./verdict.js";
+import { buildVerdict, closeRule, ISO_TIME, TYPE_PATTERN, windowSince, type Verdict } from "./verdict.js";
 
 /** Days this mode reads; equal to TRACE_RETENTION_DAYS (ledger.test.ts pins the two). */
 export const LEDGER_DAYS = 30;
@@ -36,7 +48,7 @@ export interface Prediction {
   line: number;
   id: string;
   type: string;
-  /** Floored to the second, as Date.toISOString() prints it. */
+  /** Floored to the second (windowSince), as Date.toISOString() prints it. */
   since: string;
   maxComplaints: number;
   runs: number;
@@ -50,6 +62,8 @@ export interface Problem {
 }
 
 const ID = /^[A-Za-z0-9_-]{1,40}$/;
+const TOOL = /^[A-Za-z0-9_.:-]{1,64}$/;
+const DAY_MS = 86_400_000;
 const KEYS = ["id", "type", "since", "maxComplaints", "runs", "change", "baseline", "guards", "closed", "answer"];
 const GUARD_KEYS = ["tool", "min", "maxBelow"];
 const CLOSED_KEYS = ["state", "checkedAt", "line"];
@@ -70,7 +84,9 @@ function objectProblems(o: Obj, allowed: string[], required: string[], checks: [
   ];
 }
 
-export function parseLedger(src: string): { predictions: Prediction[]; problems: Problem[] } {
+/** `now`: the check's time; a recorded closure cannot be later than it. */
+export function parseLedger(src: string, now: string): { predictions: Prediction[]; problems: Problem[] } {
+  const nowMs = Date.parse(now);
   const lines = src.split("\n");
   if (lines[lines.length - 1] === "") lines.pop();
   const predictions: Prediction[] = [];
@@ -85,11 +101,14 @@ export function parseLedger(src: string): { predictions: Prediction[]; problems:
       o = undefined;
     }
     if (!isObject(o)) return problems.push({ line, reason: "not a JSON object" });
+    const canonical = JSON.stringify(o);
+    const found = raw === canonical ? [] : [`not in canonical form: ${canonical}`];
     const runsOk = whole(o.runs, 1, 100);
     const hi = runsOk ? (o.runs as number) - 1 : MAX;
     const below = runsOk ? `a whole number from 0 to ${hi} (below "runs")` : "a whole number";
-    const sinceMs = typeof o.since === "string" && ISO_TIME.test(o.since) ? Date.parse(o.since) : NaN;
-    const found = objectProblems(o, KEYS, KEYS.slice(0, 7), [
+    const sinceMs = isoMs(o.since);
+    const since = Number.isNaN(sinceMs) ? null : windowSince(sinceMs, nowMs, LEDGER_DAYS).since;
+    found.push(...objectProblems(o, KEYS, KEYS.slice(0, 7), [
       ["id", typeof o.id === "string" && ID.test(o.id), `text matching ${ID.source}`],
       ["type", typeof o.type === "string" && TYPE_PATTERN.test(o.type), `text matching ${TYPE_PATTERN.source}`],
       ["since", !Number.isNaN(sinceMs), "an ISO time with Z or an offset, e.g. 2026-11-20T18:00:00Z"],
@@ -100,13 +119,13 @@ export function parseLedger(src: string): { predictions: Prediction[]; problems:
       ["guards", Array.isArray(o.guards) && o.guards.length >= 1 && o.guards.length <= 3, "an array of 1 to 3 guards"],
       ["closed", isObject(o.closed), "an object"],
       ["answer", typeof o.answer === "string", "text"],
-    ], "");
+    ], ""));
     if (Array.isArray(o.guards) && o.guards.length <= 3) {
       o.guards.forEach((g: unknown, j) => {
         const where = ` in guard ${j + 1}`;
         if (!isObject(g)) return found.push(`guard ${j + 1} must be an object`);
         found.push(...objectProblems(g, GUARD_KEYS, GUARD_KEYS, [
-          ["tool", text(g.tool), "non-empty text"],
+          ["tool", typeof g.tool === "string" && TOOL.test(g.tool), `text matching ${TOOL.source}`],
           ["min", whole(g.min, 1, MAX), "a whole number of at least 1"],
           ["maxBelow", whole(g.maxBelow, 0, hi), below],
         ], where));
@@ -116,8 +135,8 @@ export function parseLedger(src: string): { predictions: Prediction[]; problems:
       const c = o.closed;
       found.push(...objectProblems(c, CLOSED_KEYS, CLOSED_KEYS, [
         ["state", (CLOSED_STATES as readonly unknown[]).includes(c.state), `a closed state: ${CLOSED_STATES.map(q).join(", ")}`],
-        ["checkedAt", typeof c.checkedAt === "string", "text"],
-        ["line", typeof c.line === "string", "text"],
+        ["checkedAt", recordedIn(isoMs(c.checkedAt), since, nowMs, c.state === "EXPIRED"), `an ISO time at or after "since" and not later than the check: less than ${LEDGER_DAYS} days after "since", or at least that for EXPIRED`],
+        ["line", typeof c.line === "string" && !/[\r\n\u2028\u2029]/.test(c.line), "single-line text"],
       ], ` in "closed"`));
     }
     if (typeof o.id === "string" && ID.test(o.id)) {
@@ -131,7 +150,7 @@ export function parseLedger(src: string): { predictions: Prediction[]; problems:
       line,
       id: o.id as string,
       type: o.type as string,
-      since: new Date(Math.floor(sinceMs / 1000) * 1000).toISOString(),
+      since: since as string,
       maxComplaints: o.maxComplaints as number,
       runs: o.runs as number,
       guards: (o.guards as Guard[] | undefined) ?? [],
@@ -152,7 +171,7 @@ export function parseLedger(src: string): { predictions: Prediction[]; problems:
 
 export interface GuardCheck {
   guard: Guard;
-  /** Counted runs calling the tool fewer than `min` times (no trace rows: 0 calls). */
+  /** Counted runs with fewer than `min` calls of the tool not refused at the gate (no trace rows: 0). */
   below: number;
   word: "holds" | "broken" | "pending";
 }
@@ -172,18 +191,35 @@ export interface RowCheck {
 
 const GUARD_WORD = { CONFIRMED: "holds", REFUTED: "broken", COUNTING: "pending" } as const;
 
-export function checkRow(p: Prediction, rows: TaskRow[], now: string): RowCheck {
+/** ms of an ISO time in the CLI's pattern; NaN for anything else. */
+const isoMs = (v: unknown): number => (typeof v === "string" && ISO_TIME.test(v) ? Date.parse(v) : NaN);
+
+/**
+ * A recorded closure's time: not before `since` nor after the check, and
+ * inside the row's window, where every closed state but EXPIRED is computed;
+ * EXPIRED is only ever computed outside it.
+ */
+function recordedIn(ms: number, since: string | null, nowMs: number, expired: boolean): boolean {
+  if (Number.isNaN(ms)) return false;
+  if (since === null) return true; // "since" is reported on its own
+  const s = Date.parse(since);
+  return ms >= s && ms <= nowMs && ms < s + LEDGER_DAYS * DAY_MS !== expired;
+}
+
+/** `replay`: --now was given, so a recorded closure is not rechecked and none is offered. */
+export function checkRow(p: Prediction, rows: TaskRow[], now: string, replay: boolean): RowCheck {
   const head = (state: LedgerState): string => `${p.id} ${state} | ${p.type} since ${p.since}: `;
   const rec = p.closed && `recorded ${p.closed.state} at ${p.closed.checkedAt}`;
-  if (Date.parse(p.since) <= Date.parse(now) - LEDGER_DAYS * 86_400_000) {
+  if (!windowSince(Date.parse(p.since), Date.parse(now), LEDGER_DAYS).inside) {
     const state = (p.closed?.state ?? "EXPIRED") as LedgerState;
     const why = `since is outside the ${LEDGER_DAYS}-day window`;
     const line = head(state) + (rec ? `${rec}; not rechecked (${why})` : why);
-    return { prediction: p, state, verdict: null, guards: [], text: line, notes: p.closed ? [] : [paste(state, now, line)], mismatch: false };
+    const notes = p.closed || replay ? [] : [paste(state, now, line)];
+    return { prediction: p, state, verdict: null, guards: [], text: line, notes, mismatch: false };
   }
   const v = buildVerdict(rows, { now, type: p.type, since: p.since, maxComplaints: p.maxComplaints, runs: p.runs });
   const byId = new Map(rows.map((r) => [r.task_id, r]));
-  const counts = v.runList.map((r) => toolCounts(byId.get(r.taskId) as TaskRow));
+  const counts = v.runList.map((r) => toolCounts(byId.get(r.taskId)?.guard_tools));
   const guards = p.guards.map((guard): GuardCheck => {
     // Own keys only: a tool named like an Object prototype member is still 0 calls.
     const below = counts.filter((t) => (Object.hasOwn(t, guard.tool) ? t[guard.tool] : 0) < guard.min).length;
@@ -196,21 +232,24 @@ export function checkRow(p: Prediction, rows: TaskRow[], now: string): RowCheck 
     : words.includes("pending") ? "CONFIRMED, guard pending"
     : "CONFIRMED";
   const guardText = guards.length === 0 ? "guard: none"
-    : guards.map(({ guard: g, below, word }) => `guard ${g.tool} >= ${g.min}: ${below} run(s) below (limit ${g.maxBelow}) ${word}`).join("; ");
+    : guards.map(({ guard: g, below, word }) => `guard ${g.tool} >= ${g.min} not refused: ${below} run(s) below (limit ${g.maxBelow}) ${word}`).join("; ");
   const none = rows.some((r) => typeKey(r) === p.type) ? "" : `; no run of this type in ${LEDGER_DAYS} days`;
   const line = head(state)
     + `counted ${v.counted}/${v.runs}, complaints ${v.complaints} (limit ${p.maxComplaints}), unknown ${v.unknown} [${v.strip}]; ${guardText}${none}`;
-  const mismatch = p.closed !== null && p.closed.state !== state;
-  const notes = rec ? [mismatch ? `MISMATCH: ${rec}, recheck says ${state}` : `${rec}; recheck agrees`]
-    : (CLOSED_STATES as readonly string[]).includes(state) ? [paste(state, now, line)] : [];
+  const mismatch = !replay && p.closed !== null && p.closed.state !== state;
+  const notes = rec ? [replay ? `${rec}; not rechecked (replay)` : mismatch ? `MISMATCH: ${rec}, recheck says ${state}` : `${rec}; recheck agrees`]
+    : !replay && (CLOSED_STATES as readonly string[]).includes(state) ? [paste(state, now, line)] : [];
   return { prediction: p, state, verdict: v, guards, text: line, notes, mismatch };
 }
 
 /** The `closed` member a person pastes into the row once it has closed. */
 const paste = (state: LedgerState, now: string, line: string): string => `"closed":${JSON.stringify({ state, checkedAt: now, line })}`;
 
-export function renderLedger(file: string, now: string, checks: RowCheck[]): string {
-  const out = [`Ledger ${file} checked at ${now} over the ${LEDGER_DAYS} days before it: ${checks.length} row(s)`];
+export function renderLedger(file: string, now: string, checks: RowCheck[], replay: boolean): string {
+  const at = replay ? `replayed at ${now} (a replay, not a recheck)` : `checked at ${now}`;
+  const out = [
+    `Ledger ${file} ${at} over the ${LEDGER_DAYS} days before it: ${checks.length} row(s); a guard counts calls not refused at the confirmation gate, errored calls included`,
+  ];
   for (const c of checks) out.push(c.text, ...c.notes.map((n) => `  ${n}`));
   return `${out.join("\n")}\n`;
 }

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { buildDigest, renderDigest, type DigestOptions, type TaskRow } from "./digest.js";
-import { complaintsSql } from "./query.js";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { complaintsSql, GATED_NOT_RUN } from "./query.js";
 
 const OPTS: DigestOptions = { now: "2026-11-20T12:00:00.000Z", days: 30, last: 7, min: 5 };
 
@@ -363,5 +367,36 @@ describe("query", () => {
     expect(complaintsSql(false)).not.toMatch(/task_completion_facts|\bbuild\b/);
     expect(complaintsSql(true)).toContain("AS build");
     expect(complaintsSql(true)).not.toMatch(/f\.created_at/);
+  });
+
+  // The digest and verdict SQL as the ledger change found it on main: the
+  // guard column is ledger-only, so these never move with it.
+  const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
+  it("without guards the SQL is byte-identical to main's, with or without facts", () => {
+    expect([sha(complaintsSql(false)), sha(complaintsSql(true))]).toEqual([
+      "cc6596190a36c7d18ff694fc865456b5f0cc19293c628b883573cb727da2c81a",
+      "01c54fe396901604b1955a18c0a3f3ccc09ba6afead9850df5cdd5e9023c6c63",
+    ]);
+    expect([complaintsSql(false, false), complaintsSql(true, false)]).toEqual([complaintsSql(false), complaintsSql(true)]);
+  });
+
+  it("guards add exactly completed_at in base and the guard_tools column, bounded by completed_at, gate decisions as literals", () => {
+    for (const facts of [false, true]) {
+      const g = complaintsSql(facts, true);
+      const column = g.slice(g.indexOf(",\n  (SELECT json_group_object(c.tool, c.n) FROM (\n     SELECT e.tool, max(0,"), g.indexOf(" AS guard_tools") + " AS guard_tools".length);
+      expect(g.replace(", t.completed_at", "").replace(column, "")).toBe(complaintsSql(facts));
+      expect(column).toContain("replace(substr(e.ts, 1, 19), 'T', ' ') <= b.completed_at");
+      expect(column).toContain(`IN (${GATED_NOT_RUN.map((d) => `'${d}'`).join(", ")})`);
+    }
+    for (const d of GATED_NOT_RUN) expect(d).toMatch(/^[a-z_]+$/);
+  });
+
+  it("GATED_NOT_RUN is every tool.gated decision literal in the two files that write them", () => {
+    const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+    const literals = new Set<string>();
+    for (const f of ["inference/claude-sdk.ts", "tools/task-executor.ts"]) {
+      for (const m of readFileSync(join(root, f), "utf8").matchAll(/"((?:refused|queued)_[a-z_]+|confirmation_required)"/g)) literals.add(m[1]);
+    }
+    expect([...literals].sort()).toEqual([...GATED_NOT_RUN].sort());
   });
 });

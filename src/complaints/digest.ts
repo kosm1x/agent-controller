@@ -17,6 +17,12 @@ export interface TaskRow {
   schedule_name: string | null;
   /** JSON object text, tool name -> calls attempted in this run (tool.called events). */
   tools: string | null;
+  /**
+   * Ledger SQL only (complaintsSql with `guards`): JSON object text, tool
+   * name -> calls not refused at the confirmation gate, written no later than
+   * the run's completed_at second. Absent from the digest and verdict SQL.
+   */
+  guard_tools?: string | null;
   /** 1 when the output carries a numbers_audit record. */
   has_audit: number;
   /** JSON array text of numbers_audit.unverified. */
@@ -132,8 +138,9 @@ export function stripChar(status: string): string {
   return "?";
 }
 
-export function toolCounts(r: TaskRow): Record<string, number> {
-  const v = parseJson(r.tools);
+/** A JSON object of tool name -> count (the `tools` or `guard_tools` column) as numbers; anything else is {}. */
+export function toolCounts(text: string | null | undefined): Record<string, number> {
+  const v = parseJson(text ?? null);
   const out: Record<string, number> = {};
   if (v === null || typeof v !== "object" || Array.isArray(v)) return out;
   for (const [tool, n] of Object.entries(v)) if (typeof n === "number") out[tool] = n;
@@ -214,7 +221,7 @@ function digestType(key: string, runs: TaskRow[], opts: DigestOptions, facts: bo
     .slice(0, 5)
     .map(([figure, n]) => ({ figure, runs: n }));
 
-  const counts = new Map(runs.map((r) => [r, toolCounts(r)] as const));
+  const counts = new Map(runs.map((r) => [r, toolCounts(r.tools)] as const));
   const clean = runs.filter((r) => r.status === CLEAN);
   const concern = runs.filter((r) => r.status === CONCERNS);
   const diffs: (ToolDiff & { d: number })[] = [];

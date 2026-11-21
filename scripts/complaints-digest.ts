@@ -19,6 +19,10 @@
  *        before --now; the rules are in src/complaints/ledger.ts. The file is
  *        read and validated before any rows are, and never written. Exit 2 on
  *        any file problem, 3 when a recorded closure disagrees with the recheck.
+ *        A recheck needs the clock: the wrapper sets
+ *        COMPLAINTS_DIGEST_NOW_FROM_CLOCK=1 only when it pinned --now itself.
+ *        Without it the run is a replay: recorded closures are not rechecked
+ *        (rows pruned since that time are gone), so it never exits 3.
  * Every value is validated here; the SQL only ever sees @since/@now strings
  * regenerated from a parsed Date.
  */
@@ -119,7 +123,7 @@ function readLedger(file: string): Prediction[] {
   } catch (err) {
     fail(`ledger ${file}: cannot be read (${(err as NodeJS.ErrnoException).code ?? "error"})`);
   }
-  const { predictions, problems } = parseLedger(src);
+  const { predictions, problems } = parseLedger(src, now);
   if (problems.length === 0) return predictions;
   for (const p of problems) process.stderr.write(`complaints-digest: ledger ${file} line ${p.line}: ${p.reason}\n`);
   process.exit(2);
@@ -133,7 +137,7 @@ if (parsed["print-sql"]) {
       ".parameter init",
       `.parameter set @since "'${sqlTime(nowMs - days * 86_400_000)}'"`,
       `.parameter set @now "'${sqlTime(nowMs)}'"`,
-      complaintsSql(parsed["facts-table"] === true),
+      complaintsSql(parsed["facts-table"] === true, ledgerFile !== undefined),
       "",
     ].join("\n"),
   );
@@ -141,8 +145,9 @@ if (parsed["print-sql"]) {
   const input = readFileSync(0, "utf8").trim();
   const rows = (input ? JSON.parse(input) : []) as TaskRow[];
   if (ledgerFile !== undefined && predictions) {
-    const checks = predictions.map((p) => checkRow(p, rows, now));
-    process.stdout.write(renderLedger(ledgerFile, now, checks));
+    const replay = process.env.COMPLAINTS_DIGEST_NOW_FROM_CLOCK !== "1";
+    const checks = predictions.map((p) => checkRow(p, rows, now, replay));
+    process.stdout.write(renderLedger(ledgerFile, now, checks, replay));
     if (checks.some((c) => c.mismatch)) process.exitCode = 3;
   } else if (verdictOpts) {
     const v = buildVerdict(rows, { now, ...verdictOpts });
