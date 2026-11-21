@@ -353,7 +353,7 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
           condition: {
             type: "string",
             description:
-              'When qualifier is "conditional": describe when to inject.',
+              'When qualifier is "conditional": the tool groups this file goes with, named by including crm, google, wordpress, coding, browser, schedule, reporting, research, teaching or social (matched anywhere in the text, in any case). Default: none.',
           },
           priority: {
             type: "number",
@@ -1016,7 +1016,11 @@ RESPONSE SHAPE: {success, total, ok, errors, results: [{path, status, error?}, .
                   type: "string",
                   description: "Full Markdown content",
                 },
-                tags: { type: "array", items: { type: "string" } },
+                tags: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: "Tags for categorization and search.",
+                },
                 qualifier: {
                   type: "string",
                   enum: [
@@ -1026,10 +1030,25 @@ RESPONSE SHAPE: {success, total, ok, errors, results: [{path, status, error?}, .
                     "workspace",
                     "enforce",
                   ],
+                  description:
+                    'How this file should be used. Default: reference. "enforce" is silently downgraded to "reference". A value not listed is refused.',
                 },
-                condition: { type: "string" },
-                priority: { type: "number" },
-                related_to: { type: "array", items: { type: "string" } },
+                condition: {
+                  type: "string",
+                  description:
+                    'When qualifier is "conditional": the tool groups this file goes with, named by including crm, google, wordpress, coding, browser, schedule, reporting, research, teaching or social (matched anywhere in the text, in any case). Default: none.',
+                },
+                priority: {
+                  type: "number",
+                  description:
+                    "Read order priority (0=highest, 100=lowest). Default: 50",
+                },
+                related_to: {
+                  type: "array",
+                  items: { type: "string" },
+                  description:
+                    "Paths of related files, stored with the file. Default: none.",
+                },
               },
               required: ["path", "title", "content"],
             },
@@ -1082,8 +1101,8 @@ RESPONSE SHAPE: {success, total, ok, errors, results: [{path, status, error?}, .
     const results: Array<{ path: string; status: string; error?: string }> = [];
     let ok = 0;
     let errors = 0;
-    // An entry's qualifier must be one this tool's schema offers: the adapter
-    // checks only top-level enums, and the database rule refuses in its own words.
+    // An entry's qualifier must be one this tool's schema offers: not every path
+    // to this handler checks an enum inside an item, and the database rule refuses in its own words.
     const qualifiers = (
       jarvisFilesBatchWriteTool.definition.function.parameters as {
         properties: {

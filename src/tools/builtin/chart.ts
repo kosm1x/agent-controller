@@ -61,8 +61,16 @@ Accepts simplified parameters — you don't need to know Chart.js syntax.`,
             items: {
               type: "object",
               properties: {
-                label: { type: "string" },
-                data: { type: "array", items: { type: "number" } },
+                label: {
+                  type: "string",
+                  description: "Series name. Default: empty.",
+                },
+                data: {
+                  type: "array",
+                  items: { type: "number" },
+                  description:
+                    "The series' numbers, in the same order as labels; passed to the chart as given.",
+                },
               },
               required: ["data"],
             },

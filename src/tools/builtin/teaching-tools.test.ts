@@ -509,3 +509,29 @@ describe("learner_model_status", () => {
     expect(out.concepts[0].days_until_review).not.toBeNull();
   });
 });
+
+describe("plan_id schema texts", () => {
+  const planId = (tool: typeof learningPlanQuizTool) =>
+    (
+      tool.definition.function.parameters as {
+        properties: { plan_id: { description?: string } };
+      }
+    ).properties.plan_id.description;
+
+  it("quiz and explain_back say the id is optional and what an omitted or blank one uses", () => {
+    const text =
+      "Plan UUID returned by learning_plan_create. Optional — if omitted or blank, uses the active plan updated most recently.";
+    expect(planId(learningPlanQuizTool)).toBe(text);
+    expect(planId(learningPlanExplainBackTool)).toBe(text);
+  });
+
+  it("summarize, where the id is required, names only where it comes from", () => {
+    expect(planId(learningPlanSummarizeTool)).toBe(
+      "Plan UUID returned by learning_plan_create.",
+    );
+    expect(
+      (learningPlanSummarizeTool.definition.function.parameters as { required: string[] })
+        .required,
+    ).toContain("plan_id");
+  });
+});

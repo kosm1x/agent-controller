@@ -251,7 +251,11 @@ export const learningPlanQuizTool: Tool = {
       parameters: {
         type: "object",
         properties: {
-          plan_id: { type: "string" },
+          plan_id: {
+            type: "string",
+            description:
+              "Plan UUID returned by learning_plan_create. Optional — if omitted or blank, uses the active plan updated most recently.",
+          },
           unit_index: {
             type: "number",
             description:
@@ -366,7 +370,11 @@ Two modes:
       parameters: {
         type: "object",
         properties: {
-          plan_id: { type: "string" },
+          plan_id: {
+            type: "string",
+            description:
+              "Plan UUID returned by learning_plan_create. Optional — if omitted or blank, uses the active plan updated most recently.",
+          },
           unit_index: {
             type: "number",
             description: "Defaults to plan's current_unit.",
@@ -522,7 +530,10 @@ export const learningPlanSummarizeTool: Tool = {
       parameters: {
         type: "object",
         properties: {
-          plan_id: { type: "string" },
+          plan_id: {
+            type: "string",
+            description: "Plan UUID returned by learning_plan_create.",
+          },
           unit_index: {
             type: "number",
             description: "Defaults to plan's current_unit.",

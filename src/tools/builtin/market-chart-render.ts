@@ -208,7 +208,7 @@ DO NOT USE WHEN:
 
 Interval: "daily" (default) or "weekly". Lookback bounded to [20, 520] bars.
 Indicators subset: sma20, sma50, sma200, ema20, ema50, bollinger, vwap.
-Signals: array of { time (YYYY-MM-DD), kind: buy|sell|note, text? } — plotted as arrows above/below bars.
+Signals: array of { time (YYYY-MM-DD), kind: buy|sell|note, text? } — plotted as markers above/below bars.
 Format: svg (default, faster) or png (via ImageMagick \`convert\`, WhatsApp/Telegram-friendly).
 Output: file path under /tmp/ or /workspace/. Default /tmp/chart-<uuid>.{svg|png}.`,
       parameters: {
@@ -238,11 +238,22 @@ Output: file path under /tmp/ or /workspace/. Default /tmp/chart-<uuid>.{svg|png
               type: "object",
               properties: {
                 time: { type: "string", description: "YYYY-MM-DD" },
-                kind: { type: "string", enum: ["buy", "sell", "note"] },
-                text: { type: "string" },
+                kind: {
+                  type: "string",
+                  enum: ["buy", "sell", "note"],
+                  description:
+                    "buy: up arrow below the bar; sell: down arrow above it; note: circle above it.",
+                },
+                text: {
+                  type: "string",
+                  description:
+                    "Marker label. Default: BUY for buy, SELL for sell, empty for note.",
+                },
               },
               required: ["time", "kind"],
             },
+            description:
+              "Markers to plot. Each entry needs a string time and a kind of buy, sell or note; an entry without them is dropped or the whole call is refused. An entry is drawn only when its time is the date of a rendered bar. Default: none.",
           },
           format: {
             type: "string",

@@ -1431,3 +1431,41 @@ describe("NorthStar retired (operator ruling 2026-11-03) — refused by every KB
     }
   });
 });
+
+describe("jarvis_files_batch_write schema texts", () => {
+  type Props = Record<string, { description?: string }>;
+  const item = (
+    jarvisFilesBatchWriteTool.definition.function.parameters as {
+      properties: { files: { items: { properties: Props } } };
+    }
+  ).properties.files.items.properties;
+  const single = (
+    jarvisFileWriteTool.definition.function.parameters as { properties: Props }
+  ).properties;
+
+  it("each entry's tags, condition and priority read as the single-write tool's", () => {
+    const condition =
+      'When qualifier is "conditional": the tool groups this file goes with, named by including crm, google, wordpress, coding, browser, schedule, reporting, research, teaching or social (matched anywhere in the text, in any case). Default: none.';
+    expect(item.tags.description).toBe("Tags for categorization and search.");
+    expect(item.condition.description).toBe(condition);
+    expect(single.condition.description).toBe(condition);
+    expect(item.priority.description).toBe(
+      "Read order priority (0=highest, 100=lowest). Default: 50",
+    );
+    for (const key of ["tags", "condition", "priority"]) {
+      expect(item[key].description, key).toBe(single[key].description);
+    }
+  });
+
+  it("each entry's qualifier adds that a value not listed is refused", () => {
+    expect(item.qualifier.description).toBe(
+      'How this file should be used. Default: reference. "enforce" is silently downgraded to "reference". A value not listed is refused.',
+    );
+  });
+
+  it("each entry's related paths are described as stored with the file", () => {
+    expect(item.related_to.description).toBe(
+      "Paths of related files, stored with the file. Default: none.",
+    );
+  });
+});

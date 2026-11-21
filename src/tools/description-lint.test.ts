@@ -351,3 +351,70 @@ describe("tool descriptions — not-for section ratchet", () => {
   });
 
 });
+
+/**
+ * Paths (from `path`) of the properties in a JSON schema that have no
+ * non-empty description, at every depth: each `properties` entry, the object
+ * an array's `items` holds, and every `anyOf` / `oneOf` branch. An array's
+ * `items` and a branch are schemas, not properties, so they need none.
+ */
+function undescribed(schema: unknown, path: string): string[] {
+  if (!schema || typeof schema !== "object") return [];
+  const s = schema as {
+    properties?: Record<string, unknown>;
+    items?: unknown;
+    anyOf?: unknown[];
+    oneOf?: unknown[];
+  };
+  const out: string[] = [];
+  for (const [key, prop] of Object.entries(s.properties ?? {})) {
+    const at = `${path}.${key}`;
+    const d = (prop as { description?: unknown } | null)?.description;
+    if (typeof d !== "string" || d.trim() === "") out.push(at);
+    out.push(...undescribed(prop, at));
+  }
+  out.push(...undescribed(s.items, `${path}[]`));
+  for (const k of ["anyOf", "oneOf"] as const) {
+    (s[k] ?? []).forEach((b, i) => out.push(...undescribed(b, `${path}.${k}[${i}]`)));
+  }
+  return out;
+}
+
+describe("tool schemas — every property is described", () => {
+  it("every property of every registered tool, at every depth, has a non-empty description", () => {
+    const bad = ALL.flatMap((t) => undescribed(t.definition.function.parameters, t.name));
+    expect(bad, "property without a description (tool.path)").toEqual([]);
+  });
+
+  it("the walk reports nested items, anyOf and oneOf properties and a blank text; scalar items need none", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        top: { type: "string" },
+        list: {
+          type: "array",
+          description: "d",
+          items: {
+            type: "object",
+            properties: { inner: { type: "string" }, named: { type: "string", description: "d" } },
+          },
+        },
+        tags: { type: "array", description: "d", items: { type: "string" } },
+        either: {
+          description: "d",
+          anyOf: [{ type: "object", properties: { a: { type: "string" } } }, { type: "string" }],
+        },
+        one: {
+          description: "d",
+          oneOf: [{ type: "string" }, { type: "object", properties: { b: { type: "string", description: " " } } }],
+        },
+      },
+    };
+    expect(undescribed(schema, "syn")).toEqual([
+      "syn.top",
+      "syn.list[].inner",
+      "syn.either.anyOf[0].a",
+      "syn.one.oneOf[1].b",
+    ]);
+  });
+});

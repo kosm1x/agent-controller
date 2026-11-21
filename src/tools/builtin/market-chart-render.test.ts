@@ -229,3 +229,38 @@ describe("market_chart_render execute", () => {
     expect(out.message).toMatch(/budget exhausted/);
   });
 });
+
+describe("market_chart_render schema texts", () => {
+  type Prop = { description?: string };
+  async function texts() {
+    const { marketChartRenderTool } = await import("./market-chart-render.js");
+    const fn = marketChartRenderTool.definition.function;
+    const signals = (
+      fn.parameters as {
+        properties: {
+          signals: Prop & { items: { properties: Record<string, Prop> } };
+        };
+      }
+    ).properties.signals;
+    return { description: fn.description, signals };
+  }
+
+  it("describes which signals are kept and drawn, each kind's marker and the label default", async () => {
+    const { signals } = await texts();
+    expect(signals.description).toBe(
+      "Markers to plot. Each entry needs a string time and a kind of buy, sell or note; an entry without them is dropped or the whole call is refused. An entry is drawn only when its time is the date of a rendered bar. Default: none.",
+    );
+    expect(signals.items.properties.kind.description).toBe(
+      "buy: up arrow below the bar; sell: down arrow above it; note: circle above it.",
+    );
+    expect(signals.items.properties.text.description).toBe(
+      "Marker label. Default: BUY for buy, SELL for sell, empty for note.",
+    );
+  });
+
+  it("the description calls signals markers, not arrows", async () => {
+    const { description } = await texts();
+    expect(description.split("plotted as markers above/below bars.").length).toBe(2);
+    expect(description).not.toContain("plotted as arrows");
+  });
+});

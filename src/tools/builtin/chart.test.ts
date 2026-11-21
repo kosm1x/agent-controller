@@ -57,3 +57,21 @@ describe("chart_generate", () => {
     expect(result.error).toContain("500");
   });
 });
+
+describe("chart_generate schema texts", () => {
+  type Prop = { description?: string };
+  const series = (
+    chartGenerateTool.definition.function.parameters as {
+      properties: {
+        datasets: { items: { properties: Record<string, Prop> } };
+      };
+    }
+  ).properties.datasets.items.properties;
+
+  it("describes each series' label and numbers as the handler uses them", () => {
+    expect(series.label.description).toBe("Series name. Default: empty.");
+    expect(series.data.description).toBe(
+      "The series' numbers, in the same order as labels; passed to the chart as given.",
+    );
+  });
+});
