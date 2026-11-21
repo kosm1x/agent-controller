@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-21 00:14 UTC — batch 11: the seven leftover false statements, the nine citations on the lock test's list (now EMPTY) and batch 7's comment repair in the inference folder (D3) are COMMITTED `6707b48d` (queue 4hf). Left in batch 11: a later comment piece (messaging leaves, scripts that place the prompt builder in the router, the items noticed in 4hf). Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: batch leftovers, then batch 10.**
+
 **Status 2026-11-20 23:24 UTC — build `d416150f` is LIVE since 23:20 UTC (queue 4he); everything committed is deployed. The start-row piece (4gz) is proven on live tasks. Batch 7 unchanged: pure moves done, D3 not yet done, wait list A2, A4, B3, C1, F1, D1. Next: 4gr (4), then the batch leftovers and batch 10.**
 
 **Status 2026-11-20 23:07 UTC — checks 4gm and 4gp (4) answered (queue 4hc); a security fix found by that pass is committed `31c7f6fe` (queue 4hd: a restricted channel keeps its tool restriction). Batch 7 unchanged: pure moves done, D3 not yet done, wait list A2, A4, B3, C1, F1, D1. Next: 4gr (4), then the batch leftovers and batch 10.**
