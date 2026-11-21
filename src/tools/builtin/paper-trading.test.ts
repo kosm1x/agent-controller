@@ -20,6 +20,9 @@ vi.mock("../../db/index.js", () => ({
   getDatabase: () => db,
 }));
 
+// Age of the stubbed price bars; a case that needs stale quotes raises it.
+const quote = vi.hoisted(() => ({ ageMs: 0 }));
+
 // Stub data-layer so the tool uses a fixed price without hitting AV.
 vi.mock("../../finance/data-layer.js", async () => {
   // The bar timestamp must stay fresh: PaperEquityAdapter rejects quotes
@@ -28,7 +31,7 @@ vi.mock("../../finance/data-layer.js", async () => {
   // zero fills. Anchor it to "now" so the fixture never ages out.
   const fakeBar = (symbol: string, close: number) => ({
     symbol,
-    timestamp: new Date().toISOString(),
+    timestamp: new Date(Date.now() - quote.ageMs).toISOString(),
     open: close,
     high: close,
     low: close,
@@ -60,6 +63,26 @@ import {
   paperPortfolioTool,
   paperHistoryTool,
 } from "./paper-trading.js";
+
+/** A failed call returns an object whose first and only key is `error`. */
+function errorText(out: string): string {
+  expect(out.startsWith('{"error":')).toBe(true);
+  const parsed = JSON.parse(out) as Record<string, unknown>;
+  expect(Object.keys(parsed)).toEqual(["error"]);
+  return parsed.error as string;
+}
+
+function rowCount(table: string): number {
+  return (
+    db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }
+  ).n;
+}
+
+/** A rebalance that could not start leaves no fill and no thesis row. */
+function expectNothingWritten() {
+  expect(rowCount("paper_fills")).toBe(0);
+  expect(rowCount("trade_theses")).toBe(0);
+}
 
 /** Seed minimum F7 + F7.5 state so paper_rebalance has something to read. */
 function seedAlphaAndBacktest(opts: {
@@ -101,37 +124,48 @@ function seedAlphaAndBacktest(opts: {
   ).run("bt-run-1", opts.pbo ?? 0.3, opts.dsrPvalue ?? 0.5);
 }
 
+beforeEach(() => {
+  quote.ageMs = 0;
+});
+
 describe("paperRebalanceTool", () => {
   beforeEach(() => {
     db = freshDb();
   });
 
-  it("refuses with clear message when no alpha run exists", async () => {
+  it("returns an error object when no alpha run exists", async () => {
     const out = (await paperRebalanceTool.execute({})) as string;
-    expect(out).toMatch(/no alpha run found/);
+    expect(errorText(out)).toBe(
+      "paper_rebalance: no alpha run found. Run `alpha_run` first to produce signal weights.",
+    );
+    expectNothingWritten();
   });
 
-  it("refuses when no backtest run exists", async () => {
+  it("returns an error object when no backtest run exists", async () => {
     db.prepare(
       `INSERT INTO signal_weights
         (run_id, run_timestamp, mode, signal_key, signal_name, weight, epsilon, sigma, e_norm, ic_30d, regime, n_effective, excluded, exclude_reason)
        VALUES (?, ?, 'returns', 'macd:AAPL', 'macd on AAPL', 0.4, 0, 0.1, 0, null, null, 1, 0, null)`,
     ).run("a1", "2026-04-17T16:00:00Z");
     const out = (await paperRebalanceTool.execute({})) as string;
-    expect(out).toMatch(/no backtest run found/);
+    expect(errorText(out)).toBe(
+      "paper_rebalance: no backtest run found. Run `backtest_run` first to check the ship_gate.",
+    );
+    expectNothingWritten();
   });
 
-  it("refuses when ship_blocked=1 without override", async () => {
+  it("returns an error object with every gate line when ship_blocked=1 without override", async () => {
     seedAlphaAndBacktest({ shipBlocked: true, pbo: 0.6, dsrPvalue: 0.2 });
     const out = (await paperRebalanceTool.execute({})) as string;
-    expect(out).toMatch(/SHIP_BLOCKED/);
-    expect(out).toMatch(/PBO=0\.6/);
-    expect(out).toMatch(/override_ship_gate/);
-    // No fills should land
-    const fillCount = (
-      db.prepare(`SELECT COUNT(*) AS n FROM paper_fills`).get() as { n: number }
-    ).n;
-    expect(fillCount).toBe(0);
+    expect(errorText(out)).toBe(
+      [
+        "paper_rebalance: SHIP_BLOCKED by F7.5 firewall.",
+        "  latest backtest run_id=bt-run-1",
+        "  PBO=0.6000 (threshold 0.50)  DSR_pvalue=0.2000 (threshold 0.05)",
+        "  Pass override_ship_gate: true to force. The override is logged.",
+      ].join("\n"),
+    );
+    expectNothingWritten();
   });
 
   it("executes under ship_gate override", async () => {
@@ -161,8 +195,21 @@ describe("paperRebalanceTool", () => {
   it("executes when ship_blocked=0 (no override needed)", async () => {
     seedAlphaAndBacktest({ shipBlocked: false });
     const out = (await paperRebalanceTool.execute({})) as string;
-    expect(out).toContain("paper_rebalance:");
+    expect(out.startsWith("paper_rebalance: thesis_id=")).toBe(true);
     expect(out).not.toMatch(/SHIP_GATE OVERRIDDEN/);
+  });
+
+  it("reports a stale-quote abort as plain text", async () => {
+    seedAlphaAndBacktest({ shipBlocked: false });
+    await paperRebalanceTool.execute({});
+    expect(rowCount("paper_fills")).toBeGreaterThan(0);
+    quote.ageMs = 60 * 24 * 60 * 60 * 1000;
+    const out = (await paperRebalanceTool.execute({})) as string;
+    expect(out.startsWith("paper_rebalance: thesis_id=")).toBe(true);
+    expect(out).toContain("  ⚠  ABORTED: stale quotes for ");
+    expect(out).toContain(
+      ". Refresh prices or pass override_stale=true.",
+    );
   });
 
   it("reports when alpha has no active weights", async () => {
@@ -179,7 +226,11 @@ describe("paperRebalanceTool", () => {
        VALUES ('bt', ?, 'flam', 'returns', 'a', 'b', 5, 1, 0.3, 0.5, 0.5, 0)`,
     ).run("2026-04-17T16:00:00Z");
     const out = (await paperRebalanceTool.execute({})) as string;
-    expect(out).toMatch(/no active weights/);
+    // No active weights is a result, not a failure: plain text, nothing traded.
+    expect(out).toBe(
+      "paper_rebalance: alpha run a1 has no active weights (all signals excluded). Nothing to trade.",
+    );
+    expect(rowCount("paper_fills")).toBe(0);
   });
 });
 

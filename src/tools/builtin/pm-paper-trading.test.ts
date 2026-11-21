@@ -97,9 +97,21 @@ describe("pmPaperRebalanceTool", () => {
     db = freshDb();
   });
 
-  it("reports clear error when no pm_alpha run exists", async () => {
+  it("returns an error object when no pm_alpha run exists", async () => {
     const out = (await pmPaperRebalanceTool.execute({})) as string;
-    expect(out).toMatch(/no pm_alpha_run found/);
+    expect(out.startsWith('{"error":')).toBe(true);
+    const parsed = JSON.parse(out) as Record<string, unknown>;
+    expect(Object.keys(parsed)).toEqual(["error"]);
+    expect(parsed.error).toBe(
+      "pm_paper_rebalance: no pm_alpha_run found. Run `pm_alpha_run` first to produce per-token weights.",
+    );
+    // Nothing was traded or recorded.
+    for (const table of ["pm_paper_fills", "trade_theses"]) {
+      const n = (
+        db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }
+      ).n;
+      expect(n).toBe(0);
+    }
   });
 
   it("reports when pm_alpha has no active weights", async () => {
@@ -111,14 +123,22 @@ describe("pmPaperRebalanceTool", () => {
        VALUES (?, ?, ?, ?, 0.4, 0.4, 0, 0, 0, 0, 1, 'low_liquidity')`,
     ).run("r", FRESH_NOW(), "0xexcl", "Yes");
     const out = (await pmPaperRebalanceTool.execute({})) as string;
-    expect(out).toMatch(/no active weights/);
+    // No active weights is a result, not a failure: plain text, nothing traded.
+    expect(out).toBe(
+      "pm_paper_rebalance: pm_alpha run r has no active weights. Nothing to trade.",
+    );
+    const fills = (
+      db.prepare(`SELECT COUNT(*) AS n FROM pm_paper_fills`).get() as {
+        n: number;
+      }
+    ).n;
+    expect(fills).toBe(0);
   });
 
   it("executes a rebalance end-to-end and persists fills + thesis", async () => {
     seedPmAlphaWithMarket({ marketId: "0xm1", yesPrice: 0.4, weight: 0.05 });
     const out = (await pmPaperRebalanceTool.execute({})) as string;
-    expect(out).toContain("pm_paper_rebalance:");
-    expect(out).toContain("thesis_id=");
+    expect(out.startsWith("pm_paper_rebalance: thesis_id=")).toBe(true);
     expect(out).toContain("filled=");
 
     const fillCount = (
@@ -148,6 +168,7 @@ describe("pmPaperRebalanceTool", () => {
     ).run("0xm1");
     // Re-seed pm_alpha weights so readLatestPmAlphaRun still yields targets.
     const staleOut = (await pmPaperRebalanceTool.execute({})) as string;
+    expect(staleOut.startsWith("pm_paper_rebalance: thesis_id=")).toBe(true);
     expect(staleOut).toContain("STALE_ABORT");
     // With allow_stale=true the gate lifts and rebalance proceeds.
     const forcedOut = (await pmPaperRebalanceTool.execute({

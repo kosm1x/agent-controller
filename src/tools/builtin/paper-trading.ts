@@ -1,8 +1,8 @@
 /**
  * F8 Paper Trading tools — `paper_rebalance`, `paper_portfolio`, `paper_history`.
  *
- * All deferred. Loaded when the `paper` scope activates. Pre-formatted text
- * output per feedback_preformat_over_prompt.
+ * All deferred. Loaded when the `paper` scope activates. Results are
+ * pre-formatted text; a rebalance that cannot start returns an `{error}` object.
  *
  * paper_rebalance  (write) — run the full pipeline: read alpha_latest +
  *                             backtest_latest → check ship_gate → fetch prices
@@ -126,26 +126,32 @@ no shorts, no options. MARKET orders only. Weekly cadence.`,
 
     const alpha = readLatestAlphaRun();
     if (!alpha) {
-      return `paper_rebalance: no alpha run found. Run \`alpha_run\` first to produce signal weights.`;
+      return JSON.stringify({
+        error: `paper_rebalance: no alpha run found. Run \`alpha_run\` first to produce signal weights.`,
+      });
     }
     // Audit W1 round 1: prefer the latest 'flam' run, but fall back to the
     // latest overall run if 'flam' doesn't exist yet. Avoids a hard failure
     // when the strategy name evolves.
     const backtest = readLatestBacktest("flam") ?? readLatestBacktest();
     if (!backtest) {
-      return `paper_rebalance: no backtest run found. Run \`backtest_run\` first to check the ship_gate.`;
+      return JSON.stringify({
+        error: `paper_rebalance: no backtest run found. Run \`backtest_run\` first to check the ship_gate.`,
+      });
     }
 
     const shipBlocked = backtest.run.ship_blocked === 1;
     if (shipBlocked && !overrideShipGate) {
       const pbo = fmt(backtest.run.pbo, 4);
       const dsr = fmt(backtest.run.dsr_pvalue, 4);
-      return [
-        `paper_rebalance: SHIP_BLOCKED by F7.5 firewall.`,
-        `  latest backtest run_id=${backtest.run.run_id}`,
-        `  PBO=${pbo} (threshold 0.50)  DSR_pvalue=${dsr} (threshold 0.05)`,
-        `  Pass override_ship_gate: true to force. The override is logged.`,
-      ].join("\n");
+      return JSON.stringify({
+        error: [
+          `paper_rebalance: SHIP_BLOCKED by F7.5 firewall.`,
+          `  latest backtest run_id=${backtest.run.run_id}`,
+          `  PBO=${pbo} (threshold 0.50)  DSR_pvalue=${dsr} (threshold 0.05)`,
+          `  Pass override_ship_gate: true to force. The override is logged.`,
+        ].join("\n"),
+      });
     }
 
     const targetWeights = weightsBySymbol(alpha);

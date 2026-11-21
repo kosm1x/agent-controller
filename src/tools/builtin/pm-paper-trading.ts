@@ -137,7 +137,9 @@ MARKET orders only. Dust threshold: $10 per trade.`,
 
     const pmAlpha = readLatestPmAlphaRun();
     if (!pmAlpha) {
-      return `pm_paper_rebalance: no pm_alpha_run found. Run \`pm_alpha_run\` first to produce per-token weights.`;
+      return JSON.stringify({
+        error: `pm_paper_rebalance: no pm_alpha_run found. Run \`pm_alpha_run\` first to produce per-token weights.`,
+      });
     }
 
     // Extract signed weights per (market_id, outcome). Only active (non-excluded)
