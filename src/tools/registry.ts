@@ -183,6 +183,28 @@ function successFalseText(text: string): string | undefined {
   return "the tool reported success: false";
 }
 
+/**
+ * A write result that parses to an object whose top-level `error` is a
+ * non-empty string or a non-null object (not an array) is a failed write
+ * wherever that field sits: its text is the string, else the object's
+ * non-empty `message`, else the JSON of the `error` value. Undefined for
+ * any other result.
+ */
+function errorFieldText(text: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object") return undefined;
+  const e = (parsed as { error?: unknown }).error;
+  if (typeof e === "string") return e === "" ? undefined : e;
+  if (typeof e !== "object" || e === null || Array.isArray(e)) return undefined;
+  const m = (e as { message?: unknown }).message;
+  return typeof m === "string" && m !== "" ? m : JSON.stringify(e);
+}
+
 /** Item 10: a failed write-class call of the current run (no-op outside a run). */
 function recordFailedWrite(name: string, text: string): void {
   const runTaskId = currentRunTaskId();
@@ -535,10 +557,15 @@ export class ToolRegistry {
         const isError = isErrorResult(result);
         // Item 10: the run's LAST write-class outcome (a done-claim after a
         // failed write is checked at completion — consumer.ts). A write that
-        // reports `success: false` failed too; for that outcome only — the
-        // written keys and the evidence below still follow the error check.
+        // reports `success: false`, or a top-level `error` field that is a
+        // non-empty string or a non-null, non-array object in any key
+        // position, failed too (`success: false` is read first); for that
+        // outcome only — the written keys and the evidence below still follow
+        // the error check.
         if (isWriteClassTool(name)) {
-          const reported = isError ? undefined : successFalseText(String(result));
+          const reported = isError
+            ? undefined
+            : (successFalseText(String(result)) ?? errorFieldText(String(result)));
           recordWriteOutcome(
             runTaskId,
             name,

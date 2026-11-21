@@ -158,7 +158,11 @@ export const UNRESOLVED_TARGET_TOOL_RE = /^(grep|glob|code_search|list_dir)$/;
  * error result, a thrown value or the registry's own refusal gives its
  * `error` field when the text is JSON with a string `error`, else the text
  * itself; a write's `success: false` envelope gives a short text built from
- * it. Freed by `takeWriteOutcome` / `takeToolEvidence`.
+ * it; else a write's top-level `error` field that is not the first key gives
+ * that field when it is a non-empty string, or, when it is an object (not
+ * null or an array), its `message` when that is a non-empty string, else the
+ * JSON text of the `error` value. Freed by `takeWriteOutcome` /
+ * `takeToolEvidence`.
  */
 export interface WriteOutcome {
   tool: string;

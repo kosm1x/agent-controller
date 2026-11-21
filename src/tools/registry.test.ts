@@ -1044,8 +1044,8 @@ describe("write-class outcome (queue 2026-10-08 late item 10)", () => {
     expect(ran).toBe(0);
   });
 
-  // A failure that also carries its full summary is detected only while
-  // `error` is the FIRST key: the error-result check reads the text's start.
+  // A failure that also carries its full summary, with `error` as the first
+  // key: the error-result check flags it, so its targets are not run writes.
   it("an {error, summary} result is a failed write with the error line, and its targets are not run writes", async () => {
     const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
     const { hasRunWrites } = await import("../lib/v8-4/numbers.js");
@@ -1101,7 +1101,7 @@ describe("write-class outcome (queue 2026-10-08 late item 10)", () => {
     expect(await outcome("plain")).toEqual(failed("the tool reported success: false"));
   });
 
-  it("only success === false moves the outcome: no success field, success true, a non-JSON or array result and the string \"false\" stay ok; an empty {error} stays failed", async () => {
+  it("no success field, success true, a non-JSON or array result and the string \"false\" stay ok; an empty {error} as the first key stays failed", async () => {
     const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
     const shapes: Record<string, string> = {
       noField: JSON.stringify({ path: "/tmp/a.md", bytes_written: 3 }),
@@ -1195,5 +1195,99 @@ describe("write-class outcome (queue 2026-10-08 late item 10)", () => {
     };
     expect(await outcome("textCounts")).toEqual({ tool: "jarvis_files_batch_write", ok: false, error: "the tool reported success: false" });
     expect(await outcome("odd")).toEqual({ tool: "jarvis_files_batch_write", ok: false, error: "1 of 2 items failed" });
+  });
+
+  // A top-level `error` that is not the first key still fails the write when
+  // it is a non-empty string or a non-null object.
+  it("an error field after other keys fails the write: text is the string, the object's message, or the error value's JSON, capped", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const shapes: Record<string, string> = {
+      message: JSON.stringify({ ref: "r1", http_status: 403, error: { code: "c1", message: "not allowed" } }),
+      noMessage: JSON.stringify({ ref: "r1", http_status: 500, error: { code: "c2", data: { status: 500 } } }),
+      emptyMessage: JSON.stringify({ ref: "r1", error: { code: "c3", message: "" } }),
+      string: JSON.stringify({ ref: "r1", http_status: 502, error: "bad gateway" }),
+      long: JSON.stringify({ ref: "r1", error: `gateway ${"y".repeat(400)}` }),
+      spaces: JSON.stringify({ ref: "r1", http_status: 500, error: "   " }),
+      numberMessage: JSON.stringify({ ref: "r1", error: { message: 5 } }),
+    };
+    add("gdocs_write", (a) => shapes[a.shape as string]!);
+    const outcome = async (shape: string) => {
+      const out = await enterRunToolContext(`t-f-${shape}`, () =>
+        reg.execute("gdocs_write", { document_id: "DOC12345678", shape }),
+      );
+      expect(out).toBe(shapes[shape]); // the model receives the tool's own result
+      return takeWriteOutcome(`t-f-${shape}`);
+    };
+    const failed = (error: string) => ({ tool: "gdocs_write", ok: false, error });
+    expect(await outcome("message")).toEqual(failed("not allowed"));
+    expect(await outcome("noMessage")).toEqual(failed('{"code":"c2","data":{"status":500}}'));
+    expect(await outcome("emptyMessage")).toEqual(failed('{"code":"c3","message":""}'));
+    expect(await outcome("string")).toEqual(failed("bad gateway"));
+    const long = await outcome("long");
+    expect(long).toMatchObject({ tool: "gdocs_write", ok: false });
+    expect(long!.error!.startsWith("gateway yyy")).toBe(true);
+    expect(long!.error!).toHaveLength(300);
+    expect(await outcome("spaces")).toEqual(failed("   "));
+    expect(await outcome("numberMessage")).toEqual(failed('{"message":5}'));
+  });
+
+  it("an object error as the first key records the raw result text", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const result = JSON.stringify({ error: { message: "m" }, x: 1 });
+    add("gdocs_write", () => result);
+    await enterRunToolContext("t-of1", () => reg.execute("gdocs_write", { document_id: "DOC12345678" }));
+    expect(takeWriteOutcome("t-of1")).toEqual({ tool: "gdocs_write", ok: false, error: '{"error":{"message":"m"},"x":1}' });
+  });
+
+  it("an empty, null, number, boolean or array error, a nested error, registry_error, an errors count, an array result and plain text stay ok", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const shapes: Record<string, string> = {
+      empty: JSON.stringify({ ref: "r1", http_status: 500, error: "" }),
+      null: JSON.stringify({ ref: "r1", http_status: 500, error: null }),
+      none: JSON.stringify({ written: true, document_id: "DOC12345678" }),
+      number: JSON.stringify({ ref: "r1", error: 5 }),
+      boolean: JSON.stringify({ ref: "r1", error: true }),
+      list: JSON.stringify({ ref: "r1", error: ["x"] }),
+      nested: JSON.stringify({ result: { error: "x" } }),
+      registryError: JSON.stringify({ path: "/tmp/a.md", bytes_written: 3, registry_error: "db locked" }),
+      errorsCount: JSON.stringify({ total: 3, ok: 1, errors: 2 }),
+      array: JSON.stringify([{ ref: "r1", error: "x" }]),
+      text: "written; error: none",
+    };
+    add("gdocs_write", (a) => shapes[a.shape as string]!);
+    for (const shape of Object.keys(shapes)) {
+      await enterRunToolContext(`t-k-${shape}`, () =>
+        reg.execute("gdocs_write", { document_id: "DOC12345678", shape }),
+      );
+      expect(takeWriteOutcome(`t-k-${shape}`), shape).toEqual({ tool: "gdocs_write", ok: true });
+    }
+  });
+
+  it("a result with both success:false and an error object keeps the success:false text", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    add("gdocs_write", () => JSON.stringify({ success: false, error: { message: "m1" } }));
+    await enterRunToolContext("t-b1", () => reg.execute("gdocs_write", { document_id: "DOC12345678" }));
+    expect(takeWriteOutcome("t-b1")).toEqual({ tool: "gdocs_write", ok: false, error: "the tool reported success: false" });
+  });
+
+  it("an empty-object error field after other keys fails the write with the text {}", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    add("gdocs_write", () => JSON.stringify({ ref: "r1", http_status: 500, error: {} }));
+    await enterRunToolContext("t-e1", () => reg.execute("gdocs_write", { document_id: "DOC12345678" }));
+    expect(takeWriteOutcome("t-e1")).toEqual({ tool: "gdocs_write", ok: false, error: "{}" });
+  });
+
+  it("a write failed by a later error field still records its target as a run write; a non-write tool with that result records no outcome and stays evidence", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const { hasRunWrites, peekToolEvidence } = await import("../lib/v8-4/numbers.js");
+    const result = JSON.stringify({ ref: "r1", http_status: 403, error: { message: "not allowed" } });
+    add("gdocs_write", () => result);
+    add("srv__read", () => result);
+    await enterRunToolContext("t-g1", () => reg.execute("gdocs_write", { document_id: "DOC12345678" }));
+    expect(hasRunWrites("t-g1")).toBe(true);
+    expect(takeWriteOutcome("t-g1")).toEqual({ tool: "gdocs_write", ok: false, error: "not allowed" });
+    await enterRunToolContext("t-g2", () => reg.execute("srv__read", { id: "x" }));
+    expect(peekToolEvidence("t-g2")).toEqual([result]);
+    expect(takeWriteOutcome("t-g2")).toBeUndefined();
   });
 });
