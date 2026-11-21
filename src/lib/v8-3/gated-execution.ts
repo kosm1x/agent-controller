@@ -232,8 +232,9 @@ export async function recordGatedExecution(
         } catch (e) {
           thunkThrew = true;
           thunkError = e;
-          // Never an empty `error`: readers that test the field by truth
-          // would take the failed call for a success.
+          // An empty `error` reads as a success to readers that test the field
+          // by truth; errMsg covers an empty message, the fallback a non-string
+          // message that reads as false.
           output = JSON.stringify({
             error: errMsg(e) || "tool failed without an error message",
           });

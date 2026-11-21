@@ -358,6 +358,7 @@ describe("createMcpTool", () => {
   // A failed call never carries an empty `error`: a reader that tests the
   // field by truth would take the failure for a success.
   const NO_MESSAGE = "tool failed without an error message";
+  const THROWN_NO_MESSAGE = "unknown error (no message given)";
 
   it("a failed call with one empty text item returns the fallback text", async () => {
     const callFn: McpCallFn = vi.fn().mockResolvedValue({
@@ -374,6 +375,15 @@ describe("createMcpTool", () => {
     ["a thrown empty string", () => ""],
   ])("%s thrown by the call returns the fallback text", async (_label, thrown) => {
     const callFn: McpCallFn = vi.fn().mockRejectedValue(thrown());
+    const tool = createMcpTool("w", { name: "t" }, callFn);
+
+    expect(JSON.parse(await tool.execute({}))).toEqual({ error: THROWN_NO_MESSAGE });
+  });
+
+  it("an Error whose message is undefined thrown by the call returns the fallback text", async () => {
+    const callFn: McpCallFn = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error("x"), { message: undefined }));
     const tool = createMcpTool("w", { name: "t" }, callFn);
 
     expect(JSON.parse(await tool.execute({}))).toEqual({ error: NO_MESSAGE });

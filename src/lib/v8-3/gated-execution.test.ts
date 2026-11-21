@@ -310,6 +310,21 @@ describe("recordGatedExecution — shared wrapper contract", () => {
       },
       { source: "interactive", threadId: "t1" },
     );
+    expect(JSON.parse(out)).toEqual({ error: "unknown error (no message given)" });
+    expect(decisionRows().map((r) => r.status)).toEqual(["pending"]);
+  });
+
+  it("interactive: an Error whose message is undefined returns the fallback text and the decision stays pending", async () => {
+    process.env.V83_ENABLED = "true";
+    process.env.V83_GATED_CAPABILITIES = "gmail_send";
+    const out = await recordGatedExecution(
+      "gmail_send",
+      { to: "a@b.c" },
+      async () => {
+        throw Object.assign(new Error("x"), { message: undefined });
+      },
+      { source: "interactive", threadId: "t1" },
+    );
     expect(JSON.parse(out)).toEqual({ error: "tool failed without an error message" });
     expect(decisionRows().map((r) => r.status)).toEqual(["pending"]);
   });

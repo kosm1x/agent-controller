@@ -1,10 +1,16 @@
 /**
- * Error-message extraction — the `e instanceof Error ? e.message : String(e)`
- * one-liner, centralized. Use in every `catch (e: unknown)` block that needs
- * a human-readable message.
+ * Error-message extraction for every `catch (e: unknown)` block that needs
+ * a human-readable message: an Error's own message, else the value's text
+ * form; an empty text is replaced by a fixed sentence.
  */
 
-/** Extract a readable message from an unknown catch value. */
+/**
+ * Extract a readable message from an unknown catch value. When that text is
+ * the empty string (an Error without a message, a thrown ""), a fixed
+ * sentence is returned instead: a reader that tests an error text by truth
+ * would take an empty one for no error at all.
+ */
 export function errMsg(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  const text = e instanceof Error ? e.message : String(e);
+  return text === "" ? "unknown error (no message given)" : text;
 }

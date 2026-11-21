@@ -282,8 +282,10 @@ export function createMcpTool(
       try {
         const result = await callFn(mcpTool.name, args);
         const text = renderResult(result);
-        // A failure never carries an empty `error`: a reader that tests the
-        // field by truth would take the failed call for a success.
+        // An empty `error` reads as a success to a reader that tests the
+        // field by truth, so a failed call with an empty text gets a fixed
+        // sentence here, and errMsg does the same for a thrown empty message;
+        // a thrown non-string message that reads as false gets this sentence.
         if (result.isError) {
           return JSON.stringify({
             error: text || "tool failed without an error message",
