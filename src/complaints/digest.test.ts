@@ -43,14 +43,14 @@ describe("grouping", () => {
       [
         row({ ritual_id: "a" }),
         row({ ritual_id: "a" }),
-        row({ ritual_id: null, schedule_id: "s1", schedule_name: "Daily pharma" }),
+        row({ ritual_id: null, schedule_id: "s1", schedule_name: "Daily report" }),
         row({ ritual_id: null, schedule_id: null }),
       ],
       OPTS,
     );
     expect(d.types.map((t) => [t.key, t.name, t.runs])).toEqual([
       ["ritual:a", "a", 2],
-      ["schedule:s1", "Daily pharma", 1],
+      ["schedule:s1", "Daily report", 1],
     ]);
   });
 
@@ -216,7 +216,7 @@ describe("robustness and determinism", () => {
   it("shuffled input order gives byte-identical text and JSON", () => {
     const rs = [
       ...runs("CC.CCFC.CC", { ritual_id: "a", tools: '{"exa":4,"web":1}', has_audit: 1, unverified: '["9%"]' }),
-      ...runs("..C..C..", { ritual_id: null, schedule_id: "s1", schedule_name: "Pharma", tools: '{"exa":1}' }),
+      ...runs("..C..C..", { ritual_id: null, schedule_id: "s1", schedule_name: "Report", tools: '{"exa":1}' }),
       ...runs("CCCCCCC", { ritual_id: "b", reply_tail: "reply  text" }),
     ];
     rs[8].created_at = rs[7].created_at; // a "." and a "C" tie on created_at: task_id decides
