@@ -527,7 +527,7 @@ describe("--verdict: a prediction closed by code", () => {
     // slack, a test that races the spawn; the call is pinned instead.
     const cli = readFileSync(join(REPO, "scripts", "complaints-digest.ts"), "utf8");
     expect(cli.split("\n").filter((l) => l.includes("nowIsAfterClock(")).map((l) => l.trim())).toEqual([
-      'if (nowIsAfterClock(nowMs, Date.now())) fail("--now must not be later than the current time with --verdict");',
+      "if (judged && nowIsAfterClock(nowMs, Date.now())) fail(`--now must not be later than the current time with ${judged}`);",
     ]);
   });
 
@@ -598,5 +598,113 @@ describe("--verdict: a prediction closed by code", () => {
 
   it("just inside the window, and K = N - 1, are accepted", () => {
     expect(json(["--type", "ritual:vr", "--since", "2026-10-21T18:00:01Z", "--max-complaints", "6"]).verdict).toBe("CONFIRMED");
+  }, 60_000);
+});
+
+describe("--ledger: every prediction in a file, checked by code", () => {
+  // Ritual "lg" from S on: l1 clean with 3 exa calls, l2 a concern with 1, l3
+  // clean with no trace rows at all.
+  const LG: [string, string, string, string, number][] = [
+    ["l1", "completed", "2026-11-15 12:00:00", "{}", 3],
+    ["l2", "completed_with_concerns", "2026-11-16 12:00:00", '{"text":"l2 reply"}', 1],
+    ["l3", "completed", "2026-11-17 12:00:00", "{}", 0],
+  ];
+  const S = "2026-11-15T12:00:00Z";
+  const SS = "2026-11-15T12:00:00.000Z";
+  const CHECKED = "2026-11-20T18:00:00.000Z";
+  const RECORDED = "2026-11-19T00:00:00.000Z";
+  const base = { type: "ritual:lg", since: S, maxComplaints: 1, runs: 3, change: "a change", baseline: "a baseline" };
+  const ROWS = {
+    a: { id: "a", ...base, guards: [{ tool: "exa", min: 2, maxBelow: 1 }], answer: "never printed" },
+    b: { id: "b", ...base, guards: [{ tool: "exa", min: 1, maxBelow: 1 }], closed: { state: "CONFIRMED", checkedAt: RECORDED, line: "earlier" } },
+    c: { id: "c", ...base, type: "ritual:nobody", maxComplaints: 0, runs: 2 },
+    d: { id: "d", ...base, type: "ritual:old", since: "2026-10-01T00:00:00Z", maxComplaints: 0, runs: 1 },
+  };
+  const LINE_A = `a CONFIRMED, guard broken | ritual:lg since ${SS}: counted 3/3, complaints 1 (limit 1), unknown 0 [.C.]; guard exa >= 2: 2 run(s) below (limit 1) broken`;
+  const LINE_B = `b CONFIRMED | ritual:lg since ${SS}: counted 3/3, complaints 1 (limit 1), unknown 0 [.C.]; guard exa >= 1: 1 run(s) below (limit 1) holds`;
+  const LINE_C = `c COUNTING | ritual:nobody since ${SS}: counted 0/2, complaints 0 (limit 0), unknown 2 []; guard: none; no run of this type in 30 days`;
+  const LINE_D = "d EXPIRED | ritual:old since 2026-10-01T00:00:00.000Z: since is outside the 30-day window";
+  const paste = (state: string, line: string) => `  "closed":${JSON.stringify({ state, checkedAt: CHECKED, line })}`;
+  let ldb: string;
+  const ledgerFile = (name: string, rows: object[]) => {
+    const path = join(dir, name);
+    writeFileSync(path, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+    return path;
+  };
+  const ledger = (args: string[]) => wrapper(["--db", ldb, "--now", NOW, "--ledger", ...args]);
+  const sidecars = () => [`${ldb}-wal`, `${ldb}-shm`].filter((p) => existsSync(p));
+
+  beforeAll(() => {
+    // WAL mode, as in the verdict cases: sidecars appear only once sqlite3 opens the file.
+    ldb = join(dir, "ledger.db");
+    const inserts = LG.flatMap(([id, status, created, output, exa]) => [
+      `INSERT INTO tasks (task_id, status, created_at, metadata, output) VALUES (${[id, status, created, '{"ritualId":"lg"}', output].map(lit).join(", ")});`,
+      ...Array.from({ length: exa }, () => `INSERT INTO task_trace_events (task_id, name, tool) VALUES (${lit(id)}, 'tool.called', 'exa');`),
+    ]);
+    const r = spawnSync("/usr/bin/sqlite3", ["-init", "/dev/null", "-bail", ldb], {
+      input: `PRAGMA journal_mode=WAL;\n${SCHEMA}\n${inserts.join("\n")}\n`,
+      encoding: "utf8",
+    });
+    if (r.status !== 0) throw new Error(`fixture sqlite3 failed: ${r.stderr}`);
+  });
+
+  it("text: guards over trace rows, a recorded closure that agrees, a type with no runs, an expired row; exit 0", () => {
+    const f = ledgerFile("ledger.jsonl", [ROWS.a, ROWS.b, ROWS.c, ROWS.d]);
+    const r = ledger([f]);
+    expect([r.status, r.stderr]).toEqual([0, ""]);
+    expect(r.stdout).toBe(
+      [
+        `Ledger ${f} checked at ${CHECKED} over the 30 days before it: 4 row(s)`,
+        LINE_A,
+        paste("CONFIRMED, guard broken", LINE_A),
+        LINE_B,
+        `  recorded CONFIRMED at ${RECORDED}; recheck agrees`,
+        LINE_C,
+        LINE_D,
+        paste("EXPIRED", LINE_D),
+        "",
+      ].join("\n"),
+    );
+    expect(sidecars()).toHaveLength(2);
+  }, 60_000);
+
+  it("a recorded closure the recheck disagrees with: exit 3, every line still printed", () => {
+    const f = ledgerFile("mismatch.jsonl", [{ ...ROWS.b, closed: { ...ROWS.b.closed, state: "REFUTED" } }, ROWS.c]);
+    const r = ledger([f]);
+    expect([r.status, r.stderr]).toEqual([3, ""]);
+    expect(r.stdout.split("\n")).toEqual([
+      `Ledger ${f} checked at ${CHECKED} over the 30 days before it: 2 row(s)`,
+      LINE_B,
+      `  MISMATCH: recorded REFUTED at ${RECORDED}, recheck says CONFIRMED`,
+      LINE_C,
+      "",
+    ]);
+  }, 60_000);
+
+  // One spawn per case; each proves no database was opened (no sidecars).
+  const ERRORS: [string, (f: string) => string[], (f: string) => string[]][] = [
+    ["--verdict", (f) => ["--now", NOW, "--ledger", f, "--verdict"], () => ["--ledger cannot be used with --verdict"]],
+    ["--type", (f) => ["--now", NOW, "--ledger", f, "--type", "ritual:lg"], () => ["--ledger cannot be used with --type"]],
+    ["--days", (f) => ["--now", NOW, "--ledger", f, "--days", "7"], () => ["--ledger cannot be used with --days"]],
+    ["--json", (f) => ["--now", NOW, "--ledger", f, "--json"], () => ["--ledger cannot be used with --json"]],
+    ["a --now ahead of the clock", (f) => ["--now", "2099-01-01T00:00:00Z", "--ledger", f], () => ["--now must not be later than the current time with --ledger"]],
+    ["a missing file", () => ["--now", NOW, "--ledger", join(dir, "absent.jsonl")], () => [`ledger ${join(dir, "absent.jsonl")}: cannot be read (ENOENT)`]],
+    [
+      "a file with problems on two lines",
+      () => ["--now", NOW, "--ledger", ledgerFile("bad.jsonl", [ROWS.a, { ...ROWS.c, maxComplaints: 2 }, { ...ROWS.a, id: "a2" }])],
+      (f) => [
+        `ledger ${f} line 2: "maxComplaints" must be a whole number from 0 to 1 (below "runs")`,
+        `ledger ${f} line 3: rows "a" (line 1) and "a2" are both open on ritual:lg`,
+      ],
+    ],
+  ];
+  it.each(ERRORS)("%s: exit 2, the exact stderr lines, no stdout, no database opened", (_name, args, lines) => {
+    for (const p of [`${ldb}-wal`, `${ldb}-shm`]) rmSync(p, { force: true });
+    const good = ledgerFile("good.jsonl", [ROWS.c]);
+    const a = args(good);
+    const r = wrapper(["--db", ldb, ...a]);
+    const named = a[a.indexOf("--ledger") + 1];
+    expect([r.status, r.stdout, r.stderr]).toEqual([2, "", lines(named).map((l) => `complaints-digest: ${l}\n`).join("")]);
+    expect(sidecars()).toEqual([]);
   }, 60_000);
 });

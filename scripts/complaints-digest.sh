@@ -6,6 +6,14 @@
 #   bash scripts/complaints-digest.sh --verdict --type <key> --since <ISO time>
 #                                     --max-complaints K [--runs N] [--db <path>]
 #                                     [--days N] [--json] [--now <ISO time>]
+#   bash scripts/complaints-digest.sh --ledger <file> [--db <path>] [--now <ISO time>]
+#
+# Ledger mode checks every prediction in a committed file
+# (docs/planning/predictions.jsonl, one JSON object per line) over the 30
+# days before --now, one line per row; the rules are in
+# src/complaints/ledger.ts. The file is validated before any sqlite3 call and
+# never written. Exit 0 when every row computed and every recorded closure
+# agrees, 2 on any flag or file problem, 3 on a MISMATCH.
 #
 # Verdict mode closes a prediction written beforehand, "at most K complaints
 # (concerns + failed) in the type's first N (default 7) runs queued at or

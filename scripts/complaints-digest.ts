@@ -14,6 +14,11 @@
  *        [--runs 7]: CONFIRMED, REFUTED or COUNTING; the rule is in
  *        src/complaints/verdict.ts. K must be below N, and --since (floored
  *        to the second) must fall inside the --days window before --now.
+ * Ledger mode: --ledger <file> [--now <ISO time>]: every prediction in the
+ *        file (docs/planning/predictions.jsonl), checked over the 30 days
+ *        before --now; the rules are in src/complaints/ledger.ts. The file is
+ *        read and validated before any rows are, and never written. Exit 2 on
+ *        any file problem, 3 when a recorded closure disagrees with the recheck.
  * Every value is validated here; the SQL only ever sees @since/@now strings
  * regenerated from a parsed Date.
  */
@@ -21,6 +26,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { complaintsSql } from "../src/complaints/query.js";
 import { buildDigest, renderDigest, type TaskRow } from "../src/complaints/digest.js";
+import { checkRow, LEDGER_DAYS, parseLedger, renderLedger, type Prediction } from "../src/complaints/ledger.js";
 import { buildVerdict, ISO_TIME, nowIsAfterClock, renderVerdict, TYPE_PATTERN } from "../src/complaints/verdict.js";
 
 function fail(msg: string): never {
@@ -44,9 +50,9 @@ try {
     options: {
       "print-sql": { type: "boolean" },
       "facts-table": { type: "boolean" },
-      days: { type: "string", default: "30" },
-      last: { type: "string", default: "7" },
-      min: { type: "string", default: "5" },
+      days: { type: "string" },
+      last: { type: "string" },
+      min: { type: "string" },
       type: { type: "string" },
       json: { type: "boolean" },
       now: { type: "string" },
@@ -54,6 +60,7 @@ try {
       since: { type: "string" },
       "max-complaints": { type: "string" },
       runs: { type: "string" },
+      ledger: { type: "string" },
     },
     strict: true,
     allowPositionals: false,
@@ -62,9 +69,17 @@ try {
   fail((err as Error).message);
 }
 
-const days = int("days", parsed.days, 1, 365);
-const last = int("last", parsed.last, 1, 100);
-const min = int("min", parsed.min, 1, last);
+const ledgerFile = parsed.ledger;
+if (ledgerFile !== undefined) {
+  // Ledger rows carry their own type, since, K and N, and the window is fixed:
+  // any of these flags would be ignored, so it is refused instead.
+  for (const flag of ["verdict", "type", "since", "max-complaints", "runs", "days", "last", "min", "json"] as const) {
+    if (parsed[flag] !== undefined) fail(`--ledger cannot be used with --${flag}`);
+  }
+}
+const days = ledgerFile === undefined ? int("days", parsed.days ?? "30", 1, 365) : LEDGER_DAYS;
+const last = int("last", parsed.last ?? "7", 1, 100);
+const min = int("min", parsed.min ?? "5", 1, last);
 const type = parsed.type;
 if (type !== undefined && !TYPE_PATTERN.test(type)) fail(`--type must match ${TYPE_PATTERN.source}`);
 if (parsed.now !== undefined && !ISO_TIME.test(parsed.now)) {
@@ -74,10 +89,12 @@ const nowMs = parsed.now === undefined ? Date.now() : Date.parse(parsed.now);
 if (Number.isNaN(nowMs)) fail("--now must be a date");
 const now = new Date(nowMs).toISOString();
 
+// The clock is read here, after the wrapper pinned its --now.
+const judged = parsed.verdict ? "--verdict" : ledgerFile === undefined ? null : "--ledger";
+if (judged && nowIsAfterClock(nowMs, Date.now())) fail(`--now must not be later than the current time with ${judged}`);
+
 let verdictOpts: { type: string; since: string; maxComplaints: number; runs: number } | undefined;
 if (parsed.verdict) {
-  // The clock is read here, after the wrapper pinned its --now.
-  if (nowIsAfterClock(nowMs, Date.now())) fail("--now must not be later than the current time with --verdict");
   if (type === undefined) fail("--verdict needs --type");
   if (parsed.since === undefined) fail("--verdict needs --since");
   if (parsed["max-complaints"] === undefined) fail("--verdict needs --max-complaints");
@@ -98,6 +115,22 @@ if (parsed.verdict) {
   fail("--since, --max-complaints and --runs need --verdict");
 }
 
+/** The ledger's predictions, or every problem in the file on stderr and exit 2. */
+function readLedger(file: string): Prediction[] {
+  let src: string;
+  try {
+    src = readFileSync(file, "utf8");
+  } catch (err) {
+    fail(`ledger ${file}: cannot be read (${(err as NodeJS.ErrnoException).code ?? "error"})`);
+  }
+  const { predictions, problems } = parseLedger(src);
+  if (problems.length === 0) return predictions;
+  for (const p of problems) process.stderr.write(`complaints-digest: ledger ${file} line ${p.line}: ${p.reason}\n`);
+  process.exit(2);
+}
+// Read on the --print-sql call too, so a bad file stops the wrapper before sqlite3.
+const predictions = ledgerFile === undefined ? undefined : readLedger(ledgerFile);
+
 if (parsed["print-sql"]) {
   process.stdout.write(
     [
@@ -111,7 +144,11 @@ if (parsed["print-sql"]) {
 } else {
   const input = readFileSync(0, "utf8").trim();
   const rows = (input ? JSON.parse(input) : []) as TaskRow[];
-  if (verdictOpts) {
+  if (ledgerFile !== undefined && predictions) {
+    const checks = predictions.map((p) => checkRow(p, rows, now));
+    process.stdout.write(renderLedger(ledgerFile, now, checks));
+    if (checks.some((c) => c.mismatch)) process.exitCode = 3;
+  } else if (verdictOpts) {
     const v = buildVerdict(rows, { now, ...verdictOpts });
     process.stdout.write(parsed.json ? `${JSON.stringify(v, null, 2)}\n` : renderVerdict(v));
   } else {
