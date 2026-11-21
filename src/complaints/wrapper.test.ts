@@ -395,23 +395,24 @@ describe("task_completion_facts (schema 18 on), and databases without it", () =>
 
 describe("--verdict: a prediction closed by code", () => {
   // Ritual "vr" around S = 2026-11-15T12:00:00Z. v0 is one second before S;
-  // v3 never finished. Builds come from task_completion_facts.
+  // v3 was cancelled; v5 waits for context. Builds come from task_completion_facts.
   const VR: [string, string, string, string, string | null][] = [
     ["v0", "completed_with_concerns", "2026-11-15 11:59:59", '{"text":"v0 reply"}', null],
     ["v1", "completed", "2026-11-15 12:00:00", "{}", null],
     ["v2", "completed_with_concerns", "2026-11-16 12:00:00", '{"text":"v2 reply"}', null],
-    ["v3", "running", "2026-11-17 12:00:00", "{}", null],
+    ["v3", "cancelled", "2026-11-17 12:00:00", "{}", null],
     ["v4", "failed", "2026-11-18 12:00:00", "{}", "v4 boom"],
-    ["v5", "completed_with_concerns", "2026-11-19 12:00:00", '{"text":"v5 reply"}', null],
+    ["v5", "needs_context", "2026-11-19 12:00:00", "{}", null],
+    ["v6", "completed_with_concerns", "2026-11-19 13:00:00", '{"text":"v6 reply"}', null],
   ];
   const VR_FACTS: [string, string, string | null][] = [
     ["v1", "aaa1111", null],
     ["v2", "aaa1111", "v2 facts concern"],
     ["v4", "bbb2222", null],
-    ["v5", "aaa1111", null],
+    ["v6", "aaa1111", null],
   ];
   const S = "2026-11-15T12:00:00Z";
-  const VERDICT_KEYS = ["builds", "complaints", "counted", "ignoredAfterN", "maxComplaints", "now", "runList", "runs", "since", "strip", "type", "unfinished", "verdict"];
+  const VERDICT_KEYS = ["builds", "cancelled", "complaints", "counted", "ignoredAfterN", "inFlight", "maxComplaints", "now", "runList", "runs", "since", "strip", "type", "unknown", "verdict"];
   let vdb: string;
   const sidecars = () => [`${vdb}-wal`, `${vdb}-shm`].filter((p) => existsSync(p));
   const clearSidecars = () => {
@@ -441,39 +442,68 @@ describe("--verdict: a prediction closed by code", () => {
     if (r.status !== 0) throw new Error(`fixture sqlite3 failed: ${r.stderr}`);
   });
 
-  it("text: REFUTED at K+1 within N; S included, the run before it out; unfinished and later runs reported; two builds give the caveat", () => {
+  it("text: REFUTED at K+1 within N; S included, the run before it out; cancelled ignored, later runs counted; two builds give the caveat", () => {
     const r = verdict(["--type", "ritual:vr", "--since", S, "--max-complaints", "1", "--runs", "3"]);
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toBe(
       [
-        "Prediction: ritual:vr has at most 1 complaint(s) (concerns+failed) in its first 3 finished runs started at or after 2026-11-15T12:00:00.000Z; checked at 2026-11-20T18:00:00.000Z",
+        "Prediction: ritual:vr has at most 1 complaint(s) (concerns+failed) in its first 3 runs queued at or after 2026-11-15T12:00:00.000Z; checked at 2026-11-20T18:00:00.000Z",
         "verdict: REFUTED  counted 3/3  complaints 2 (limit 1)",
-        "  counted runs, oldest left: [.CF]",
-        "  not counted: 1 unfinished, 1 after the first 3",
+        "  slots, oldest left: [.CF]",
         "    2026-11-15 12:00:00 completed @aaa1111",
         "    2026-11-16 12:00:00 completed_with_concerns @aaa1111 [concern] v2 facts concern",
         "    2026-11-18 12:00:00 failed @bbb2222 [reply] v4 boom",
+        "  in flight, holding a slot: 0",
+        "  cancelled, ignored: 1",
+        "    2026-11-17 12:00:00 cancelled v3",
+        "  after the first 3: 2",
         "  caveat: the counted runs span 2 builds, oldest first: aaa1111 · bbb2222",
         "",
       ].join("\n"),
     );
   });
 
-  it("JSON: CONFIRMED with exactly K of N, COUNTING while runs are left, and the documented keys", () => {
+  it("text: a needs_context run holds its slot, is named, and the verdict waits for it", () => {
+    const r = verdict(["--type", "ritual:vr", "--since", S, "--max-complaints", "3"]);
+    expect(r.status, r.stderr).toBe(0);
+    const lines = r.stdout.split("\n");
+    expect(lines[1]).toBe("verdict: COUNTING  counted 4/7  complaints 3 (limit 3)");
+    expect(lines[2]).toBe("  slots, oldest left: [.CF?C]");
+    expect(lines[3]).toBe("  waiting for 1 run(s) still in flight");
+    expect(lines.slice(8)).toEqual([
+      "  in flight, holding a slot: 1",
+      "    2026-11-19 12:00:00 needs_context v5",
+      "  needs_context: not a complaint; holds its slot until it resolves",
+      "  cancelled, ignored: 1",
+      "    2026-11-17 12:00:00 cancelled v3",
+      "  after the first 7: 0",
+      "  caveat: the counted runs span 2 builds, oldest first: aaa1111 · bbb2222",
+      "",
+    ]);
+  });
+
+  it("JSON: CONFIRMED with exactly K of N, the documented keys, and --since floored to the second", () => {
     const confirmed = json(["--type", "ritual:vr", "--since", S, "--max-complaints", "2", "--runs", "3"]);
     expect(Object.keys(confirmed).sort()).toEqual(VERDICT_KEYS);
-    expect(confirmed).toMatchObject({ verdict: "CONFIRMED", counted: 3, runs: 3, complaints: 2, maxComplaints: 2, since: "2026-11-15T12:00:00.000Z", unfinished: 1, ignoredAfterN: 1, builds: ["aaa1111", "bbb2222"] });
+    expect(confirmed).toMatchObject({
+      verdict: "CONFIRMED", counted: 3, runs: 3, complaints: 2, unknown: 0, maxComplaints: 2, since: "2026-11-15T12:00:00.000Z",
+      inFlight: [], cancelled: [{ createdAt: "2026-11-17 12:00:00", taskId: "v3", status: "cancelled" }], ignoredAfterN: 2, builds: ["aaa1111", "bbb2222"],
+    });
     expect(confirmed.runList.map((r: { taskId: string }) => r.taskId)).toEqual(["v1", "v2", "v4"]);
     expect(Object.keys(confirmed.runList[0]).sort()).toEqual(["build", "createdAt", "source", "status", "taskId", "text"]);
-    // N = 7: 3 complaints in 4 runs, 3 left, K = 3: still undecided; the
-    // run one second before S is out.
-    expect(json(["--type", "ritual:vr", "--since", S, "--max-complaints", "3"])).toMatchObject({ verdict: "COUNTING", counted: 4, runs: 7, complaints: 3, ignoredAfterN: 0 });
+    expect(json(["--type", "ritual:vr", "--since", S, "--max-complaints", "3"])).toMatchObject({
+      verdict: "COUNTING", counted: 4, unknown: 3, inFlight: [{ createdAt: "2026-11-19 12:00:00", taskId: "v5", status: "needs_context" }],
+    });
+    // A second earlier, v0 is in: 4 complaints.
     expect(json(["--type", "ritual:vr", "--since", "2026-11-15T11:59:59Z", "--max-complaints", "3"])).toMatchObject({ verdict: "REFUTED", counted: 5, complaints: 4 });
+    // 12:00:00.900 is floored to 12:00:00, so v1 (stamped 12:00:00) is in.
+    const floored = json(["--type", "ritual:vr", "--since", "2026-11-15T12:00:00.900Z", "--max-complaints", "2", "--runs", "3"]);
+    expect([floored.since, floored.runList[0].taskId]).toEqual(["2026-11-15T12:00:00.000Z", "v1"]);
   });
 
   it("a type with no runs is COUNTING 0/N; a --since after --now counts nothing; no facts table means no builds", () => {
-    expect(json(["--type", "ritual:nobody", "--since", S, "--max-complaints", "2"])).toMatchObject({ verdict: "COUNTING", counted: 0, runs: 7, complaints: 0, builds: [], runList: [] });
-    expect(json(["--type", "ritual:vr", "--since", "2026-11-21T00:00:00Z", "--max-complaints", "2"])).toMatchObject({ verdict: "COUNTING", counted: 0, unfinished: 0 });
+    expect(json(["--type", "ritual:nobody", "--since", S, "--max-complaints", "2"])).toMatchObject({ verdict: "COUNTING", counted: 0, runs: 7, complaints: 0, unknown: 7, builds: [], runList: [] });
+    expect(json(["--type", "ritual:vr", "--since", "2026-11-21T00:00:00Z", "--max-complaints", "2"])).toMatchObject({ verdict: "COUNTING", counted: 0, unknown: 7, inFlight: [], cancelled: [] });
     const r = verdict(["--type", "ritual:real-text", "--since", "2026-11-01T00:00:00Z", "--max-complaints", "0"], db);
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain("verdict: REFUTED  counted 1/7  complaints 1 (limit 0)\n");
@@ -495,12 +525,16 @@ describe("--verdict: a prediction closed by code", () => {
       // "=-1": a bare "-1" after a flag is parseArgs's own (multi-line) error, unchanged here.
       ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints=-1"],
       ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "x"],
+      // K >= N: a prediction that cannot be refuted.
+      ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "7"],
+      ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "3", "--runs", "3"],
       ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "1", "--runs", "0"],
       ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "1", "--runs", "101"],
       ["--verdict", "--type", "ritual:vr", "--since", "2026-11-15", "--max-complaints", "1"],
       ["--verdict", "--type", "ritual:vr", "--since", "2026-13-45T12:00:00Z", "--max-complaints", "1"],
       // The window with --days 30 is (2026-10-21T18:00:00Z, NOW]: its start is out.
       ["--verdict", "--type", "ritual:vr", "--since", "2026-10-21T18:00:00Z", "--max-complaints", "1"],
+      ["--verdict", "--type", "ritual:vr", "--since", "2026-10-21T18:00:00.900Z", "--max-complaints", "1"],
       ["--verdict", "--type", "ritual:vr", "--since", "2026-11-12T00:00:00Z", "--max-complaints", "1", "--days", "7"],
       ["--verdict", "--type", "vr", "--since", S, "--max-complaints", "1"],
       ["--since", S],
@@ -516,7 +550,9 @@ describe("--verdict: a prediction closed by code", () => {
       expect([args, sidecars()]).toEqual([args, []]);
     }
     expect(sha(vdb)).toBe(before);
-    // Just inside the window is accepted.
-    expect(json(["--type", "ritual:vr", "--since", "2026-10-21T18:00:01Z", "--max-complaints", "9"]).verdict).toBe("CONFIRMED");
+    const kn = wrapper(["--db", vdb, "--now", NOW, "--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "7"]);
+    expect(kn.stderr).toContain("cannot be refuted");
+    // Just inside the window, and K = N - 1, are accepted.
+    expect(json(["--type", "ritual:vr", "--since", "2026-10-21T18:00:01Z", "--max-complaints", "6"]).verdict).toBe("CONFIRMED");
   }, 120_000);
 });

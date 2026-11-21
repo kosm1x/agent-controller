@@ -8,10 +8,15 @@
 #                                     [--days N] [--json] [--now <ISO time>]
 #
 # Verdict mode closes a prediction written beforehand, "at most K complaints
-# (concerns + failed) in the type's first N (default 7) finished runs started
-# at or after --since": REFUTED once complaints exceed K, CONFIRMED once the
-# runs left cannot exceed it, else COUNTING; exit 0 for all three. --since
-# must fall inside the --days window (default 30) before --now.
+# (concerns + failed) in the type's first N (default 7) runs queued at or
+# after --since". The slots are the first N runs in queue order, cancelled
+# runs left out; a run still in flight (running, queued, needs_context,
+# blocked, ...) holds its slot as an unknown outcome. REFUTED once the
+# complaints in the slots exceed K, CONFIRMED once complaints plus unknown
+# slots (in flight or not yet filled) cannot exceed K, else COUNTING; a closed
+# verdict does not change later. Exit 0 for all three. K must be below N;
+# --since is floored to the second and must fall inside the --days window
+# (default 30) before --now. Every run counts: a retry of a failed run is its own run.
 #
 # With task_completion_facts (schema 18 on), each type also gets a builds line:
 # the runs of the last-N strip grouped by build in order of first appearance,

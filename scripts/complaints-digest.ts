@@ -11,9 +11,9 @@
  * Flags: --days 30  --last 7  --min 5  --type <ritual|schedule>:<id>  --json
  *        --now <ISO time> (default: the current time)
  * Verdict mode: --verdict --type <key> --since <ISO time> --max-complaints K
- *        [--runs 7]: CONFIRMED, REFUTED or COUNTING for "at most K complaints
- *        in the type's first N finished runs started at or after --since";
- *        --since must fall inside the --days window before --now.
+ *        [--runs 7]: CONFIRMED, REFUTED or COUNTING; the rule is in
+ *        src/complaints/verdict.ts. K must be below N, and --since (floored
+ *        to the second) must fall inside the --days window before --now.
  * Every value is validated here; the SQL only ever sees @since/@now strings
  * regenerated from a parsed Date.
  */
@@ -84,9 +84,13 @@ if (parsed.verdict) {
   if (parsed["max-complaints"] === undefined) fail("--verdict needs --max-complaints");
   const runs = int("runs", parsed.runs ?? "7", 1, 100);
   const maxComplaints = int("max-complaints", parsed["max-complaints"], 0, 9999);
+  if (maxComplaints >= runs) fail(`--max-complaints must be below --runs (${runs}): K >= N is a prediction that cannot be refuted`);
   if (!ISO_TIME.test(parsed.since)) fail("--since must be an ISO time with Z or an offset, e.g. 2026-11-20T18:00:00Z");
-  const sinceMs = Date.parse(parsed.since);
-  if (Number.isNaN(sinceMs)) fail("--since must be a date");
+  const parsedSince = Date.parse(parsed.since);
+  if (Number.isNaN(parsedSince)) fail("--since must be a date");
+  // tasks.created_at has whole seconds: a run stamped in the second of
+  // --since is at or after it.
+  const sinceMs = Math.floor(parsedSince / 1000) * 1000;
   // The SQL window is (now - days, now]: a --since at or before its start
   // could miss runs, so it is refused rather than half counted.
   if (sinceMs <= nowMs - days * 86_400_000) fail(`--since must be later than --now minus --days (${days} days)`);
