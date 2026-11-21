@@ -149,7 +149,6 @@ const NON_TOOL_WORDS: Record<string, Record<string, string>> = {
   exa_search: { user_fact: "the user_fact_* tool family, written without the wildcard" },
   infographic_generate: { svg_html: "a format value of diagram_generate" },
   kb_batch_insert: {
-    image_caption: "a modality value of an entry",
     parent_doc_id: "a field of each entry (nested parameter)",
     section_path: "a field of each entry (nested parameter)",
     chunk_position: "a field of each entry (nested parameter)",

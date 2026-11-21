@@ -67,12 +67,69 @@ describe("kbIngestPdfStructuredTool", () => {
     expect(JSON.parse(out as string).error).toMatch(/pdf_path/);
   });
 
-  it("pgvector disabled → {error}", async () => {
+  it("pgvector disabled → {error} naming the setting the check reads", async () => {
     mockIsPgvectorEnabled.mockReturnValue(false);
     const out = (await kbIngestPdfStructuredTool.execute({
       pdf_path: "/tmp/test.pdf",
     })) as string;
-    expect(JSON.parse(out).error).toMatch(/^pgvector is not configured/);
+    expect(out.startsWith('{"error":')).toBe(true);
+    expect(JSON.parse(out)).toEqual({
+      error:
+        "pgvector is not configured — cannot persist. Set COMMIT_DB_KEY to enable.",
+    });
+    expect(Object.keys(JSON.parse(out))).toEqual(["error"]);
+    expect(mockIngestPdf).not.toHaveBeenCalled();
+  });
+
+  // A cap below 1 is refused before the document is read: nothing is parsed,
+  // embedded or written, so an earlier ingest of the document is left as it is.
+  // The sentence prints the argument exactly as the handler received it.
+  it.each<[unknown, string]>([
+    [0, "max_chunks must be 1 or more (got 0). Omit it to use the default."],
+    [-1, "max_chunks must be 1 or more (got -1). Omit it to use the default."],
+    [0.5, "max_chunks must be 1 or more (got 0.5). Omit it to use the default."],
+    [null, "max_chunks must be 1 or more (got null). Omit it to use the default."],
+    ["", 'max_chunks must be 1 or more (got ""). Omit it to use the default.'],
+    [false, "max_chunks must be 1 or more (got false). Omit it to use the default."],
+  ])("max_chunks %j given to the handler → {error} before the document is read", async (cap, error) => {
+    // A readable document, so a missed refusal fails an assertion below
+    // instead of crashing on an empty ingest result.
+    mockIngestPdf.mockResolvedValue({
+      parentDocId: "p",
+      docTitle: "t",
+      manifest: MANIFEST,
+      chunks: [],
+      counts: { text: 0, table: 0, sections: 0, truncated: false },
+    });
+    const out = (await kbIngestPdfStructuredTool.execute({
+      pdf_path: "/tmp/t.pdf",
+      max_chunks: cap,
+    })) as string;
+    expect(out.startsWith('{"error":')).toBe(true);
+    expect(Object.keys(JSON.parse(out))).toEqual(["error"]);
+    expect(JSON.parse(out).error).toBe(error);
+    expect(mockIngestPdf).not.toHaveBeenCalled();
+    expect(mockEmbed).not.toHaveBeenCalled();
+    expect(mockPgUpsertLineageSource).not.toHaveBeenCalled();
+    expect(mockPgBatchUpsert).not.toHaveBeenCalled();
+  });
+
+  it("max_chunks 1 is passed through; a missing one leaves the ingester's default", async () => {
+    mockIngestPdf.mockResolvedValue({
+      parentDocId: "p",
+      docTitle: "t",
+      manifest: MANIFEST,
+      chunks: [],
+      counts: { text: 0, table: 0, sections: 0, truncated: false },
+    });
+    await kbIngestPdfStructuredTool.execute({
+      pdf_path: "/tmp/t.pdf",
+      max_chunks: 1,
+    });
+    await kbIngestPdfStructuredTool.execute({ pdf_path: "/tmp/t.pdf" });
+    expect(mockIngestPdf).toHaveBeenCalledTimes(2);
+    expect(mockIngestPdf.mock.calls[0][1].maxChunks).toBe(1);
+    expect(mockIngestPdf.mock.calls[1][1].maxChunks).toBeUndefined();
   });
 
   it("extractor error → {error} naming the parse failure", async () => {
@@ -653,17 +710,120 @@ describe("kbBatchInsertTool", () => {
     });
   });
 
-  it("empty entries → explicit message", async () => {
+  type Batch = { success: number; failed: number; rejected: number };
+
+  /** `n` synthetic entries. */
+  const entriesOf = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      path: `notes/entry-${i}`,
+      title: `Entry ${i}`,
+      content: `content of entry ${i}`,
+    }));
+
+  /** The plain summary, byte for byte. */
+  function batchPlain(n: number, b: Batch, extra: string[] = []): string {
+    return [
+      `kb_batch_insert: ${n} entries submitted`,
+      `  Inserted: ${b.success} | Rejected (validation): ${b.rejected} | Failed: ${b.failed}`,
+      ...extra,
+    ].join("\n");
+  }
+
+  /** A whole-call or partial failure: `{"error"` first, keys exactly as given. */
+  function parsedFailure(out: string, keys: string[]): Record<string, unknown> {
+    expect(out.startsWith('{"error":')).toBe(true);
+    const parsed = JSON.parse(out) as Record<string, unknown>;
+    expect(Object.keys(parsed)).toEqual(keys);
+    return parsed;
+  }
+
+  it("empty entries → {error}, nothing embedded or written", async () => {
     const out = (await kbBatchInsertTool.execute({ entries: [] })) as string;
-    expect(out).toMatch(/no entries provided/);
+    expect(parsedFailure(out, ["error"]).error).toBe(
+      "kb_batch_insert: no entries provided.",
+    );
+    expect(mockEmbed).not.toHaveBeenCalled();
+    expect(mockPgBatchUpsert).not.toHaveBeenCalled();
   });
 
-  it("pgvector disabled → graceful", async () => {
+  it("pgvector disabled → {error}, nothing embedded or written", async () => {
     mockIsPgvectorEnabled.mockReturnValue(false);
     const out = (await kbBatchInsertTool.execute({
       entries: [{ path: "p", title: "t", content: "c" }],
     })) as string;
-    expect(out).toMatch(/not configured/);
+    expect(parsedFailure(out, ["error"]).error).toBe(
+      "kb_batch_insert: pgvector is not configured.",
+    );
+    expect(mockEmbed).not.toHaveBeenCalled();
+    expect(mockPgBatchUpsert).not.toHaveBeenCalled();
+  });
+
+  // A batch with a failed row, or with no row written, is a failure:
+  // `{error: <counts>, summary: <the plain summary>}`.
+  it.each([
+    [
+      "some entries failed",
+      5,
+      { success: 3, failed: 2, rejected: 0 },
+      "kb_batch_insert: 3 of 5 entries written, 2 failed, 0 rejected by validation",
+    ],
+    [
+      "some failed beside rejected and written ones",
+      4,
+      { success: 2, failed: 1, rejected: 1 },
+      "kb_batch_insert: 2 of 4 entries written, 1 failed, 1 rejected by validation",
+    ],
+    [
+      "every entry failed",
+      3,
+      { success: 0, failed: 3, rejected: 0 },
+      "kb_batch_insert: 0 of 3 entries written, 3 failed, 0 rejected by validation",
+    ],
+    [
+      "every entry was rejected, nothing written",
+      2,
+      { success: 0, failed: 0, rejected: 2 },
+      "kb_batch_insert: 0 of 2 entries written, 0 failed, 2 rejected by validation",
+    ],
+  ] as const)("%s → {error, summary}", async (_case, n, batch, error) => {
+    mockPgBatchUpsert.mockResolvedValue(batch);
+    const out = (await kbBatchInsertTool.execute({
+      entries: entriesOf(n),
+    })) as string;
+    const parsed = parsedFailure(out, ["error", "summary"]);
+    expect(parsed.error).toBe(error);
+    expect(parsed.summary).toBe(batchPlain(n, batch));
+  });
+
+  it.each([
+    ["every entry written", 3, { success: 3, failed: 0, rejected: 0 }],
+    [
+      "entries written beside rejected ones",
+      5,
+      { success: 3, failed: 0, rejected: 2 },
+    ],
+  ] as const)("%s → the plain summary", async (_case, n, batch) => {
+    mockPgBatchUpsert.mockResolvedValue(batch);
+    const out = (await kbBatchInsertTool.execute({
+      entries: entriesOf(n),
+    })) as string;
+    expect(out.startsWith("{")).toBe(false);
+    expect(out).toBe(batchPlain(n, batch));
+  });
+
+  it("embedding failures with every entry written → the plain summary", async () => {
+    mockEmbed.mockResolvedValue(null);
+    const batch = { success: 2, failed: 0, rejected: 0 };
+    mockPgBatchUpsert.mockResolvedValue(batch);
+    const out = (await kbBatchInsertTool.execute({
+      entries: entriesOf(2),
+    })) as string;
+    expect(out.startsWith("{")).toBe(false);
+    expect(out).toBe(
+      batchPlain(2, batch, [
+        "  Embedding failures: 2 (rows still inserted with FTS-only retrieval)",
+      ]),
+    );
   });
 
   it("embeds each entry then calls pgBatchUpsert", async () => {
@@ -689,25 +849,6 @@ describe("kbBatchInsertTool", () => {
       ],
     });
     expect(mockEmbed).not.toHaveBeenCalled();
-  });
-
-  it("reports rejection counts from pgBatchUpsert", async () => {
-    mockPgBatchUpsert.mockResolvedValue({
-      success: 3,
-      failed: 0,
-      rejected: 2,
-    });
-    const out = (await kbBatchInsertTool.execute({
-      entries: [
-        { path: "a", title: "A", content: "c1" },
-        { path: "b", title: "B", content: "c2" },
-        { path: "c", title: "C", content: "c3" },
-        { path: "d", title: "D", content: "c4" },
-        { path: "e", title: "E", content: "c5" },
-      ],
-    })) as string;
-    expect(out).toMatch(/Inserted: 3/);
-    expect(out).toMatch(/Rejected \(validation\): 2/);
   });
 
   it("passes modality + parent_doc_id through to pgBatchUpsert", async () => {
@@ -748,6 +889,68 @@ describe("kbBatchInsertTool", () => {
     });
     expect(mockPgBatchUpsert.mock.calls[0][0][0]).not.toHaveProperty(
       "related_to",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Model-visible definitions
+// ---------------------------------------------------------------------------
+
+describe("tool definitions", () => {
+  type Prop = { description?: string; enum?: string[] };
+  const params = (t: typeof kbBatchInsertTool) =>
+    t.definition.function.parameters as {
+      properties: Record<string, Prop & { items?: { properties: Record<string, Prop> } }>;
+    };
+  const entryProps = params(kbBatchInsertTool).properties.entries.items!
+    .properties;
+
+  it("the batch description names exactly the modalities the entry enum accepts", () => {
+    const listed = /modality\s*\(([^)]*)\)/.exec(
+      kbBatchInsertTool.definition.function.description,
+    );
+    expect(listed).not.toBeNull();
+    const named = listed![1].split("|").map((m) => m.trim().replace(/^'|'$/g, ""));
+    const accepted = entryProps.modality.enum ?? [];
+    expect(accepted.length).toBeGreaterThan(0);
+    expect([...named].sort()).toEqual([...accepted].sort());
+  });
+
+  it("every entry property carries its exact description", () => {
+    const expected: Record<string, string> = {
+      path: "KB path of the entry; the write is an upsert keyed on this path.",
+      title: "Entry title. An entry whose title is empty or only whitespace is rejected.",
+      content:
+        "Text of the entry. Content shorter than 20 characters after trimming (10 for type 'correction') or matching a noise pattern is rejected.",
+      modality: "Kind of content: 'text' or 'table'.",
+      parent_doc_id: "UUID of the document the entry belongs to.",
+      section_path: "Headings of the section the entry belongs to. Stored as given.",
+      chunk_position: "Position of the entry within its document. Stored as given.",
+      tags: "Tags stored on the entry. Omitted, the entry is stored with no tags.",
+      type: "Entry type. Omitted, it is stored as 'fact'.",
+      qualifier: "Entry qualifier. Omitted, it is stored as 'reference'.",
+    };
+    const names = Object.keys(entryProps);
+    expect([...names].sort()).toEqual(Object.keys(expected).sort());
+    expect(
+      Object.fromEntries(names.map((n) => [n, entryProps[n].description])),
+    ).toEqual(expected);
+  });
+
+  it("the batch description ends with the result line", () => {
+    expect(
+      kbBatchInsertTool.definition.function.description.endsWith(
+        "Returns a summary of entries inserted, rejected by validation and failed. When an entry failed to be written, or none was written, the call returns an error with those counts and the summary; entries already written stay written.",
+      ),
+    ).toBe(true);
+  });
+
+  it("the max_chunks description says the bound, the refusal and the cut-off result", () => {
+    expect(
+      params(kbIngestPdfStructuredTool).properties.max_chunks.description,
+    ).toBe(
+      "Cap on chunks produced from one PDF: 1 or more, default 500. A value below 1 is refused before the PDF is read. A document with more chunks than the cap is cut off there; the rest is not stored, and the call returns an error with the summary.",
     );
   });
 });

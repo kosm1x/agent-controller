@@ -96,7 +96,7 @@ them later if needed.`,
           max_chunks: {
             type: "number",
             description:
-              "Cap on chunks produced from one PDF. Default 500; pathological inputs get truncated with an explicit 'truncated' flag in the summary.",
+              "Cap on chunks produced from one PDF: 1 or more, default 500. A value below 1 is refused before the PDF is read. A document with more chunks than the cap is cut off there; the rest is not stored, and the call returns an error with the summary.",
           },
         },
         required: ["pdf_path"],
@@ -112,7 +112,7 @@ them later if needed.`,
     if (!isPgvectorEnabled()) {
       return JSON.stringify({
         error:
-          "pgvector is not configured — cannot persist. Set SUPABASE_URL + SUPABASE_API_KEY to enable.",
+          "pgvector is not configured — cannot persist. Set COMMIT_DB_KEY to enable.",
       });
     }
 
@@ -129,6 +129,11 @@ them later if needed.`,
     const maxChunks = Number.isFinite(Number(args.max_chunks))
       ? Number(args.max_chunks)
       : undefined;
+    if (maxChunks !== undefined && maxChunks < 1) {
+      return JSON.stringify({
+        error: `max_chunks must be 1 or more (got ${JSON.stringify(args.max_chunks)}). Omit it to use the default.`,
+      });
+    }
 
     let result;
     try {
@@ -214,7 +219,7 @@ NOT WHEN:
 - Source is a PDF (use kb_ingest_pdf_structured; it owns the chunker)
 
 Each entry must have path + title + content. Optional: modality
-('text'|'table'|'equation'|'image_caption'), parent_doc_id (UUID string),
+('text'|'table'), parent_doc_id (UUID string),
 section_path (array of strings), chunk_position (int), tags, type, qualifier.
 
 Lineage is opt-in here: pass source_path (the KB path the entries derive from)
@@ -223,7 +228,7 @@ the row at source_path is rewritten by a writer that runs the staleness cascade
 (e.g. the KB file sync); kb_batch_insert itself never cascades. Without it the
 entries carry no lineage (re-inserting them never clears lineage set earlier).
 
-Returns summary of inserted / duplicate-skipped / rejected counts.`,
+Returns a summary of entries inserted, rejected by validation and failed. When an entry failed to be written, or none was written, the call returns an error with those counts and the summary; entries already written stay written.`,
       parameters: {
         type: "object",
         properties: {
@@ -233,26 +238,59 @@ Returns summary of inserted / duplicate-skipped / rejected counts.`,
             items: {
               type: "object",
               properties: {
-                path: { type: "string" },
-                title: { type: "string" },
-                content: { type: "string" },
+                path: {
+                  type: "string",
+                  description:
+                    "KB path of the entry; the write is an upsert keyed on this path.",
+                },
+                title: {
+                  type: "string",
+                  description:
+                    "Entry title. An entry whose title is empty or only whitespace is rejected.",
+                },
+                content: {
+                  type: "string",
+                  description:
+                    "Text of the entry. Content shorter than 20 characters after trimming (10 for type 'correction') or matching a noise pattern is rejected.",
+                },
                 modality: {
                   type: "string",
+                  description: "Kind of content: 'text' or 'table'.",
                   // Option B ships only text + table. equation + image_caption
                   // are reserved in KbEntry for the MinerU polish but NOT
                   // accepted here until the extractor produces them. Audit W1.
                   enum: ["text", "table"],
                 },
-                parent_doc_id: { type: "string" },
-                section_path: { type: "array", items: { type: "string" } },
-                chunk_position: { type: "number" },
-                tags: { type: "array", items: { type: "string" } },
+                parent_doc_id: {
+                  type: "string",
+                  description: "UUID of the document the entry belongs to.",
+                },
+                section_path: {
+                  type: "array",
+                  items: { type: "string" },
+                  description:
+                    "Headings of the section the entry belongs to. Stored as given.",
+                },
+                chunk_position: {
+                  type: "number",
+                  description:
+                    "Position of the entry within its document. Stored as given.",
+                },
+                tags: {
+                  type: "array",
+                  items: { type: "string" },
+                  description:
+                    "Tags stored on the entry. Omitted, the entry is stored with no tags.",
+                },
                 type: {
                   type: "string",
+                  description: "Entry type. Omitted, it is stored as 'fact'.",
                   enum: KB_ENTRY_TYPES as unknown as string[],
                 },
                 qualifier: {
                   type: "string",
+                  description:
+                    "Entry qualifier. Omitted, it is stored as 'reference'.",
                   enum: KB_QUALIFIERS as unknown as string[],
                 },
               },
@@ -273,10 +311,12 @@ Returns summary of inserted / duplicate-skipped / rejected counts.`,
   async execute(args: Record<string, unknown>): Promise<string> {
     const entries = args.entries as KbEntry[] | undefined;
     if (!Array.isArray(entries) || entries.length === 0) {
-      return "kb_batch_insert: no entries provided.";
+      return JSON.stringify({ error: "kb_batch_insert: no entries provided." });
     }
     if (!isPgvectorEnabled()) {
-      return "kb_batch_insert: pgvector is not configured.";
+      return JSON.stringify({
+        error: "kb_batch_insert: pgvector is not configured.",
+      });
     }
 
     // Coerce type/qualifier on each entry — the JSON schema declares enums,
@@ -316,7 +356,15 @@ Returns summary of inserted / duplicate-skipped / rejected counts.`,
         `  Embedding failures: ${embedFailures} (rows still inserted with FTS-only retrieval)`,
       );
     }
-    return lines.join("\n");
+    // A batch with a failed row, or with no row written, is a failure: the
+    // counts say how many rows were written, and rows already written stay.
+    const summary = lines.join("\n");
+    return batch.failed > 0 || batch.success === 0
+      ? JSON.stringify({
+          error: `kb_batch_insert: ${batch.success} of ${entries.length} entries written, ${batch.failed} failed, ${batch.rejected} rejected by validation`,
+          summary,
+        })
+      : summary;
   },
 };
 
