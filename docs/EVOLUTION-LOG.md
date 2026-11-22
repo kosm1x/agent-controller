@@ -3737,3 +3737,167 @@ The shell blocked commands on data/mc.db ("all DB access goes through tools"), s
 
 ### Research notes
 Day 100 of the streak is a milestone. The work is now about the agent inspecting its own memory (tombstones and recall floor), which suggests a mature phase focused on self-observability. Whether DB access policy should allow the recall-floor comparison through a tool is an open question.
+
+## 2026-11-15
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 10 |
+| Total tasks | 4857 |
+| Conversations today | 2 (telegram: 2) |
+| Streak days | 101 |
+
+### Interactions summary
+Fede worked on the "THE HAPPY LIFE" Creative Strategy document (Phase 1: Acoxpa, Hospital Ángeles & EurekaMD). He sent a .docx for review at 13:02, then asked for a corrected version at 18:25. Jarvis read the file directly with file_read and created a Google Doc with the corrected sections 2, 5 and 6.
+
+### What Jarvis learned
+In the USP section, Fede wants claims like "first ecosystem" and "reactive to predictive" removed. He also wants unsourced figures removed, such as the 30%→70% adherence number, with a note to measure or cite it. The day-log summary is cut off, so the rest of the review and the changes to sections 5 and 6 are unconfirmed.
+
+### Friction points
+The automatic .docx extractor returned a corrupt file. Jarvis worked around it by reading the file directly from /tmp/jarvis-downloads/.
+
+### Research notes
+The pattern is a review-then-revise loop on strategy documents, with Jarvis delivering through Google Docs. Memory tools (memory_search and memory_reflect) were not available in this session, so this entry relies on the narrative and project list alone. The project list has 50 active projects, and the Grupo Ángeles and EurekaMD projects are the ones relevant to today's work.
+
+## 2026-11-16
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 11 |
+| Total tasks | 4846 |
+| Conversations today | 0 (none) |
+| Streak days | 0 |
+
+### Interactions summary
+Quiet day: the narrative records no user-Jarvis exchanges and no topics. The 11 tasks processed were not tied to any conversation. The only tool used for this entry was project_list, which showed 50 active projects, none of which appeared in today's narrative.
+
+### What Jarvis learned
+No new patterns detected — still in cold start phase.
+
+### Friction points
+None detected.
+
+### Research notes
+Zero-interaction day, so the streak counter stays at 0. No milestone crossed. The memory_search and memory_reflect tools were not available in this session, so today's entry rests on the narrative and project_list only.
+
+## 2026-11-17
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 21 |
+| Total tasks | 4846 |
+| Conversations today | 10 (telegram: 10) |
+| Streak days | 1 |
+
+### Interactions summary
+Fede covered scattered topics: a recon and KB update for Little Dove (README updated, HEAD 200f4fa), a read and analysis of the Posthumanism ritual and its Braidotti source, Aura Estrategia web access (link, provisional credentials, missing sign in/out), Jarvis memory layers, the open-project count (50), and a KB map for the Hospital Ángeles Acoxpa umbrella. File reading and KB work were the most-used tools.
+
+### What Jarvis learned
+Fede refers to rituals by loose names or numbers ("transhumanismo (318)") that may not match real ones. He also corrects Jarvis directly when it confuses project scope, as with Hospital Ángeles Acoxpa. No new patterns surfaced via memory_reflect today. This section rests on the narrative alone, because the memory tools were not available in this run.
+
+### Friction points
+- The requested ritual "transhumanismo (318)" does not exist under that name or ID.
+- The generated Aura credentials do not work until Fede adds the `basic_auth` line to the Caddyfile, because Jarvis cannot write to /etc.
+- The sign in/out fix was closed "with reservations", and the log does not confirm a fix was applied.
+- Fede had to clarify the Hospital Ángeles Acoxpa project structure.
+
+### Research notes
+Still early in co-evolution: the work is broad and operational, with Jarvis acting as KB steward and Fede correcting scope. The Hospital Ángeles Acoxpa KB map got Fede's approval ("Excelente") without any changes being made, and the project count reached 50 (up from 48).
+
+## 2026-11-18
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 41 |
+| Total tasks | 4864 |
+| Conversations today | 28 (telegram: 28) |
+| Streak days | 2 |
+
+### Interactions summary
+Three main threads: KB updates from repos (agent-controller history.md three times, LittleDove, new local-inference-studio-mac card), the "The Good Life" project (Doc summary, official name, Doc rename/correction, artifact proposals, 12 Gemini logo proposals), and a review of the SIM paper (arXiv 2611.18856) against agent-controller. Tools used most were KB reads/writes, git/shell checks, Google Drive/Doc access and a Stalwart mailbox check.
+
+### What Jarvis learned
+Fede fixed the official name "The Good Life - Un plan de calidad de vida para llegar más lejos", stored as a permanent fact, and asked that the earlier "Happy Life" mix-up not recur. Effective KV on the Mac is f16, because the manifest overrides lis.conf. No new patterns surfaced via memory tools today; memory_search and memory_reflect were not available as tools in this session, so this entry rests on the narrative and project list only.
+
+### Friction points
+Name confusion "Happy Life" vs "Good Life". Several KB writes were not re-read after saving (agent-controller updates, LittleDove, model registration, name edits, SIM review), a verification gap Jarvis itself flagged.
+
+### Research notes
+Fede is using Jarvis as a KB maintainer and as a creative and research collaborator in the same day, with explicit corrections becoming durable facts. Open question for the co-evolution paper: whether read-back verification of writes becomes a standing habit.
+
+## 2026-11-19
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 24 |
+| Total tasks | 4817 |
+| Conversations today | 12 (telegram: 12) |
+| Streak days | 3 |
+
+### Interactions summary
+The day centered on correcting and publishing the bio of Adela Ayensa for México Necesario AC. That covered source verification, an edit to About.tsx in mn-web, and a commit and push to a new private repo, EurekaMD-net/mn-web. Fede also asked for an agent-controller KB update, a prose description of a figure, and restaurant picks in Roma Sur/Condesa. Web search, file edits and shell/git work were the main tools.
+
+### What Jarvis learned
+Fede wants claims checked against public sources before they are stated. He also expects "publish" to mean the live site is updated. The repo policy that allows only EurekaMD-net/* pushed the work to a clean clone. For time-sensitive requests such as restaurants, Jarvis should account for the meal context and the current hour before answering.
+
+### Friction points
+- The first bio draft had serious factual errors (e.g. "surgeon", "Mole de Cadera"), and Fede had to correct it.
+- Jarvis questioned the "Directora General" title before settling on "Presidenta y Fundadora".
+- The first commit/push was blocked by the repo rule and by being unable to change the remote. A clean clone resolved it.
+- The first restaurant answer missed that the request was for lunch, so Fede asked for a re-check.
+
+### Research notes
+Fede is giving corrective feedback and clear authorization decisions, and the agent adapts within the session. Corrections at this stage are mostly factual verification rather than preference. The México Necesario AC project moved meaningfully today. The memory_search and memory_reflect recall calls were not run in this session, so no new patterns surfaced from them. The notes above come from the narrative only.
+
+## 2026-11-20
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 40 |
+| Total tasks | 4834 |
+| Conversations today | 25 (telegram: 25) |
+| Streak days | 4 |
+
+### Interactions summary
+The day centered on publishing the "Más Vivienda, No Menos" site for Atenea (Ley de Rentas). The work covered zip verification, a Caddy mount on nip.io, Hostinger DNS, the masviviendanomenos.org go-live, GoatCounter analytics and the site.webmanifest MIME fix. Fede also asked for a domain-age check on agereversal.es, two agent-controller KB syncs, and Blueflint content integration into the original draft. Mostly shell/Caddy/DNS checks and KB appends.
+
+### What Jarvis learned
+Fede's "esto" and short follow-ups such as "?" usually mean he wants a status check or confirmation, not new work. When a target is ambiguous (Blueflint), he prefers to be asked first, because Jarvis built a third site and he clarified it should have gone into the original draft. He also wants instructions adapted to the English-language UI of the tools he is using (Hostinger).
+
+### Friction points
+- Blueflint: Jarvis created an extra site because the target was ambiguous. Fede said the omission was his.
+- Hostinger DNS steps had to be redone for the English interface.
+- Jarvis cannot write to /etc/caddy, so Fede ran the publish and MIME-fix scripts by hand. Jarvis never ran or tested those scripts itself.
+- The 04_QR folder was missing from the package.
+- Open item: robots.txt allows indexing although the brief marks the package confidential.
+
+### Research notes
+Operations are heavy and hands-on, with the human running privileged steps that the agent prepares. This is a clear delegation boundary in the co-evolution record. Memory tools (memory_search / memory_reflect) were not available in this session, so the entry is built from the narrative and project list only. No memory-derived patterns are included.
+
+## 2026-11-21
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 13 |
+| Total tasks | 4812 |
+| Conversations today | 5 (telegram: 5) |
+| Streak days | 5 |
+
+### Interactions summary
+Two blocks of activity. Overnight, Fede had the agent-controller KB updated from the repo (history.md section added) and asked for lines added today (4 commits, 411 added / 20 deleted). Midday, he closed out the flyer QR topic for masviviendanomenos.org (13 QRs, 26/26 SVG and PDF decoded correctly) and asked whether to protect the landing with Cloudflare against DDoS. Shell/git and file tools were used most.
+
+### What Jarvis learned
+Fede closes topics with an explicit verification step (run the script, test each QR against its flyer) before accepting them as done. For the Cloudflare question, Jarvis gave a judgment-based recommendation (not essential, but worthwhile) without measuring traffic or testing the VPS. Fede's final decision was not recorded.
+
+### Friction points
+None detected.
+
+### Research notes
+Still a steady-use phase with a 5-day streak. Milestone: QR delivery fully verified. Note: the memory_search and memory_reflect tools were not available in this run's tool set, so this entry draws on the day narrative and project list only; no recall data was used.
