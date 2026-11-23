@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-23 04:23 UTC — batch 10 piece 13 COMMITTED `d3a97958` (queue 4ie; not deployed, ships with the batch): the describe and load skill tools are in the core set, the three description pointers to the run tool are conditional, the skill-proposing task gets the load tool. Review: pass with warnings; three whole-text pins added, one comment replaced by the reviewer's text, three of my sentences corrected. Next: memory search on the local memory store.**
+
 **Status 2026-11-23 03:27 UTC — batch 10 piece 12 COMMITTED `168ae37c` (queue 4id; not deployed, ships with the batch): nine description sentences of the history, categories, probe, deactivate, run and file tools say what the code does. Review: pass with warnings; four absence checks added, one sentence replaced by the reviewer's fuller text, two of my sentences corrected. Next: the skill tools on offer together.**
 
 **Status 2026-11-21 16:27 UTC — batch 10 piece 11 COMMITTED `b2c704bf` (queue 4ic; not deployed, ships with the batch): the planner's list of check programs no longer names a program the shell guard refuses; the code-search tool's too-short query is an error object, its example says what the call returns, and the directory tool's message for a listing without names is true. Review: pass with warnings; two test cases added, one test name narrowed, three of my sentences corrected. Next: nine description sentences, then the skill tools on offer together.**
