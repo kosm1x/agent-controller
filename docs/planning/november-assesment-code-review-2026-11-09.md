@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-23 03:27 UTC — batch 10 piece 12 COMMITTED `168ae37c` (queue 4id; not deployed, ships with the batch): nine description sentences of the history, categories, probe, deactivate, run and file tools say what the code does. Review: pass with warnings; four absence checks added, one sentence replaced by the reviewer's fuller text, two of my sentences corrected. Next: the skill tools on offer together.**
+
 **Status 2026-11-21 16:27 UTC — batch 10 piece 11 COMMITTED `b2c704bf` (queue 4ic; not deployed, ships with the batch): the planner's list of check programs no longer names a program the shell guard refuses; the code-search tool's too-short query is an error object, its example says what the call returns, and the directory tool's message for a listing without names is true. Review: pass with warnings; two test cases added, one test name narrowed, three of my sentences corrected. Next: nine description sentences, then the skill tools on offer together.**
 
 **Status 2026-11-21 15:51 UTC — batch 10 piece 10 COMMITTED `fe287ae4` (queue 4ib; not deployed, ships with the batch): thirteen undescribed input properties described, the condition text of both file write tools names the words it is matched against, and a lint case walks every schema property at every depth. Review: pass with warnings; four texts and a comment replaced, one walk case strengthened. Next: the untrue texts, then the piece that makes the skill list and the load tool travel together.**
