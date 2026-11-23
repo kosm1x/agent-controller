@@ -3309,7 +3309,7 @@ export const shellTool: Tool = {
       description: `Execute a shell command and return its output. Use for running system queries, scripts, or CLI tools.
 
 USE WHEN:
-- Running build commands (npm test, npx tsc, python scripts)
+- Running build commands and scoped tests (npx tsc, python scripts, npx vitest run <path/to/file.test.ts>); an unscoped test run (npm test, a bare npx vitest run) is refused
 - System queries (ls, df, cat, which, dpkg)
 - Project-specific CLI tools
 
