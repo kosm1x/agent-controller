@@ -26,6 +26,8 @@ export const CORE_TOOLS = [
   "expand_read", // 2026-10-15: Expand fetch with citations; dormant without EXPAND_API_KEY
   "skill_save",
   "skill_list",
+  "skill_describe", // deferred; in CORE_TOOLS with skill_list, which points to it
+  "skill_load", // deferred; in CORE_TOOLS with skill_list, which points to it
   "file_read", // Always available — reads .txt, .docx, downloaded attachments
   "data_summarize", // Always available — deterministic counts/stats over CSV/JSONL/markdown (usability Phase 3.1)
   "list_dir", // Always available — browse VPS filesystem when user says "local"
@@ -389,16 +391,11 @@ export const DIAGRAM_TOOLS = ["diagram_generate"];
 export const CHART_TOOLS = ["market_chart_render", "market_chart_patterns"];
 
 /**
- * v7.7 Spine 3 skill-dispatch surface (L1 describe / L2 load / execute).
- * Wired 2026-07-05 (efficiency-audit Phase 0.8 found the trio registered but
- * absent from every scope group — unreachable from chat since it shipped;
- * operator approved wiring). skill_save/skill_list stay in CORE_TOOLS.
+ * Skill execution: skill_run, a single-tool Rule-of-Two trifecta.
+ * scopeToolsForMessage adds it only when the skills group is active. The
+ * other skill tools are in CORE_TOOLS, next to skill_list, which points to them.
  */
-export const SKILL_DISPATCH_TOOLS = [
-  "skill_describe",
-  "skill_load",
-  "skill_run",
-];
+export const SKILL_DISPATCH_TOOLS = ["skill_run"];
 
 /**
  * v7.11 teaching module — learning plans, adaptive quizzes, explain-back,
@@ -1141,10 +1138,9 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
     group: "teaching",
   },
   {
-    // v7.7 skill-dispatch surface (wired 2026-07-05). "skill(s)" is
-    // unambiguous operator vocabulary here — skill_save/skill_list have been
-    // CORE (always on) since v7.7, so mentioning skills already implies the
-    // skills system; this just completes the flow with describe/load/run.
+    // Skill execution (skill_run). "skill(s)" is unambiguous operator
+    // vocabulary here; the other skill tools are in CORE_TOOLS, so this group
+    // adds only skill_run.
     // ES: "habilidad(es)" only with a usage verb to avoid generic-speech
     // false positives ("tiene la habilidad de…").
     pattern:

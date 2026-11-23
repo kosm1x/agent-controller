@@ -111,11 +111,13 @@ USE WHEN:
 DO NOT USE WHEN:
 - You need a versioned skill's inputs declaration, version or certification status — use skill_describe
 - You need the steps of a saved procedure or the instructions of a versioned skill — use skill_load (its result says which kind the skill is)
-- You want to run a versioned skill — use skill_run (a saved procedure cannot be run: follow the steps skill_load returns)
+- You want to run a versioned skill — use skill_run when it is among your tools, otherwise follow the instructions skill_load returns (a saved procedure cannot be run: follow the steps skill_load returns)
 - You want to save a procedure — use skill_save
 
 WHAT IT RETURNS:
 Saved skills, most used first, each with its name, description, use count, success rate, source and whether it is active. A long list shows only the first skills and says how many of how many are shown; the query parameter narrows the list.`;
+const RUN_LINE =
+  "- You want to run a versioned skill — use skill_run when it is among your tools, otherwise follow the instructions skill_load returns (a saved procedure cannot be run: follow the steps skill_load returns)";
 const QUERY_TEXT =
   "Optional. Lists only skills whose name, description or trigger contains this text (case-insensitive, taken literally, blanks at both ends ignored). Empty or omitted: no filter.";
 
@@ -138,6 +140,12 @@ describe("skill tool texts", () => {
     );
   });
 
+  it("the list sends a run to skill_run only when it is on offer, and names skill_run once", () => {
+    const desc = skillListTool.definition.function.description;
+    expect(desc.split("\n").filter((l) => l === RUN_LINE)).toHaveLength(1);
+    expect(desc.split("skill_run").length - 1).toBe(1);
+  });
+
   it("every tool name in the changed texts is a registered tool", async () => {
     const names = await registeredNames();
     const words = [
@@ -152,6 +160,7 @@ describe("skill tool texts", () => {
       "skill_describe",
       "skill_load",
       "skill_run",
+      "skill_load",
       "skill_load",
       "skill_save",
     ]);

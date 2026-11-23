@@ -377,6 +377,57 @@ describe("annotations sanity", () => {
     expect(description).not.toContain("skill_save");
   });
 
+  it("describe and load send a run to skill_run only when it is on offer", () => {
+    const section = (description: string) =>
+      description.slice(
+        description.indexOf("DO NOT USE WHEN:\n"),
+        description.indexOf("\n\nWHAT IT RETURNS:"),
+      );
+    const describeText = skillDescribeTool.definition.function.description;
+    const loadText = skillLoadTool.definition.function.description;
+    expect(section(describeText)).toBe(`DO NOT USE WHEN:
+- You want the skill body / instructions — use skill_load instead
+- You want to LIST what skills exist — use skill_list instead
+- You want to RUN a versioned skill — use skill_run when it is among your tools, otherwise follow the instructions skill_load returns`);
+    expect(section(loadText)).toBe(`DO NOT USE WHEN:
+- You only need name/description/inputs — use skill_describe (smaller payload)
+- You want to RUN a versioned skill — use skill_run when it is among your tools, otherwise follow the body this tool returns (a saved procedure is never run: follow its steps)`);
+    expect(describeText.split("skill_run").length - 1).toBe(1);
+    expect(loadText.split("skill_run").length - 1).toBe(1);
+  });
+
+  it("describe and load descriptions are exactly as written", () => {
+    expect(skillLoadTool.definition.function.description)
+      .toBe(`Return the full L2 view of a skill — metadata + body + tools_used + trigger_examples.
+
+USE WHEN:
+- You want to read a skill's instructions before deciding whether to invoke it
+- You need to see what tools a skill depends on
+- You're authoring a similar skill and want to study an existing pattern
+
+DO NOT USE WHEN:
+- You only need name/description/inputs — use skill_describe (smaller payload)
+- You want to RUN a versioned skill — use skill_run when it is among your tools, otherwise follow the body this tool returns (a saved procedure is never run: follow its steps)
+
+WHAT IT RETURNS:
+JSON envelope { ok, skill | reason }. On found: full L2 metadata + body markdown. On not found: { ok: false, reason: "skill_not_found" }. When the requested version doesn't exist, returns { ok: false, reason: "version_not_found" }.`);
+    expect(skillDescribeTool.definition.function.description)
+      .toBe(`Return the L1 metadata for a named skill — name, description, version, inputs declaration, output type, and certification status.
+
+USE WHEN:
+- You want to know what a specific skill does before invoking it
+- You need to know what arguments a skill requires (its inputs declaration)
+- You want to check whether a skill is certified + active
+
+DO NOT USE WHEN:
+- You want the skill body / instructions — use skill_load instead
+- You want to LIST what skills exist — use skill_list instead
+- You want to RUN a versioned skill — use skill_run when it is among your tools, otherwise follow the instructions skill_load returns
+
+WHAT IT RETURNS:
+JSON envelope { ok, skill | reason }. On found: full L1 metadata. On not found: { ok: false, reason: "skill_not_found" }.`);
+  });
+
   it("all three are deferred", () => {
     expect(skillDescribeTool.deferred).toBe(true);
     expect(skillLoadTool.deferred).toBe(true);

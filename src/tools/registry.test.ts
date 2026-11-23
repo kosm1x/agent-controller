@@ -636,9 +636,8 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
       // V8.3 gated-capability backing tool (lib/v8-3/seed.ts), dormant by
       // design behind V83_ENABLED.
       skill_run: "V8.3 gated capability backing; dormant by design",
-      // (skill_describe / skill_load were listed here as 2026-07-05 audit
-      // gaps; they are scoped via SKILL_DISPATCH_TOOLS since 2026-07-05 —
-      // stale entries removed 2026-09-10.)
+      // skill_describe and skill_load are in CORE_TOOLS, so they need no
+      // entry in this list.
     };
     const universe = getAllAvailableTools({
       hasGoogle: true,

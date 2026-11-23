@@ -134,7 +134,7 @@ Tools: ${tools.join(", ")}
 Related tasks: ${titles.join(", ") || "N/A"}
 
 Instructions:
-1. Use skill_list to check if a similar skill already exists
+1. Use skill_list to check whether a skill with the same purpose already exists. Its rows show each skill's name and description, not its tools; its query parameter lists only the skills whose name, description or trigger contains the text you give. To see the tools of a skill that looks similar, use skill_load with its name. (No active saved procedure lists exactly these tools: that was checked before this task was created.)
 2. If no similar skill exists, use skill_save. ALL of these params are REQUIRED
    (each maps to a NOT NULL column — omitting one makes the save fail):
    - name: a short snake_case name for this workflow
@@ -154,7 +154,7 @@ Be conservative — only save genuinely reusable workflows.`,
       // persist (0 skills saved 2026-06-28..07-06, all runs failed/no-op). Explicit
       // "fast" pins it to the in-process host runner. See feedback_skill_discovery_host_tool_misroute.
       agentType: "fast",
-      tools: ["skill_save", "skill_list"],
+      tools: ["skill_save", "skill_list", "skill_load"],
       tags: ["internal", "skill-suggestion"],
     });
   } catch {

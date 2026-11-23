@@ -288,7 +288,7 @@ MCP bridges to two browser stacks.
 
 ### Skills (scope group: `skills`)
 
-- `skill_describe` / `skill_load` / `skill_run` — S5 skill dispatch (metadata, full body, invoke); `skill_save` / `skill_list` are core
+- `skill_run` — S5 skill dispatch (invoke); `skill_save` / `skill_list` / `skill_describe` / `skill_load` are core
 
 ### Messaging / delivery
 

@@ -3594,6 +3594,53 @@ describe("skills dispatch scope group", () => {
     const universe = getAllAvailableTools(ALL_ON);
     for (const t of SKILL_DISPATCH_TOOLS) expect(universe.has(t)).toBe(true);
   });
+
+  it("describe and load are in the core set next to the list; run is the group's only tool", () => {
+    expect(CORE_TOOLS).toContain("skill_list");
+    expect(CORE_TOOLS).toContain("skill_describe");
+    expect(CORE_TOOLS).toContain("skill_load");
+    expect(CORE_TOOLS).not.toContain("skill_run");
+    expect(SKILL_DISPATCH_TOOLS).toEqual(["skill_run"]);
+  });
+
+  it("a turn with no skill signal carries describe and load but not run, on the pattern path", () => {
+    const tools = scope("hola, qué tal");
+    expect(tools).toContain("skill_list");
+    expect(tools).toContain("skill_describe");
+    expect(tools).toContain("skill_load");
+    expect(tools).not.toContain("skill_run");
+  });
+
+  it("a turn with no skill signal carries describe and load but not run, on the classifier path", () => {
+    for (const groups of [new Set<string>(), new Set(["coding"])]) {
+      const tools = scopeToolsForMessage(
+        "revisa el archivo de notas",
+        [],
+        DEFAULT_SCOPE_PATTERNS,
+        ALL_ON,
+        groups,
+      );
+      expect(tools).toContain("skill_describe");
+      expect(tools).toContain("skill_load");
+      expect(tools).not.toContain("skill_run");
+    }
+  });
+
+  it("a skills turn carries the run tool by name, once, on both paths", () => {
+    const viaPattern = scope("usa el skill de weekly-report");
+    const viaClassifier = scopeToolsForMessage(
+      "revisa el archivo de notas",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["skills"]),
+    );
+    for (const tools of [viaPattern, viaClassifier]) {
+      expect(tools.filter((t) => t === "skill_run")).toHaveLength(1);
+      expect(tools.filter((t) => t === "skill_load")).toHaveLength(1);
+      expect(tools.filter((t) => t === "skill_describe")).toHaveLength(1);
+    }
+  });
 });
 
 describe("activeProjectGroups (ruling 3t: record-derived group → chat attribution)", () => {

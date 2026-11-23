@@ -63,7 +63,7 @@ USE WHEN:
 
 DO NOT USE WHEN:
 - You only need name/description/inputs — use skill_describe (smaller payload)
-- You want to RUN the skill — use skill_run instead
+- You want to RUN a versioned skill — use skill_run when it is among your tools, otherwise follow the body this tool returns (a saved procedure is never run: follow its steps)
 
 WHAT IT RETURNS:
 JSON envelope { ok, skill | reason }. On found: full L2 metadata + body markdown. On not found: { ok: false, reason: "skill_not_found" }. When the requested version doesn't exist, returns { ok: false, reason: "version_not_found" }.`,

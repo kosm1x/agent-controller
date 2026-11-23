@@ -162,7 +162,7 @@ USE WHEN:
 DO NOT USE WHEN:
 - You need a versioned skill's inputs declaration, version or certification status — use skill_describe
 - You need the steps of a saved procedure or the instructions of a versioned skill — use skill_load (its result says which kind the skill is)
-- You want to run a versioned skill — use skill_run (a saved procedure cannot be run: follow the steps skill_load returns)
+- You want to run a versioned skill — use skill_run when it is among your tools, otherwise follow the instructions skill_load returns (a saved procedure cannot be run: follow the steps skill_load returns)
 - You want to save a procedure — use skill_save
 
 WHAT IT RETURNS:

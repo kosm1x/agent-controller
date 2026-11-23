@@ -110,11 +110,33 @@ describe("skill-discovery", () => {
       expect.objectContaining({
         title: expect.stringContaining("Auto-skill:"),
         agentType: "fast",
-        tools: ["skill_save", "skill_list"],
+        tools: ["skill_save", "skill_list", "skill_load"],
         tags: ["internal", "skill-suggestion"],
         interactive: false, // W-E: background — explicit, not defaulted
       }),
     );
+
+    // Step 1 says what the list can and cannot show, and names skill_load once.
+    const description = vi.mocked(submitTask).mock.calls[0][0].description;
+    expect(description.split("\n").filter((l) => l.startsWith("1. "))).toEqual([
+      "1. Use skill_list to check whether a skill with the same purpose already exists. Its rows show each skill's name and description, not its tools; its query parameter lists only the skills whose name, description or trigger contains the text you give. To see the tools of a skill that looks similar, use skill_load with its name. (No active saved procedure lists exactly these tools: that was checked before this task was created.)",
+    ]);
+    expect(description.split("skill_load").length - 1).toBe(1);
+    expect(description.split("skill_list").length - 1).toBe(1);
+
+    // The whole Instructions block, exactly.
+    expect(description.slice(description.indexOf("Instructions:"))).toBe(`Instructions:
+1. Use skill_list to check whether a skill with the same purpose already exists. Its rows show each skill's name and description, not its tools; its query parameter lists only the skills whose name, description or trigger contains the text you give. To see the tools of a skill that looks similar, use skill_load with its name. (No active saved procedure lists exactly these tools: that was checked before this task was created.)
+2. If no similar skill exists, use skill_save. ALL of these params are REQUIRED
+   (each maps to a NOT NULL column — omitting one makes the save fail):
+   - name: a short snake_case name for this workflow
+   - description: ONE sentence describing what the skill does
+   - trigger: natural-language description of the request that should activate it
+   - steps: an ORDERED ARRAY of step descriptions (one string per step)
+   - tools: ["jarvis_file_read","project_list"]
+3. If a similar skill already exists, do nothing
+
+Be conservative — only save genuinely reusable workflows.`);
   });
 
   it("should not propose if skill already exists with same tools", async () => {

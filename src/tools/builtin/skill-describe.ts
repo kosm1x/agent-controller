@@ -54,7 +54,7 @@ USE WHEN:
 DO NOT USE WHEN:
 - You want the skill body / instructions — use skill_load instead
 - You want to LIST what skills exist — use skill_list instead
-- You want to RUN a skill — use skill_run instead
+- You want to RUN a versioned skill — use skill_run when it is among your tools, otherwise follow the instructions skill_load returns
 
 WHAT IT RETURNS:
 JSON envelope { ok, skill | reason }. On found: full L1 metadata. On not found: { ok: false, reason: "skill_not_found" }.`,

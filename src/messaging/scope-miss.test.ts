@@ -151,6 +151,11 @@ describe("groupsForTool", () => {
     expect(groupsForTool("file_read", opts)).toEqual([]);
     expect(groupsForTool("jarvis_file_read", opts)).toEqual([]);
   });
+  it("the skill describe and load tools are in the baseline; the run tool maps to skills", () => {
+    expect(groupsForTool("skill_describe", opts)).toEqual([]);
+    expect(groupsForTool("skill_load", opts)).toEqual([]);
+    expect(groupsForTool("skill_run", opts)).toContain("skills");
+  });
   it("orders groups narrowest-first so the router widens minimally", () => {
     const gs = groupsForTool("shell_exec", opts);
     expect(gs[0]).toBe("coding");

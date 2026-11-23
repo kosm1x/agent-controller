@@ -97,7 +97,7 @@ A message with no topic signal sees the 31 always-on tools: 29 static (20 full s
 | `seo`                          | SEO, meta tags, schema, robots, llms.txt, AI Overview                       | page audit, keyword research, meta, schema, content brief, robots, llms.txt, telemetry, ai_overview_track                                                      | 9     |
 | `ads`                          | anuncios, ads, campaña                                                      | ads_audit, ads_brand_dna, ads_creative_gen                                                                                                                     | 3     |
 | `teaching`                     | aprender, lección, quiz                                                     | learning_plan_* (6), learner_model_status                                                                                                                      | 7     |
-| `skills`                       | skill                                                                       | skill_describe, skill_load, skill_run                                                                                                                          | 3     |
+| `skills`                       | skill                                                                       | skill_run (skill_describe, skill_load are CORE)                                                                                                                | 1     |
 | `kb_ingest`                    | ingest PDF into KB                                                          | kb_ingest_pdf_structured, kb_batch_insert                                                                                                                      | 2     |
 | `graph`                        | code graph                                                                  | graphify-code MCP (7)                                                                                                                                          | 7     |
 | `xpoz`                         | xpoz                                                                        | xpoz MCP (5)                                                                                                                                                   | 5     |
@@ -158,7 +158,7 @@ Round 3: Tool executes normally
 
 Only tools WITHOUT `deferred: true` send full schemas:
 
-- CORE_TOOLS except `memory_forget` (14)
+- CORE_TOOLS except `memory_forget`, `skill_describe` and `skill_load` (17)
 - `gmail_send` (explicitly `deferred: false`)
 - `memory_search`, `memory_store`, `memory_reflect` (3; registered only with the Hindsight backend)
 - Also non-deferred: `data_summarize`, `submit_report`, `market_quote`, `market_calendar`, `crm_query`, all 10 `wp_*`, `gdrive_list`, `gdocs_read_full`, `gsheets_read`, the coding core, and most MISC tools
