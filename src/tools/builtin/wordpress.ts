@@ -894,7 +894,7 @@ WHEN TO USE:
 - Before calling wp_publish with categories or tags — you need integer IDs, not names
 - To check what categories/tags exist on the site
 
-Returns an array of {id, name, slug, count} objects.`,
+Returns {success, site, count, items}; each item is {id, name, slug, count, parent}.`,
       parameters: {
         type: "object",
         properties: {

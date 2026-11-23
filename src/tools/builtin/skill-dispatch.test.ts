@@ -369,6 +369,14 @@ describe("annotations sanity", () => {
     expect(skillRunTool.openWorldHint).toBe(true);
   });
 
+  it("run's description opens by naming a versioned skill and never names skill_save", () => {
+    const description = skillRunTool.definition.function.description;
+    expect(description.startsWith("Invoke a versioned skill by name. ")).toBe(true);
+    expect(description.split("Invoke a versioned skill by name.").length - 1).toBe(1);
+    expect(description).not.toContain("Invoke a saved skill");
+    expect(description).not.toContain("skill_save");
+  });
+
   it("all three are deferred", () => {
     expect(skillDescribeTool.deferred).toBe(true);
     expect(skillLoadTool.deferred).toBe(true);

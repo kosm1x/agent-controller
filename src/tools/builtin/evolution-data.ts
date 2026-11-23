@@ -94,8 +94,8 @@ export const evolutionDeactivateSkillTool: Tool = {
       name: "evolution_deactivate_skill",
       description: `Deactivate an underperforming skill so it is no longer injected into prompts.
 
-The skill remains in the database (can be reactivated via skill_save) but will not
-match in findSkillsByKeywords queries. Use only during evolution analysis for skills
+The skill remains in the database but will not match in findSkillsByKeywords queries.
+Use only during evolution analysis for skills
 with consistently low success rates (<30%) on 5+ uses.`,
       parameters: {
         type: "object",

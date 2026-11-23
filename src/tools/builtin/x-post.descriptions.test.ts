@@ -51,3 +51,15 @@ describe("X tool definitions name no account", () => {
     }
   });
 });
+
+describe("tweet_probe description", () => {
+  it("names the top-level, each account's and each backend's result keys as the result spells them", async () => {
+    const { tweetProbeTool } = await import("./x-post.js");
+    const description = tweetProbeTool.definition.function.description;
+    const returns =
+      "Returns {healthy, accounts: [{account, healthy, backends: [{backend, ok, detail, auth_expired}]}]}, or {account, healthy, backends} when account is given.";
+    expect(description.split(returns).length - 1).toBe(1);
+    expect(description).not.toContain("authExpired");
+    expect(description).not.toContain("Returns per-account/backend");
+  });
+});

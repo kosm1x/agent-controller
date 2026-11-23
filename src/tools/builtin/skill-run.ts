@@ -50,7 +50,7 @@ export const skillRunTool: Tool = {
     type: "function",
     function: {
       name: "skill_run",
-      description: `Invoke a saved skill by name. Validates args against the skill's inputs declaration, runs the skill body via the mini-runner harness, and updates anti-list + cost ledger accounting.
+      description: `Invoke a versioned skill by name. Validates args against the skill's inputs declaration, runs the skill body via the mini-runner harness, and updates anti-list + cost ledger accounting.
 
 USE WHEN:
 - You want to execute a procedure that's been distilled into a skill — saves you from re-deriving the steps

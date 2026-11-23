@@ -168,7 +168,7 @@ USE WHEN:
 
 Default: daily, 60 bars. Override interval for intraday (1/5/15/60 min) or lookback for longer history.
 
-Source: Alpha Vantage primary, Polygon fallback. Stored in NY market time.
+Source: Polygon primary, Alpha Vantage fallback. Stored in NY market time.
 
 Output: header + table of ≤lookback rows (date/time, O, H, L, C, V). If cached result is stale because both data providers were unreachable, includes a "STALE" notice.`,
       parameters: {

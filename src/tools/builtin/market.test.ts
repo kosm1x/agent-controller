@@ -250,6 +250,15 @@ describe("marketHistoryTool", () => {
     vi.clearAllMocks();
   });
 
+  it("its description names Polygon as the primary source and Alpha Vantage as the fallback, each once", () => {
+    const description = marketHistoryTool.definition.function.description;
+    const source = "Source: Polygon primary, Alpha Vantage fallback. Stored in NY market time.";
+    expect(description.split(source).length - 1).toBe(1);
+    expect(description).not.toContain("Alpha Vantage primary");
+    expect(description.split("Alpha Vantage").length - 1).toBe(1);
+    expect(description.split("Polygon").length - 1).toBe(1);
+  });
+
   it("returns the bar table as plain text on success", async () => {
     mockLayer.getDaily.mockResolvedValue({
       bars: makeBars("SPY", 3),

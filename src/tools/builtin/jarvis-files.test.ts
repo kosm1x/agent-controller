@@ -1443,7 +1443,7 @@ describe("jarvis_files_batch_write schema texts", () => {
     jarvisFileWriteTool.definition.function.parameters as { properties: Props }
   ).properties;
 
-  it("each entry's tags, condition and priority read as the single-write tool's", () => {
+  it("each entry's tags, condition, priority and related paths read as the single-write tool's", () => {
     const condition =
       'When qualifier is "conditional": the tool groups this file goes with, named by including crm, google, wordpress, coding, browser, schedule, reporting, research, teaching or social (matched anywhere in the text, in any case). Default: none.';
     expect(item.tags.description).toBe("Tags for categorization and search.");
@@ -1452,9 +1452,16 @@ describe("jarvis_files_batch_write schema texts", () => {
     expect(item.priority.description).toBe(
       "Read order priority (0=highest, 100=lowest). Default: 50",
     );
-    for (const key of ["tags", "condition", "priority"]) {
+    for (const key of ["tags", "condition", "priority", "related_to"]) {
       expect(item[key].description, key).toBe(single[key].description);
     }
+  });
+
+  it("the batch description names projects/ and knowledge/ as homes and not the refused standing-orders folder anywhere", () => {
+    const description = jarvisFilesBatchWriteTool.definition.function.description;
+    expect(description.split("projects/ + knowledge/ are the canonical homes;").length - 1).toBe(1);
+    expect(description).not.toContain("directives/ are the canonical homes");
+    expect(description).not.toContain("directives/");
   });
 
   it("each entry's qualifier adds that a value not listed is refused", () => {
@@ -1466,6 +1473,24 @@ describe("jarvis_files_batch_write schema texts", () => {
   it("each entry's related paths are described as stored with the file", () => {
     expect(item.related_to.description).toBe(
       "Paths of related files, stored with the file. Default: none.",
+    );
+  });
+});
+
+describe("jarvis_file_write and jarvis_file_update qualifier texts", () => {
+  type Props = Record<string, { description?: string }>;
+  const props = (tool: typeof jarvisFileWriteTool): Props =>
+    (tool.definition.function.parameters as { properties: Props }).properties;
+
+  it("the single-write qualifier says enforce is downgraded, with no reason and no claim of silence", () => {
+    expect(props(jarvisFileWriteTool).qualifier.description).toBe(
+      'How this file should be used. Default: reference. "enforce" is downgraded to "reference".',
+    );
+  });
+
+  it("the update tool's qualifier says enforce is downgraded", () => {
+    expect(props(jarvisFileUpdateTool).qualifier.description).toBe(
+      'Change qualifier (if provided). "enforce" is downgraded to "reference".',
     );
   });
 });

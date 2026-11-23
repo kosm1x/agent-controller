@@ -220,7 +220,7 @@ user_facts/mc.db — cookies live in the environment and this tool reads them
 internally. ${ACCOUNTS_HINT}
 
 Pass account:"<handle>" (an EXACT configured label) to check one account; omit to
-check every account this task's project can use. Returns per-account/backend {ok, detail, authExpired}.`,
+check every account this task's project can use. Returns {healthy, accounts: [{account, healthy, backends: [{backend, ok, detail, auth_expired}]}]}, or {account, healthy, backends} when account is given.`,
       parameters: {
         type: "object",
         properties: {

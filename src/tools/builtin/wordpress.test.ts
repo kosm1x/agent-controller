@@ -460,6 +460,15 @@ describe("wp_media_upload failure envelope", () => {
   });
 });
 
+describe("wp_categories description", () => {
+  it("names the result object and the keys of each item", () => {
+    const description = wpCategoriesTool.definition.function.description;
+    const returns = "Returns {success, site, count, items}; each item is {id, name, slug, count, parent}.";
+    expect(description.split(returns).length - 1).toBe(1);
+    expect(description).not.toContain("Returns an array of");
+  });
+});
+
 describe("wp_categories failure envelope", () => {
   it("a non-ok answer is an error object with the answer under body", async () => {
     answer(500, JSON.stringify(WP_ERROR));

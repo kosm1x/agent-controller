@@ -348,7 +348,7 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
               "enforce",
             ],
             description:
-              'How this file should be used. Default: reference. "enforce" is silently downgraded to "reference" — enforce is reserved for user-created directives.',
+              'How this file should be used. Default: reference. "enforce" is downgraded to "reference".',
           },
           condition: {
             type: "string",
@@ -363,7 +363,7 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
           related_to: {
             type: "array",
             items: { type: "string" },
-            description: "Paths of related files for semantic retrieval chains",
+            description: "Paths of related files, stored with the file. Default: none.",
           },
         },
         required: ["path", "title", "content"],
@@ -507,7 +507,8 @@ PROVENANCE: same rule as jarvis_file_write — figures in the appended text must
               "reference",
               "workspace",
             ],
-            description: "Change qualifier (if provided)",
+            description:
+              'Change qualifier (if provided). "enforce" is downgraded to "reference".',
           },
           priority: {
             type: "number",
@@ -989,7 +990,7 @@ DO NOT USE FOR:
 - Mixed write+delete operations (use the two batch tools sequentially, or single-item tools)
 - More than ${BATCH_CAP} files (cap enforced; split into multiple calls)
 
-PATH HIERARCHY AND QUALIFIERS: see jarvis_file_write description — the same rules apply per item (paths must end .md, logs/day-logs/ is blocked, qualifier "enforce" is silently downgraded to "reference", projects/ + knowledge/ + directives/ are the canonical homes; NorthStar/ is retired and refused with NORTHSTAR_RETIRED).
+PATH HIERARCHY AND QUALIFIERS: see jarvis_file_write description — the same rules apply per item (paths must end .md, logs/day-logs/ is blocked, qualifier "enforce" is silently downgraded to "reference", projects/ + knowledge/ are the canonical homes; NorthStar/ is retired and refused with NORTHSTAR_RETIRED).
 
 PER-FILE PARAMETERS — same as jarvis_file_write: path (.md required), title, content, optional tags, qualifier, condition, priority, related_to. Each file is validated and written independently.
 
