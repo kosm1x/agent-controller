@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-23 07:29 UTC — batch 10 piece 16 COMMITTED `e2d5591f` and `c1fb1a1d` (queue 4ih; not deployed, ships with the batch): the self-test tool runs in the agent's own worktree, refuses when it is missing and reports a busy suite as an error; the shell description no longer recommends a test command its guard refuses. Review: pass with warnings; two faults stayed green, one closed by a case, one left with an added assertion that was not shown red; one sentence corrected. Next: the failure results in the protected git, shell and propose tools.**
+
 **Status 2026-11-23 06:13 UTC — batch 10 piece 15 COMMITTED `fb0092a4` (queue 4ig; not deployed, ships with the batch): under tool search, a non-interactive run's own list of up to 12 tools loads up front on the other model path. The effort half of the same ruling is NOT built and waits for the operator (it would override an earlier ruled setting). Review: pass with warnings; three green faults closed by three cases. Next: the self-test tool on the agent's own worktree.**
 
 **Status 2026-11-23 05:22 UTC — batch 10 piece 14 COMMITTED `24a006ff` (queue 4if; not deployed, ships with the batch): the memory search tool is registered in the narrow mode of the memory source and is in the core set; its description is true on both stores. Review: pass with warnings, no behaviour finding; two texts replaced by the reviewer's, one pin added, four of my sentences corrected. Next: the effort rating on the other model path and short tool lists loaded up front.**
