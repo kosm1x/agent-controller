@@ -147,7 +147,12 @@ export const userFactListTool: Tool = {
 USE WHEN:
 - The user asks "what do you know about me?"
 - You need to verify what facts are already stored before saving new ones
-- The user wants to review or audit their stored profile`,
+- The user wants to review or audit their stored profile
+
+DO NOT USE WHEN:
+- You need the value of a stored credential: this tool shows a fact it detects as a credential only as a placeholder, never the value itself.
+- You want the user's projects or their status: this tool lists stored facts, not the project records — use project_list when it is among your tools.
+- You want something from an earlier conversation or a stored memory: this tool reads only the stored facts — use memory_search when it is among your tools.`,
       parameters: {
         type: "object",
         properties: {
@@ -202,7 +207,12 @@ export const userFactDeleteTool: Tool = {
     type: "function",
     function: {
       name: "user_fact_delete",
-      description: `Delete a stored personal fact. Use when the user explicitly asks to remove a fact or when a fact is no longer accurate and should be removed rather than updated.`,
+      description: `Delete a stored personal fact. Use when the user explicitly asks to remove a fact or when a fact is no longer accurate and should be removed rather than updated.
+
+DO NOT USE WHEN:
+- The fact only changed (a new value, a correction): this tool removes the fact rather than updating it — use user_fact_set when it is among your tools (same category and key).
+- The thing to forget is a knowledge-graph fact or a stored correction, not a stored user fact: this tool deletes only the fact with this exact category and key — use memory_forget when it is among your tools.
+- You are not sure of the exact key: this tool deletes only an exact category and key match and nothing otherwise — use user_fact_list when it is among your tools to check them first.`,
       parameters: {
         type: "object",
         properties: {

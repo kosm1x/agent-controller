@@ -431,6 +431,10 @@ USE WHEN:
 - You need to discover what Spaces are available for a task
 - The user says "busca un space para...", "find a space for...", "qué herramientas hay en HuggingFace"
 
+DO NOT USE WHEN:
+- You want media made: this tool only lists Spaces and runs none of them — use hf_generate when it is among your tools.
+- You want models or datasets: this tool searches only the HuggingFace Spaces listing.
+
 Returns: name, likes, hardware, created date, and URL for each matching Space.`,
       parameters: {
         type: "object",

@@ -313,3 +313,27 @@ describe("knowledge_map_expand", () => {
     expect(JSON.parse(result).error).toContain("required");
   });
 });
+
+// Whole-text pin: this description is what the model reads when it chooses a
+// tool. No handler is called.
+describe("knowledge_map_expand — description text", () => {
+  it("the whole description, with its not-for block", () => {
+    expect(knowledgeMapExpandTool.definition.function.description).toBe(`Drill deeper into a specific node of an existing knowledge map.
+
+USE WHEN:
+- You identified a knowledge gap during execution
+- A specific concept needs more detail to complete a goal
+- The reflector flagged a concept that wasn't adequately addressed
+
+BEHAVIOR:
+- Generates 3-6 child nodes under the specified parent node
+- Adds no children when the map already has 60 or more nodes, or when the node is at depth 4 (the fifth level)
+- If the node already has children, returns them without regenerating
+
+DO NOT USE WHEN:
+- You need facts you can cite: the child nodes are written by a model from this node's label and summary and the other nodes at its level, with no search and no sources — use web_search when it is among your tools.
+- The node already has children and you want different ones: this tool returns the stored children unchanged and never regenerates them.
+
+REQUIRES: An existing knowledge map. Use knowledge_map when it is among your tools to generate one.`);
+  });
+});

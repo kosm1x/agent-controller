@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { userFactSetTool, userFactListTool } from "./user-facts.js";
+import {
+  userFactSetTool,
+  userFactListTool,
+  userFactDeleteTool,
+} from "./user-facts.js";
 import {
   invalidateSecretRefs,
   secretEnvForCommand,
@@ -305,5 +309,32 @@ describe("user_fact_set — mailbox password", () => {
     const env = secretEnvForCommand(`echo "$${name}"`);
     expect(env).toEqual({ [name]: prior });
     expect(JSON.stringify(env)).not.toContain(pw);
+  });
+});
+
+// Whole-text pins: these descriptions are what the model reads when it
+// chooses a tool. No handler is called.
+describe("user_fact_list and user_fact_delete — description text", () => {
+  it("user_fact_list: the whole description, with its not-for block", () => {
+    expect(userFactListTool.definition.function.description).toBe(`List all stored personal facts about the user, optionally filtered by category.
+
+USE WHEN:
+- The user asks "what do you know about me?"
+- You need to verify what facts are already stored before saving new ones
+- The user wants to review or audit their stored profile
+
+DO NOT USE WHEN:
+- You need the value of a stored credential: this tool shows a fact it detects as a credential only as a placeholder, never the value itself.
+- You want the user's projects or their status: this tool lists stored facts, not the project records — use project_list when it is among your tools.
+- You want something from an earlier conversation or a stored memory: this tool reads only the stored facts — use memory_search when it is among your tools.`);
+  });
+
+  it("user_fact_delete: the whole description, with its not-for block", () => {
+    expect(userFactDeleteTool.definition.function.description).toBe(`Delete a stored personal fact. Use when the user explicitly asks to remove a fact or when a fact is no longer accurate and should be removed rather than updated.
+
+DO NOT USE WHEN:
+- The fact only changed (a new value, a correction): this tool removes the fact rather than updating it — use user_fact_set when it is among your tools (same category and key).
+- The thing to forget is a knowledge-graph fact or a stored correction, not a stored user fact: this tool deletes only the fact with this exact category and key — use memory_forget when it is among your tools.
+- You are not sure of the exact key: this tool deletes only an exact category and key match and nothing otherwise — use user_fact_list when it is among your tools to check them first.`);
   });
 });

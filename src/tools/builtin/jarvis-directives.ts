@@ -47,12 +47,18 @@ USE WHEN:
 
 WORKFLOW:
 1. Call jarvis_propose_directive with the proposal
-2. User receives notification in Telegram
-3. User says "aprueba la propuesta" → you call jarvis_apply_proposal
+2. You tell the user what you proposed (this tool sends no message itself)
+3. User says "aprueba la propuesta" → use jarvis_apply_proposal when it is among your tools
 4. Change is applied + logged in decisions/
 
 CONSTRAINT: You can ONLY propose. You CANNOT modify directives directly.
 Proposals go to knowledge/proposals/ where the user reviews them.
+
+DO NOT USE WHEN:
+- The change should take effect now: this tool only saves a proposal and does not change the target file.
+- The target is code or any other file outside the knowledge base: proposals apply only to knowledge-base files.
+- A modify or remove without the exact current text: without current_content the proposal is saved but cannot be applied — read the target first; use jarvis_file_read when it is among your tools.
+- The text to change appears more than once and only one place should change: applying changes every occurrence of current_content.
 
 AFTER PROPOSING: Tell the user what you proposed and ask for approval.`,
       parameters: {
@@ -250,7 +256,11 @@ export const jarvisApplyProposalTool: Tool = {
 USE WHEN:
 - User says "aprueba la propuesta X" or "aprueba" after reviewing a proposal
 
-NEVER call this without explicit user approval in the current message.`,
+NEVER call this without explicit user approval in the current message.
+
+DO NOT USE WHEN:
+- No proposal exists yet for the change: this tool only applies a proposal already saved under knowledge/proposals/, found by its exact name — use jarvis_propose_directive when it is among your tools.
+- The user asks for changes to the proposal: this tool applies the saved text exactly and takes no new text.`,
       parameters: {
         type: "object",
         properties: {

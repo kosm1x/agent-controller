@@ -30,7 +30,11 @@ import {
   enterRunToolContext,
   runToolContext,
 } from "../rule-of-two.js";
-import { runScheduleTool, scheduleTaskTool } from "./schedule.js";
+import {
+  deleteScheduleTool,
+  runScheduleTool,
+  scheduleTaskTool,
+} from "./schedule.js";
 
 const CHAT_ORIGIN = { source: "operator" as const, threadId: "telegram:1" };
 
@@ -319,5 +323,26 @@ describe("run_schedule — in-flight guard", () => {
     );
     expect(inFlightScheduleRun("s1")).toBeNull();
     expect((await runInChat({ schedule_id: "s1" })).task_id).toBe("task-1");
+  });
+});
+
+// Whole-text pins: this description is what the model reads when it chooses
+// a tool. No handler is called.
+describe("delete_schedule — description text", () => {
+  it("the whole description, with its not-for block", () => {
+    expect(deleteScheduleTool.definition.function.description).toBe(`Delete a recurring scheduled task by its schedule_id. Use list_schedules when it is among your tools to look up the IDs.
+
+DO NOT USE WHEN:
+- The user wants to pause a schedule or stop it for a while: this tool deletes the schedule for good, with no undo; the /rituales pausa command pauses it and keeps it resumable.
+- The routine is a built-in ritual: this tool deletes only stored schedules and returns "not found" for any other id.
+- A run of the schedule has already started and the user wants it stopped: deleting the schedule does not cancel a run in progress.`);
+  });
+
+  // The deferred catalog shows the first 120 characters of the whole text:
+  // they are exactly the two opening sentences, with no line break.
+  it("the catalog cut (first 120 characters) is exactly the two opening sentences", () => {
+    expect(deleteScheduleTool.definition.function.description.slice(0, 120)).toBe(
+      "Delete a recurring scheduled task by its schedule_id. Use list_schedules when it is among your tools to look up the IDs.",
+    );
   });
 });

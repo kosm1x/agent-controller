@@ -276,10 +276,14 @@ USE WHEN:
 
 BEHAVIOR:
 - Generates 3-6 child nodes under the specified parent node
-- Respects limits: max 60 nodes per map, max depth 5
+- Adds no children when the map already has 60 or more nodes, or when the node is at depth 4 (the fifth level)
 - If the node already has children, returns them without regenerating
 
-REQUIRES: An existing knowledge map. Call knowledge_map first to generate one.`,
+DO NOT USE WHEN:
+- You need facts you can cite: the child nodes are written by a model from this node's label and summary and the other nodes at its level, with no search and no sources — use web_search when it is among your tools.
+- The node already has children and you want different ones: this tool returns the stored children unchanged and never regenerates them.
+
+REQUIRES: An existing knowledge map. Use knowledge_map when it is among your tools to generate one.`,
       parameters: {
         type: "object",
         properties: {

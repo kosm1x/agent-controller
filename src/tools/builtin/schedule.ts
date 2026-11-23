@@ -419,8 +419,12 @@ export const deleteScheduleTool: Tool = {
     type: "function",
     function: {
       name: "delete_schedule",
-      description:
-        "Delete a recurring scheduled task by its schedule_id. Use list_schedules first to find the ID.",
+      description: `Delete a recurring scheduled task by its schedule_id. Use list_schedules when it is among your tools to look up the IDs.
+
+DO NOT USE WHEN:
+- The user wants to pause a schedule or stop it for a while: this tool deletes the schedule for good, with no undo; the /rituales pausa command pauses it and keeps it resumable.
+- The routine is a built-in ritual: this tool deletes only stored schedules and returns "not found" for any other id.
+- A run of the schedule has already started and the user wants it stopped: deleting the schedule does not cancel a run in progress.`,
       parameters: {
         type: "object",
         properties: {

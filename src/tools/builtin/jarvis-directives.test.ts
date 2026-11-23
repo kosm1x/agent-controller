@@ -560,3 +560,46 @@ describe("jarvis_apply_proposal failures are one error object", () => {
     expect(mockAll.deleteFile).toHaveBeenCalledWith(datePart);
   });
 });
+
+// Whole-text pins: these descriptions are what the model reads when it
+// chooses a tool. No handler is called.
+describe("jarvis_propose_directive and jarvis_apply_proposal — description text", () => {
+  it("jarvis_propose_directive: the whole description, with its not-for block", () => {
+    expect(jarvisProposeTool.definition.function.description).toBe(`Propose a change to your own directives or SOPs. Does NOT apply immediately — requires user approval.
+
+USE WHEN:
+- You notice a recurring pattern that should be a directive (e.g., hallucination nudge keeps firing)
+- You want to add/modify a Knowledge Base SOP based on experience
+- Overnight tuning identifies a behavioral improvement
+
+WORKFLOW:
+1. Call jarvis_propose_directive with the proposal
+2. You tell the user what you proposed (this tool sends no message itself)
+3. User says "aprueba la propuesta" → use jarvis_apply_proposal when it is among your tools
+4. Change is applied + logged in decisions/
+
+CONSTRAINT: You can ONLY propose. You CANNOT modify directives directly.
+Proposals go to knowledge/proposals/ where the user reviews them.
+
+DO NOT USE WHEN:
+- The change should take effect now: this tool only saves a proposal and does not change the target file.
+- The target is code or any other file outside the knowledge base: proposals apply only to knowledge-base files.
+- A modify or remove without the exact current text: without current_content the proposal is saved but cannot be applied — read the target first; use jarvis_file_read when it is among your tools.
+- The text to change appears more than once and only one place should change: applying changes every occurrence of current_content.
+
+AFTER PROPOSING: Tell the user what you proposed and ask for approval.`);
+  });
+
+  it("jarvis_apply_proposal: the whole description, with its not-for block", () => {
+    expect(jarvisApplyProposalTool.definition.function.description).toBe(`Apply an approved directive proposal. Only call this AFTER the user explicitly approves.
+
+USE WHEN:
+- User says "aprueba la propuesta X" or "aprueba" after reviewing a proposal
+
+NEVER call this without explicit user approval in the current message.
+
+DO NOT USE WHEN:
+- No proposal exists yet for the change: this tool only applies a proposal already saved under knowledge/proposals/, found by its exact name — use jarvis_propose_directive when it is among your tools.
+- The user asks for changes to the proposal: this tool applies the saved text exactly and takes no new text.`);
+  });
+});
