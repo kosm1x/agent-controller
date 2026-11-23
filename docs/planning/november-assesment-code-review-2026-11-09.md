@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-23 05:22 UTC — batch 10 piece 14 COMMITTED `24a006ff` (queue 4if; not deployed, ships with the batch): the memory search tool is registered in the narrow mode of the memory source and is in the core set; its description is true on both stores. Review: pass with warnings, no behaviour finding; two texts replaced by the reviewer's, one pin added, four of my sentences corrected. Next: the effort rating on the other model path and short tool lists loaded up front.**
+
 **Status 2026-11-23 04:23 UTC — batch 10 piece 13 COMMITTED `d3a97958` (queue 4ie; not deployed, ships with the batch): the describe and load skill tools are in the core set, the three description pointers to the run tool are conditional, the skill-proposing task gets the load tool. Review: pass with warnings; three whole-text pins added, one comment replaced by the reviewer's text, three of my sentences corrected. Next: memory search on the local memory store.**
 
 **Status 2026-11-23 03:27 UTC — batch 10 piece 12 COMMITTED `168ae37c` (queue 4id; not deployed, ships with the batch): nine description sentences of the history, categories, probe, deactivate, run and file tools say what the code does. Review: pass with warnings; four absence checks added, one sentence replaced by the reviewer's fuller text, two of my sentences corrected. Next: the skill tools on offer together.**
