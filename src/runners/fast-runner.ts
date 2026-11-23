@@ -399,6 +399,26 @@ function tierToEffort(tier?: string): "low" | "medium" | "high" | undefined {
   return undefined;
 }
 
+/** Most names an own tool list may have and still be loaded up front. */
+const OWN_LIST_UP_FRONT_MAX = 12;
+
+/**
+ * On the other model path, a run submitted as not interactive (no operator to
+ * confirm in), with its own tool list and no conversation history, gets every
+ * tool of a short list loaded up front, so the model calls a deferred one
+ * without searching first. The length counted is the list as the run carries
+ * it: the same names the call receives.
+ */
+function loadsOwnListUpFront(input: RunnerInput): boolean {
+  return (
+    input.interactive === false &&
+    input.tools !== undefined &&
+    input.tools.length > 0 &&
+    !input.conversationHistory?.length &&
+    input.tools.length <= OWN_LIST_UP_FRONT_MAX
+  );
+}
+
 // The branches (SDK, last line / OpenAI loop, thrown error). Callers go
 // through `fastRunner`, which applies the cancellation rule to every one.
 const fastRunnerBranches = {
@@ -1163,6 +1183,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         const allToolNames =
           input.tools ??
           toolRegistry.getDefinitions().map((d) => d.function.name);
+        const loadToolsUpFront = loadsOwnListUpFront(input);
 
         console.log(
           `[fast-runner] Claude SDK path: ${allToolNames.length} tools, maxTurns=${input.unlimited ? "unlimited (/loop)" : maxRounds}` +
@@ -1178,6 +1199,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
               prompt: userPrompt,
               systemPrompt,
               toolNames: allToolNames,
+              loadToolsUpFront,
               maxTurns: maxRounds,
               unlimited: input.unlimited,
               abortSignal: input.signal,
@@ -1357,6 +1379,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
                 ),
                 systemPrompt,
                 toolNames: allToolNames,
+                loadToolsUpFront,
                 // R1 audit W4: bounded — half the rounds finishes a nearly-done
                 // task; anything needing more re-caps into checkpoint + ¿Sigo?.
                 maxTurns: input.unlimited
@@ -1423,6 +1446,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
                   : userPrompt,
                 systemPrompt,
                 toolNames: allToolNames,
+                loadToolsUpFront,
                 maxTurns: maxRounds,
                 unlimited: input.unlimited,
                 abortSignal: input.signal,

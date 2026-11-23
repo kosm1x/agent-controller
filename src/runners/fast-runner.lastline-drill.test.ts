@@ -15,8 +15,8 @@
  * Not covered here:
  * - tool schema validation, risk tiers, deferral expansion and tool-name
  *   repair (the registry fake accepts every call at low risk);
- * - the confirmation gate asking (every run is non-interactive);
- * - the first-round tool nudge and the chat path (no conversation history);
+ * - the confirmation gate asking (no run reaches a high-risk tool);
+ * - the first-round tool nudge and the chat path (one case passes history only to show the up-front rule declines it);
  * - a tool that itself calls inference;
  * - cost booking after the runner reports its usage.
  *
@@ -692,5 +692,135 @@ describe("SDK last line — end to end through the real runner and adapter", () 
     expect(r.error).toContain("Circuit breaker OPEN for fallback");
     expect(r.error).not.toContain("undefined");
     expectSealed();
+  });
+});
+
+describe("own tool list loaded up front on the other model path", () => {
+  const ownList = (n: number) =>
+    Array.from({ length: n }, (_, i) => `drill_tool_${i + 1}`);
+  const sentLoadFlags = () =>
+    sdk.queryClaudeSdk.mock.calls.map(
+      (c) => (c[0] as { loadToolsUpFront?: boolean }).loadToolsUpFront,
+    );
+  const legsStarted = () =>
+    traceMock.mock.calls
+      .map((c) => c[0] as { name: string; attrs?: { kind?: string } })
+      .filter((e) => e.name === "recovery.leg_started")
+      .map((e) => e.attrs?.kind);
+  const answerOnce = () => {
+    sdk.queryClaudeSdk.mockReset();
+    sdk.queryClaudeSdk.mockResolvedValueOnce(
+      sdkAnswer("Example Corp has three offices.\n\nSTATUS: DONE"),
+    );
+    stubFetch();
+  };
+
+  it("a non-interactive run with its own list of 12 names and no history asks for the list up front", async () => {
+    answerOnce();
+    await run({ tools: ownList(12) });
+    expect(sdk.queryClaudeSdk).toHaveBeenCalledTimes(1);
+    expect(
+      (sdk.queryClaudeSdk.mock.calls[0][0] as { toolNames: string[] }).toolNames,
+    ).toEqual(ownList(12));
+    expect(sentLoadFlags()).toEqual([true]);
+    expect(wire.calls).toHaveLength(0);
+  });
+
+  it("a declared list of 13 names does not ask for it (the declared names are counted; none is registered here)", async () => {
+    answerOnce();
+    await run({ tools: ownList(13) });
+    expect(sentLoadFlags()).toEqual([false]);
+  });
+
+  it("an interactive run with a list of 5 names does not ask for it", async () => {
+    answerOnce();
+    await run({ tools: ownList(5), interactive: true });
+    expect(sentLoadFlags()).toEqual([false]);
+  });
+
+  it("a run with a list of 5 names and interactive unset does not ask for it", async () => {
+    answerOnce();
+    await run({ tools: ownList(5), interactive: undefined });
+    expect(sentLoadFlags()).toEqual([false]);
+  });
+
+  it("a run with no tool list does not ask for it", async () => {
+    answerOnce();
+    await run();
+    expect(sentLoadFlags()).toEqual([false]);
+  });
+
+  it("a run whose own list is empty does not ask for it", async () => {
+    answerOnce();
+    await run({ tools: [] });
+    expect(sentLoadFlags()).toEqual([false]);
+  });
+
+  it("a run with conversation history does not ask for it", async () => {
+    answerOnce();
+    await run({
+      tools: ownList(5),
+      conversationHistory: [{ role: "user", content: "ok" }],
+    });
+    expect(sdk.queryClaudeSdk).toHaveBeenCalledTimes(1);
+    expect(sentLoadFlags()).toEqual([false]);
+  });
+
+  it("the auto-resume leg after a turn cap asks for the list up front as the first leg did", async () => {
+    sdk.queryClaudeSdk.mockReset();
+    sdk.queryClaudeSdk
+      .mockResolvedValueOnce(
+        sdkAnswer(
+          "[error_max_turns — the run reached its turn limit] Partial response below\n\nExample Corp has",
+        ),
+      )
+      .mockResolvedValueOnce(sdkAnswer("Example Corp has three offices.\n\nSTATUS: DONE"));
+    stubFetch();
+    await run({ tools: ownList(12) });
+    expect(sdk.queryClaudeSdk).toHaveBeenCalledTimes(2);
+    expect(legsStarted()).toEqual(["auto_resume"]);
+    expect(sentLoadFlags()).toEqual([true, true]);
+  });
+
+  it("the auto-resume leg after a turn cap does not ask for a list of 13 names, as the first leg did not", async () => {
+    sdk.queryClaudeSdk.mockReset();
+    sdk.queryClaudeSdk
+      .mockResolvedValueOnce(
+        sdkAnswer(
+          "[error_max_turns — the run reached its turn limit] Partial response below\n\nExample Corp has",
+        ),
+      )
+      .mockResolvedValueOnce(sdkAnswer("Example Corp has three offices.\n\nSTATUS: DONE"));
+    stubFetch();
+    await run({ tools: ownList(13) });
+    expect(sdk.queryClaudeSdk).toHaveBeenCalledTimes(2);
+    expect(legsStarted()).toEqual(["auto_resume"]);
+    expect(sentLoadFlags()).toEqual([false, false]);
+  });
+
+  it("the auth retry leg does not ask for a list of 13 names, as the first leg did not", async () => {
+    sdk.queryClaudeSdk.mockReset();
+    sdk.queryClaudeSdk
+      .mockResolvedValueOnce(sdkAuthFailure())
+      .mockResolvedValueOnce(sdkAnswer("Example Corp has three offices.\n\nSTATUS: DONE"));
+    stubFetch();
+    await run({ tools: ownList(13) });
+    expect(sdk.queryClaudeSdk).toHaveBeenCalledTimes(2);
+    expect(legsStarted()).toEqual(["auth_retry"]);
+    expect(sentLoadFlags()).toEqual([false, false]);
+    expect(wire.calls).toHaveLength(0);
+  });
+
+  it("the auth retry leg asks for the list up front as the first leg did", async () => {
+    sdk.queryClaudeSdk.mockReset();
+    sdk.queryClaudeSdk
+      .mockResolvedValueOnce(sdkAuthFailure())
+      .mockResolvedValueOnce(sdkAnswer("Example Corp has three offices.\n\nSTATUS: DONE"));
+    stubFetch();
+    await run({ tools: ownList(12) });
+    expect(sdk.queryClaudeSdk).toHaveBeenCalledTimes(2);
+    expect(legsStarted()).toEqual(["auth_retry"]);
+    expect(sentLoadFlags()).toEqual([true, true]);
+    expect(wire.calls).toHaveLength(0);
   });
 });

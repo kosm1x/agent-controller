@@ -4295,6 +4295,52 @@ describe("tool search (V8.5 Phase 3.2)", () => {
     };
     expect(server.config.tools[0]._meta?.["anthropic/alwaysLoad"]).toBe(true);
   });
+
+  const serverLoadFlag = (load?: { loadToolsUpFront?: boolean }): unknown =>
+    (
+      (load === undefined
+        ? buildMcpServer([])
+        : buildMcpServer([], [], load)) as unknown as {
+        config: { alwaysLoad?: boolean };
+      }
+    ).config.alwaysLoad;
+
+  it("tool search off: the server load flag is true whether loadToolsUpFront is absent, false or true", () => {
+    expect(toolSearchEnabled()).toBe(false);
+    expect(serverLoadFlag()).toBe(true);
+    expect(serverLoadFlag({})).toBe(true);
+    expect(serverLoadFlag({ loadToolsUpFront: false })).toBe(true);
+    expect(serverLoadFlag({ loadToolsUpFront: true })).toBe(true);
+  });
+
+  it("tool search on: the server load flag is false with loadToolsUpFront absent or false, and true with it true", () => {
+    process.env.TOOL_SEARCH_ENABLED = "true";
+    expect(serverLoadFlag()).toBe(false);
+    expect(serverLoadFlag({})).toBe(false);
+    expect(serverLoadFlag({ loadToolsUpFront: false })).toBe(false);
+    expect(serverLoadFlag({ loadToolsUpFront: true })).toBe(true);
+  });
+
+  it("queryClaudeSdk hands loadToolsUpFront to the server it registers", async () => {
+    process.env.TOOL_SEARCH_ENABLED = "true";
+    const sentFlag = async (loadToolsUpFront?: boolean): Promise<unknown> => {
+      mockMessages.value = [SEAM_SUCCESS_RESULT];
+      await queryClaudeSdk({
+        prompt: "p",
+        systemPrompt: "s",
+        toolNames: ["x"],
+        ...(loadToolsUpFront !== undefined && { loadToolsUpFront }),
+      });
+      return (
+        lastQueryArgs.value?.options as {
+          mcpServers: { jarvis: { config: { alwaysLoad?: boolean } } };
+        }
+      ).mcpServers.jarvis.config.alwaysLoad;
+    };
+    expect(await sentFlag(true)).toBe(true);
+    expect(await sentFlag(false)).toBe(false);
+    expect(await sentFlag()).toBe(false);
+  });
 });
 
 describe("queryClaudeSdk task-trace emission (V8.5 Phase 6)", () => {

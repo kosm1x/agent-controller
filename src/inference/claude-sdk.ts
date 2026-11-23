@@ -143,7 +143,8 @@ function jsonSchemaToZodShape(
 /**
  * V8.5 Phase 3.2 — first-party SDK tool search. When armed, the SDK's
  * subprocess receives ENABLE_TOOL_SEARCH=true, the jarvis MCP server drops
- * its server-level `alwaysLoad: true` pin, and per-tool `alwaysLoad`
+ * its server-level `alwaysLoad: true` pin (kept for a call that passes
+ * `loadToolsUpFront`), and per-tool `alwaysLoad`
  * (baked into every wrap as `!tool.deferred`) takes over: the always-on
  * core stays in the turn-1 prompt, the deferred long tail is discovered
  * on demand via the API-native search tool instead of shipping ~150 full
@@ -621,6 +622,7 @@ export function scrubCallToolResult(r: CallToolResult): CallToolResult {
 export function buildMcpServer(
   toolNames: string[],
   extraTools: InlineSdkTool[] = [],
+  load: { loadToolsUpFront?: boolean } = {},
 ) {
   // Audit-R2: guard against inline tools whose name collides with a
   // registry tool BEING REGISTERED IN THIS SERVER. The SDK's
@@ -676,8 +678,9 @@ export function buildMcpServer(
     // scripts/validate-sdk-tool-visibility.ts (30/30 visible). With
     // TOOL_SEARCH_ENABLED=true (V8.5 Phase 3.2) the pin drops so the
     // per-tool `alwaysLoad: !deferred` baked into each wrap takes over
-    // (the SDK ORs server-level with per-tool).
-    alwaysLoad: !toolSearchEnabled(),
+    // (the SDK ORs server-level with per-tool), unless the caller asks for
+    // every listed tool up front (`loadToolsUpFront`).
+    alwaysLoad: !toolSearchEnabled() || load.loadToolsUpFront === true,
   });
 }
 
@@ -1042,6 +1045,14 @@ export async function queryClaudeSdk(opts: {
    * (orchestrator.ts). Queue 3p readout 2026-10-23.
    */
   gatesStopHook?: false;
+  /**
+   * true = every tool of `toolNames` that this run is offered is in the
+   * prompt from turn 1 even with tool search on (the server-level load flag
+   * stays true), so the model
+   * calls a deferred tool of the list without searching for it first.
+   * Unset or false = the flags follow tool search as usual.
+   */
+  loadToolsUpFront?: boolean;
 }): Promise<ClaudeSdkResult> {
   // Budget enforcement gate (V8.5 Phase 3.3) — dormant unless the operator
   // arms BOTH existing flags (BUDGET_ENABLED + BUDGET_ENFORCE, default off).
@@ -1147,7 +1158,9 @@ export async function queryClaudeSdk(opts: {
 
   const extraTools = opts.extraTools ?? [];
   const mcpServer = releaseProbeOnThrow(() =>
-    buildMcpServer(opts.toolNames, extraTools),
+    buildMcpServer(opts.toolNames, extraTools, {
+      loadToolsUpFront: opts.loadToolsUpFront,
+    }),
   );
 
   const allowedTools = [
