@@ -306,9 +306,13 @@ USE WHEN:
 - You need to prepare a file for sharing or collaboration
 
 IMPORTANT — CHECK BEFORE CREATING:
-Always call gdrive_list first to verify the file/folder doesn't already exist.
+Always call gdrive_list first, when it is among your tools, to verify the file/folder doesn't already exist.
 If it exists, return the existing file instead of creating a duplicate.
-Drive does NOT prevent duplicate names — every call creates a new file.
+Drive does NOT prevent duplicate names — every successful call creates a new file.
+
+DO NOT USE WHEN:
+- You want to upload a plain text file (.md, .txt, .json): this tool creates only a Google Doc, Sheet, Slides file or folder and takes no content — use gdrive_upload when it is among your tools.
+- You want a presentation with slides in it: this tool adds no slides — use gslides_create when it is among your tools.
 
 Returns the file URL for sharing.`,
       parameters: {
@@ -395,13 +399,18 @@ USE WHEN:
 - The user asks to share a file with an email address
 - After creating a file that needs to be shared
 
-WORKFLOW: If user mentions a file by name, call gdrive_list first to find the file ID.`,
+WORKFLOW: If user mentions a file by name, call gdrive_list first, when it is among your tools, to find the file ID.
+
+DO NOT USE WHEN:
+- You want a public or "anyone with the link" share: this tool creates one user permission for one email address per call.
+- You want to remove someone's access: this tool only creates a permission and never sends a request to remove one.`,
       parameters: {
         type: "object",
         properties: {
           file_id: {
             type: "string",
-            description: "File ID (get from gdrive_list or gdrive_create)",
+            description:
+              "File ID (as returned by gdrive_list or gdrive_create)",
           },
           email: {
             type: "string",
@@ -456,25 +465,30 @@ export const gdriveDeleteTool: Tool = {
     type: "function",
     function: {
       name: "gdrive_delete",
-      description: `Delete a file or folder from Google Drive (moves to trash). Requires confirmation.
+      description: `Delete a file or folder from Google Drive (moves to trash).
 
 USE WHEN:
 - The user asks to remove, delete, or clean up files/folders in Drive
 - Removing duplicate files or outdated documents
 
 WORKFLOW:
-1. Call gdrive_list to find the file/folder ID by name
+1. Call gdrive_list, when it is among your tools, to find the file/folder ID by name
 2. Call gdrive_delete with the file_id
 3. Folders are deleted recursively (all contents moved to trash)
 
 CAUTION: Deleting a folder removes all files inside it. Verify the ID is correct.
-NOTE: Files go to Drive trash (recoverable for 30 days). Not permanent deletion.`,
+NOTE: Files go to Drive trash (recoverable for 30 days). Not permanent deletion.
+
+DO NOT USE WHEN:
+- You want a file gone for good: this tool only moves it to the Drive trash and never deletes permanently.
+- The file is a knowledge-base file: this tool trashes only the Drive file with that ID and does not change the knowledge-base file.`,
       parameters: {
         type: "object",
         properties: {
           file_id: {
             type: "string",
-            description: "File or folder ID to delete (get from gdrive_list)",
+            description:
+              "File or folder ID to delete (as returned by gdrive_list)",
           },
         },
         required: ["file_id"],
@@ -548,26 +562,31 @@ USE WHEN:
 - Fixing misplaced files
 
 WORKFLOW:
-1. Call gdrive_list to find the file ID and its current parent
-2. Call gdrive_list to find the destination folder ID
+1. Call gdrive_list, when it is among your tools, to find the file ID and its current parent
+2. Find the destination folder ID the same way
 3. Call gdrive_move with file_id, from the current parent to the new parent
 
-Also supports renaming — pass new_name to rename while moving (or rename in place).`,
+Also supports renaming — pass new_name to rename while moving (or rename in place).
+
+DO NOT USE WHEN:
+- The file is a knowledge-base file: this tool moves only the Drive file with that ID and does not change the knowledge-base file.
+- You only want to rename: new_parent_id is still required, and every request this tool sends asks Drive to add it as a parent.`,
       parameters: {
         type: "object",
         properties: {
           file_id: {
             type: "string",
-            description: "File or folder ID to move (get from gdrive_list)",
+            description:
+              "File or folder ID to move (as returned by gdrive_list)",
           },
           new_parent_id: {
             type: "string",
-            description: "Destination folder ID (get from gdrive_list)",
+            description: "Destination folder ID (as returned by gdrive_list)",
           },
           old_parent_id: {
             type: "string",
             description:
-              "Current parent folder ID to remove from (optional — if omitted, file stays in old location too)",
+              "Current parent folder ID to remove from (optional — without it the call asks Drive to remove no parent)",
           },
           new_name: {
             type: "string",
@@ -640,6 +659,8 @@ export const gdriveUploadTool: Tool = {
 USE WHEN:
 - Uploading any plain text content as a real file (not a Google Doc)
 - Updating an existing file's content (pass file_id to overwrite)
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
 
 DO NOT USE for knowledge base files: they are synced to Drive automatically. Write them with jarvis_file_write or jarvis_file_update instead; a raw upload creates an untracked duplicate. This tool is for non-KB files only.
 
@@ -813,6 +834,8 @@ USE WHEN:
 - The user shares a Drive URL (drive.google.com/file/d/<ID>/...) for a PDF, image, or other binary
 - You need to read a Drive-hosted PDF — the flow is gdrive_download → pdf_read
 - You need to read a Drive-hosted Google Doc/Slide/Sheet as PDF (auto-exports for native types)
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
 
 DO NOT USE for:
 - Native Google Slides where you only need text — gslides_read is faster (no download, no export)

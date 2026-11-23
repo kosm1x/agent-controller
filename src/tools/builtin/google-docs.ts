@@ -44,7 +44,7 @@ export const gsheetsReadTool: Tool = {
 DO NOT USE browser__goto for Google Sheets URLs — it hits an auth wall.
 Use this tool instead — it reads via the authenticated Sheets API.
 
-WORKFLOW: If user mentions a spreadsheet by name, call gdrive_list first to find the file ID.
+WORKFLOW: If user mentions a spreadsheet by name, call gdrive_list first, when it is among your tools, to find the file ID.
 
 AFTER READING: Report the spreadsheet name and range read. Only report data that was actually returned — never fill gaps with assumed values.`,
       parameters: {
@@ -131,17 +131,21 @@ export const gsheetsWriteTool: Tool = {
 CORRECT: values: [["Name","Score"],["Alice","95"]]
 WRONG:   values: ["Name","Score","Alice","95"]
 
-DEDUP: The tool automatically skips rows whose first column value (ID) already exists in the sheet. You do NOT need to check for duplicates manually.
+DEDUP: in append mode with a "Sheet1!A:J"-style range (sheet name, column A), the tool skips rows whose first value is already in column A, unless reading column A fails. Overwrite mode never skips rows.
 
 MODES:
-- append=true (DEFAULT): Adds rows AFTER the last row with data. Use this when adding new entries. The range only needs the sheet name and columns (e.g., "Sheet1!A:J"). Row numbers are ignored — data goes to the next empty row automatically.
+- append=true (DEFAULT for a range like "Sheet1!A:J"): Adds rows AFTER the last row with data. Use this when adding new entries. The range only needs the sheet name and columns (e.g., "Sheet1!A:J"). Row numbers are ignored — data goes to the next empty row automatically.
 - append=false: Overwrites the exact range specified. Use ONLY for corrections to specific cells (e.g., "Sheet1!K55:L55").
 
-ROW TARGETING: When updating specific cells, use the "row" number from gsheets_read results directly in your range. Example: gsheets_read returns {row: 30, cells: [...]} → write to "Sheet1!K30:L30". NEVER count rows manually — always use the row number from the read result.
+ROW TARGETING: When updating specific cells, use the "row" number from gsheets_read results, when it is among your tools, directly in your range. Example: a gsheets_read row numbered 30 → write to "Sheet1!K30:L30". NEVER count rows manually.
 
-WORKFLOW: If the spreadsheet doesn't exist, create it with gdrive_create first (type: sheet), then write here.
+WORKFLOW: If the spreadsheet doesn't exist, create it first with gdrive_create (type: sheet) when it is among your tools, then write here.
 
 PROVENANCE: numeric cells must be traceable — produced by a tool of this run (gsheets_read, shell_exec, web_read, data_summarize…) or given by the user — else pass \`fuente\` (URL, file, or "tool + query") or put a "fuente:/calc:/supuesto:" cell in the row. Unsourced figures are REJECTED; figures from memory stay in chat as "~X (sin verificar)".
+
+DO NOT USE WHEN:
+- You want cell formatting or a new tab: this tool only writes cell values.
+- You want to correct rows already in the sheet: append only inserts new rows — give the exact cells (e.g. "Sheet1!K30:L30") with append=false, so the tool overwrites them.
 
 AFTER WRITING: Report the spreadsheet name, range written, and number of rows affected.`,
       parameters: {
@@ -170,7 +174,7 @@ AFTER WRITING: Report the spreadsheet name, range written, and number of rows af
           append: {
             type: "boolean",
             description:
-              "true (default): append after last row. false: overwrite exact range.",
+              "true: append after last row (the default for a range like 'Sheet1!A:J'). false: overwrite exact range.",
           },
         },
         required: ["spreadsheet_id", "range", "values"],
@@ -393,7 +397,7 @@ DO NOT USE browser__goto for Google Docs URLs — it hits an auth wall.
 Use this tool instead — it reads via the authenticated Docs API.
 Pass the document ID (from the URL: docs.google.com/document/d/{ID}/edit).
 
-NOTE: For long documents (>8,000 chars), use gdocs_read_full which exports the full
+NOTE: For long documents (>8,000 chars), use gdocs_read_full, when it is among your tools, which exports the full
 document as plain text with no truncation limit.`,
       parameters: {
         type: "object",
@@ -476,7 +480,7 @@ USE THIS (not gdocs_read) when:
 HOW IT WORKS: Uses Google Drive Export API to export the doc as plain text.
 This bypasses the structural element limit of the Docs API and returns ALL text.
 
-DO NOT USE for short documents or when you only need a preview — gdocs_read is faster.
+DO NOT USE for short documents or when you only need a preview.
 
 Pass the document ID (from the URL: docs.google.com/document/d/{ID}/edit).`,
       parameters: {
@@ -542,10 +546,15 @@ The tool reads the file and writes its contents to the doc. This avoids truncati
 when the content is too long to fit in tool arguments.
 
 WORKFLOW for long documents:
-1. Write content to a temp file with file_write (e.g., /tmp/doc-content.txt)
+1. Write content to a temp file (e.g., /tmp/doc-content.txt) — use file_write when it is among your tools
 2. Call gdocs_write with document_id and content_file=<that path>
 
 PROVENANCE: figures must be traceable — from a tool result of this run or the user's message, or their paragraph carries "fuente:", "calc:" or "supuesto:", or pass \`fuente\` for the whole append. Unsourced figures are REJECTED; figures from memory stay in chat as "~X (sin verificar)".
+
+DO NOT USE WHEN:
+- You want to rewrite what the document says: this tool only adds text at the end and keeps everything already there — use gdocs_replace when it is among your tools.
+- You want headings, bold, lists or tables: this tool sends the text as it is, with no formatting, and converts no Markdown.
+- The document does not exist yet: this tool writes only into the existing document named by document_id and never creates one — use gdrive_create when it is among your tools.
 
 AFTER WRITING: Report the document title and what was appended.`,
       parameters: {
@@ -710,6 +719,11 @@ DIFFERENCE FROM gdocs_write:
 LARGE CONTENT: Pass content_file=<path> instead of inline text.
 
 PROVENANCE: same rule as gdocs_write — figures must be traceable (read-tool result of this run, the user's message, a "fuente:/calc:/supuesto:" in the paragraph, or a checkable \`fuente\` parameter); unsourced figures are REJECTED.
+
+DO NOT USE WHEN:
+- You want to keep the current text and add to it: this tool deletes the whole body before writing — use gdocs_write when it is among your tools.
+- You want to change one passage or a few words: this tool has no find-and-replace; it replaces everything with the text you pass.
+- You want headings, bold, lists or tables: this tool sends the text as it is, with no formatting, and converts no Markdown.
 
 AFTER REPLACING: Report the document title and confirm the content was replaced.`,
       parameters: {
@@ -970,8 +984,11 @@ export const gslidesCreateTool: Tool = {
     type: "function",
     function: {
       name: "gslides_create",
-      description:
-        "Create a new Google Slides presentation with initial slides.",
+      description: `Create a new Google Slides presentation with initial slides.
+
+DO NOT USE WHEN:
+- You want to change an existing presentation: this tool only creates a new presentation and never opens or edits an existing one.
+- You want images, charts or a layout other than title and body: every slide it adds has one title and one body of plain text.`,
       parameters: {
         type: "object",
         properties: {
@@ -1096,8 +1113,12 @@ export const gtasksCreateTool: Tool = {
     type: "function",
     function: {
       name: "gtasks_create",
-      description:
-        'Create a Google Task in the default task list ("My Tasks").',
+      description: `Create a Google Task in the first task list the service returns.
+
+DO NOT USE WHEN:
+- You want something done on a repeat: this tool only adds a task to a Google Tasks list and never runs anything — use schedule_task when it is among your tools.
+- You want an event at a set time: this tool sends only a title, notes and a due date — use calendar_create when it is among your tools.
+- You want to change, complete or delete a task, or use another list: this tool only creates a task, in the first list the service returns.`,
       parameters: {
         type: "object",
         properties: {

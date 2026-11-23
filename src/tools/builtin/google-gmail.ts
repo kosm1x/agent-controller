@@ -38,8 +38,8 @@ USE WHEN:
 - You need to share research results or reports BY USER REQUEST
 
 DO NOT USE WHEN:
-- The user asks about received emails (use gmail_search)
-- The user asks to "verify" or "check" email status (use gmail_search, NEVER send)
+- The user asks about received emails (use gmail_search when it is among your tools)
+- The user asks to "verify" or "check" email status (use gmail_search when it is among your tools, NEVER send)
 - You are doing research (NEVER send emails to researchers/contacts during research tasks)
 - The user did not explicitly ask you to send an email
 
@@ -177,7 +177,7 @@ export const gmailSearchTool: Tool = {
     type: "function",
     function: {
       name: "gmail_search",
-      description: `Search emails in Jarvis's Gmail inbox.
+      description: `Search emails in Jarvis's Gmail mailbox.
 
 USE WHEN:
 - The user asks about received emails, recent messages, or to find a specific email
@@ -188,7 +188,12 @@ CRITICAL: Report ONLY what the search returns. If the result is 0 emails, say "0
 NEVER fabricate, infer, or claim emails exist that weren't in the search results.
 If no emails match, the answer is "no emails found" — not a story about what might have been sent.
 
-Supports Gmail search operators: from:, to:, subject:, after:, before:, is:unread, has:attachment`,
+Supports Gmail search operators: from:, to:, subject:, after:, before:, is:unread, has:attachment
+
+DO NOT USE WHEN:
+- You need the body or attachments of a message: this tool returns only the ID, sender, subject, date and a short snippet per message — use gmail_read with its ID when it is among your tools.
+- You want to send an email: this tool only searches and sends nothing — use gmail_send when it is among your tools.
+- You need more than 10 messages or a count of all matches: it returns at most 10 per call (max_results is capped at 10) and shows only how many it returned.`,
       parameters: {
         type: "object",
         properties: {
@@ -346,6 +351,8 @@ USE WHEN:
 - You have a message ID from gmail_search and need to read the full content
 - The user asks to read, open, or view an email
 - You need to download or inspect email attachments
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
 
 DO NOT USE browser__goto for Gmail URLs — it hits an auth wall.
 Use gmail_search to find emails, then gmail_read with the ID from the results.

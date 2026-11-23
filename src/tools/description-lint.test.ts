@@ -44,10 +44,7 @@ export const NOT_FOR_RE =
 const LEGACY_WITHOUT_NOT_FOR = new Set([
   "alert_budget_status", "alpha_explain",
   "evolution_deactivate_skill", "file_delete", "file_read",
-  "gdocs_replace", "gdocs_write", "gdrive_create", "gdrive_delete", "gdrive_move",
-  "gdrive_share",
   "gh_create_pr", "gh_repo_create", "git_diff", "git_push", "git_status",
-  "gmail_search", "gsheets_write", "gslides_create", "gtasks_create",
   "learner_model_status",
   "learning_plan_advance", "learning_plan_explain_back", "learning_plan_quiz",
   "learning_plan_summarize", "macro_regime", "market_budget_stats",

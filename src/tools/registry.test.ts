@@ -470,7 +470,7 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
       reason: "fact-persistence policy + conflict-resolution rules",
     },
     gdrive_download: {
-      maxLen: 1839,
+      maxLen: 1900,
       reason: "binary-vs-export disambiguation + size limits",
     },
     skill_run: {
@@ -485,7 +485,7 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
         "KB write policy + tag conventions + path rules + provenance rule (usability Phase 3.2)",
     },
     gsheets_write: {
-      maxLen: 1700,
+      maxLen: 1950,
       reason:
         "2D-array contract + dedup + append/overwrite modes + provenance rule (usability Phase 3.2)",
     },
