@@ -224,7 +224,7 @@ describe("jarvis_dev test gate — shares the one-at-a-time lock (ruling 4)", ()
     // the lock; wait until the tsc child is actually running (lock held).
     await vi.waitFor(() => expect(release).toBeDefined());
     expect(await jarvisTestRunTool.execute({})).toBe(
-      `❌ Tests: ${SUITE_RUN_BUSY}`,
+      JSON.stringify({ error: `Tests: ${SUITE_RUN_BUSY}` }),
     );
     // Deploying is the operator's: no lock, no child, the same handover.
     expect(JSON.parse(await vpsDeployTool.execute({})).error).toContain(

@@ -87,14 +87,20 @@ vi.mock("fs", () => ({
 }));
 vi.mock("../../db/index.js", () => ({ getDatabase: vi.fn() }));
 
+import { existsSync } from "fs";
 import {
   jarvisDiagnoseTool,
   jarvisTestRunTool,
   withSuiteRunLock,
   SUITE_RUN_BUSY,
 } from "./jarvis-self-repair.js";
+import { MC_WORKTREE_ROOT } from "./immutable-core.js";
 
 const MC_DIR = "/root/claude/mission-control";
+// The self-test's folder. Every existence check is answered by the fs mock
+// above; no test looks at the real folder.
+const WT = MC_WORKTREE_ROOT.replace(/\/$/, "");
+const BUSY = JSON.stringify({ error: `Tests: ${SUITE_RUN_BUSY}` });
 const ok = (stdout = "") => Promise.resolve({ stdout, stderr: "" });
 const fail = (fields: Record<string, unknown>) =>
   Promise.reject(Object.assign(new Error("exit 1"), fields));
@@ -115,6 +121,8 @@ beforeEach(() => {
   gitZ.mockClear();
   childImpl.mockReset();
   childImpl.mockImplementation(defaultChild);
+  vi.mocked(existsSync).mockReset();
+  vi.mocked(existsSync).mockImplementation(() => true);
   stdinEnds.length = 0;
   Object.assign(changed, {
     ahead: "src/tools/a.ts\0",
@@ -128,7 +136,7 @@ afterEach(() => {
 });
 
 describe("jarvis_test_run — group-kill runner, same output shape", () => {
-  it("pass path: typecheck then the RELATED tests only, both via execGroupKill in MC_DIR (ruling 4)", async () => {
+  it("pass path: typecheck then the RELATED tests only, both via execGroupKill in the worktree (ruling 4)", async () => {
     execGroupKill
       .mockImplementationOnce(() => ok())
       .mockImplementationOnce(() =>
@@ -141,13 +149,13 @@ describe("jarvis_test_run — group-kill runner, same output shape", () => {
       "Scope: related tests only: 2 changed source file(s) → 3 test file(s)",
     );
     expect(execGroupKill).toHaveBeenNthCalledWith(1, "npx tsc --noEmit", {
-      cwd: MC_DIR,
+      cwd: WT,
       timeout: 60_000,
       maxBuffer: 1024 * 1024,
       env: expect.any(Object),
     });
     expect(execGroupKill).toHaveBeenNthCalledWith(2, RELATED_CMD, {
-      cwd: MC_DIR,
+      cwd: WT,
       timeout: 120_000,
       maxBuffer: 1024 * 1024,
       env: expect.any(Object),
@@ -157,11 +165,20 @@ describe("jarvis_test_run — group-kill runner, same output shape", () => {
     expect(gitZ).toHaveBeenCalledTimes(3);
     for (const c of gitZ.mock.calls)
       expect((c as unknown[])[2]).toMatchObject({
-        cwd: MC_DIR,
+        cwd: WT,
         timeout: 30_000,
         encoding: "utf-8",
         maxBuffer: 8 * 1024 * 1024,
       });
+    // The branch shown in the header is read in the worktree too.
+    const branchReads = execFile.mock.calls.filter(
+      (c) => c[0] === "git" && (c[1] as string[])[0] === "branch",
+    );
+    expect(branchReads).toHaveLength(1);
+    expect(branchReads[0].slice(1, 3)).toEqual([
+      ["branch", "--show-current"],
+      { cwd: WT, timeout: 5000, encoding: "utf-8" },
+    ]);
     expect(execFileSync).not.toHaveBeenCalled();
   });
 
@@ -263,9 +280,7 @@ describe("withSuiteRunLock — one full-suite run at a time (W4)", () => {
     // no tick in between, and a direct caller already sees it busy (null).
     expect(await withSuiteRunLock(async () => "x")).toBeNull();
     await Promise.resolve();
-    expect(await jarvisTestRunTool.execute({})).toBe(
-      `❌ Tests: ${SUITE_RUN_BUSY}`,
-    );
+    expect(await jarvisTestRunTool.execute({})).toBe(BUSY);
     // The branch read is async now: tsc starts a few ticks after the lock.
     await vi.waitFor(() => expect(release).toBeDefined());
     release({ stdout: "", stderr: "" });
@@ -282,9 +297,7 @@ describe("withSuiteRunLock — one full-suite run at a time (W4)", () => {
     execGroupKill.mockImplementation(() => new Promise((_, r) => (reject = r)));
     const first = jarvisTestRunTool.execute({ typecheck_only: true });
     await Promise.resolve();
-    expect(await jarvisTestRunTool.execute({})).toBe(
-      `❌ Tests: ${SUITE_RUN_BUSY}`,
-    );
+    expect(await jarvisTestRunTool.execute({})).toBe(BUSY);
     // The branch read is async now: tsc starts a few ticks after the lock.
     await vi.waitFor(() => expect(reject).toBeDefined());
     reject(Object.assign(new Error("timed out"), { killed: true, stderr: "" }));
@@ -300,6 +313,138 @@ describe("withSuiteRunLock — one full-suite run at a time (W4)", () => {
       withSuiteRunLock(() => Promise.reject(new Error("boom"))),
     ).rejects.toThrow("boom");
     expect(await withSuiteRunLock(async () => "ran")).toBe("ran");
+  });
+});
+
+// The self-test runs only in the worktree. A missing folder, `.git` or
+// node_modules link is a JSON error result, checked before the lock, with
+// nothing started.
+describe("jarvis_test_run — refuses when the worktree cannot be tested", () => {
+  const T1 = `jarvis_test_run did not run: there is no mission-control worktree at ${WT}, and this tool tests only that worktree. jarvis_dev tries to create the worktree whenever one of its actions runs (action="branch" is the one that also creates a jarvis/* branch). If jarvis_dev answers with a worktree bootstrap error, do not retry: report that error.`;
+  const T2 = `jarvis_test_run did not run: ${WT} exists but is not a git checkout (no .git). jarvis_dev does not repair this: it creates the worktree only when the folder is absent. Try jarvis_test_run once more; if the answer is the same, report it.`;
+  const T3 = `jarvis_test_run did not run: the worktree at ${WT} has no usable node_modules link, so the typecheck and the tests cannot start. jarvis_dev recreates a missing link whenever one of its actions runs; then run jarvis_test_run again. If jarvis_dev answers with a worktree bootstrap error, do not retry: report that error.`;
+  const missing = (...paths: string[]) =>
+    vi.mocked(existsSync).mockImplementation((p) => !paths.includes(String(p)));
+  const expectNothingStarted = () => {
+    expect(execFile).not.toHaveBeenCalled();
+    expect(execFileSync).not.toHaveBeenCalled();
+    expect(execGroupKill).not.toHaveBeenCalled();
+  };
+
+  it.each([
+    ["the folder", [WT, `${WT}/.git`, `${WT}/node_modules`], T1],
+    ["the .git", [`${WT}/.git`, `${WT}/node_modules`], T2],
+    ["the node_modules link", [`${WT}/node_modules`], T3],
+  ])("missing %s → its exact error, nothing started", async (_, gone, text) => {
+    missing(...gone);
+    const out = await jarvisTestRunTool.execute({});
+    expect(out).toBe(JSON.stringify({ error: text }));
+    expect(Object.keys(JSON.parse(out))).toEqual(["error"]);
+    expectNothingStarted();
+  });
+
+  it("checks the folder, then .git, then node_modules, and stops at the first missing", async () => {
+    missing(`${WT}/.git`);
+    await jarvisTestRunTool.execute({});
+    expect(vi.mocked(existsSync).mock.calls.map((c) => c[0])).toEqual([
+      WT,
+      `${WT}/.git`,
+    ]);
+    vi.mocked(existsSync).mockClear();
+    missing(`${WT}/node_modules`);
+    await jarvisTestRunTool.execute({});
+    expect(vi.mocked(existsSync).mock.calls.map((c) => c[0])).toEqual([
+      WT,
+      `${WT}/.git`,
+      `${WT}/node_modules`,
+    ]);
+  });
+
+  it("a refusal is returned even while another run holds the lock", async () => {
+    let release!: (v: { stdout: string; stderr: string }) => void;
+    execGroupKill.mockImplementation(() => new Promise((r) => (release = r)));
+    const first = jarvisTestRunTool.execute({ typecheck_only: true });
+    await vi.waitFor(() => expect(release).toBeDefined());
+    missing(WT);
+    const out = await jarvisTestRunTool.execute({});
+    // Release before asserting, so a failure here cannot leave the lock held
+    // for the cases after it.
+    release({ stdout: "", stderr: "" });
+    await first;
+    expect(out).toBe(JSON.stringify({ error: T1 }));
+  });
+});
+
+describe("jarvis_test_run — header branch and the Next line", () => {
+  const NEXT =
+    '\n**Next:** once typecheck and tests pass on a branch made by jarvis_dev action="branch", open the PR with jarvis_dev action="pr". If the branch shown above is not one of those, create one first with jarvis_dev action="branch" (it refuses while the worktree holds uncommitted edits).';
+  const branchAnswers = (answer: () => string) =>
+    childImpl.mockImplementation((cmd, args, opts) =>
+      cmd === "git" && args[0] === "branch"
+        ? answer()
+        : defaultChild(cmd, args, opts),
+    );
+
+  it.each([
+    ["a branch name", "jarvis/fix/x", () => "jarvis/fix/x\n"],
+    ["main", "main", () => "main\n"],
+    ["a detached HEAD (empty answer)", "detached (no branch)", () => "\n"],
+    [
+      "a git error",
+      "unknown (git failed)",
+      () => {
+        throw new Error("not a git repository");
+      },
+    ],
+  ])("%s → header shows %s, and the run still goes ahead", async (_, shown, answer) => {
+    branchAnswers(answer);
+    execGroupKill.mockImplementation(() => ok("Tests  1 passed (1)"));
+    const out = await jarvisTestRunTool.execute({});
+    expect(out.split("\n")[0]).toBe(`🧪 **Test Run** (branch: ${shown})`);
+    expect(execGroupKill).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["main", "main\n"],
+    ["a jarvis/* branch", "jarvis/fix/x\n"],
+    ["a hand-made branch", "my-branch\n"],
+    ["a detached HEAD", "\n"],
+  ])("full run on %s ends with the one fixed Next line", async (_, name) => {
+    branchAnswers(() => name);
+    execGroupKill.mockImplementation(() => ok("Tests  1 passed (1)"));
+    const out = await jarvisTestRunTool.execute({});
+    expect(out.endsWith(NEXT)).toBe(true);
+    expect(out.split("**Next:**")).toHaveLength(2);
+  });
+
+  it("typecheck_only shows no Next line", async () => {
+    execGroupKill.mockImplementation(() => ok());
+    const out = await jarvisTestRunTool.execute({ typecheck_only: true });
+    expect(out).not.toContain("**Next:**");
+  });
+});
+
+describe("jarvis_test_run — description", () => {
+  it("names the worktree and when the tool refuses; the property text is unchanged", () => {
+    const fn = jarvisTestRunTool.definition.function;
+    expect(fn.description).toBe(`Run typecheck and the tests related to your changed files (not the full suite) in your mission-control worktree (${WT}), where jarvis_dev action="branch" puts your jarvis/* branch. Use BEFORE opening a PR to verify your fix.
+
+DO NOT USE WHEN:
+- The code under test is another repo → run its own test command via shell_exec.
+- You only want to know whether the service is healthy → use jarvis_diagnose.
+- There is no worktree at that path (none created yet, or your edits are in /workspace inside a sandbox container) → this tool refuses; it tests only that worktree.
+
+USE WHEN:
+- After making code changes via file_edit in your worktree on a jarvis/* branch
+- Before calling jarvis_dev action="pr"
+
+Returns: typecheck result + test count + any failures.
+
+IMPORTANT: jarvis_dev action="pr" already gates on tests. This tool is for checking BEFORE you're ready to PR — to iterate on your fix.`);
+    expect(
+      (fn.parameters as { properties: Record<string, { description: string }> })
+        .properties.typecheck_only.description,
+    ).toBe("If true, only run typecheck (faster). Default: false (runs both).");
   });
 });
 
@@ -402,5 +547,15 @@ describe("jarvis_diagnose — async children, same output", () => {
     expect(await jarvisDiagnoseTool.execute({})).toContain(
       "**Current branch:** HEAD",
     );
+  });
+
+  it("an empty `git branch` answer (detached) shows an empty branch, not HEAD", async () => {
+    childImpl.mockImplementation((cmd, args, opts) =>
+      cmd === "git" ? "\n" : defaultChild(cmd, args, opts),
+    );
+    const lines = (await jarvisDiagnoseTool.execute({})).split("\n");
+    expect(lines.filter((l) => l.startsWith("**Current branch:**"))).toEqual([
+      "**Current branch:** ",
+    ]);
   });
 });
