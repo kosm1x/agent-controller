@@ -153,8 +153,13 @@ USE WHEN:
 - After querying data from sheets, CRM, or databases
 - Creating reports with KPI cards + charts
 
+DO NOT USE WHEN:
+- You need an image to attach or send in a message: this tool returns a link to a web page that draws the charts in a browser, not an image — use chart_generate when it is among your tools.
+- Your data is longer than about 5,000 characters: only the first 5,000 characters reach the model call that builds the charts, so later rows are left out.
+- You need exact figures: the KPI cards and chart values are written by a model call from the data, not calculated by code.
+
 Input: data (CSV/JSON string) + question (what to visualize).
-Output: self-contained HTML file with interactive ECharts charts.
+Output: HTML file with interactive ECharts charts.
 Serve via: GET /dashboard/{id}`,
       parameters: {
         type: "object",
@@ -259,7 +264,11 @@ export const dashboardListTool: Tool = {
 
 USE WHEN:
 - User wants to see previously generated dashboards
-- Looking up a dashboard URL`,
+- Looking up a dashboard URL
+
+DO NOT USE WHEN:
+- You want to know what a dashboard shows or when it was made: this tool returns only each dashboard's id, link and file path.
+- You want a new or changed dashboard: this tool only lists — use dashboard_generate when it is among your tools; each dashboard it makes gets a new id.`,
       parameters: {
         type: "object",
         properties: {},

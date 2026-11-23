@@ -374,16 +374,20 @@ export const projectListTool: Tool = {
     type: "function",
     function: {
       name: "project_list",
-      description: `List all projects with their status and URLs. Together with the day-log (logs/day-logs/) this is the source for the user's tasks, goals and objectives.
+      description: `List projects with their status and site URL. Together with the day-log (logs/day-logs/) this is the source for the user's tasks, goals and objectives.
 
 USE WHEN:
 - User asks about their projects or what's active
-- You need to find a project's slug before calling project_get
+- You need to find a project's slug before calling project_get, when it is among your tools
 - Morning/nightly briefing needs project context
 - User asks "qué tareas / metas / objetivos tengo?" — answer from this list plus the day-log
 - User mentions a project name and you need to verify it exists
 
-NOTE: This returns DB project metadata (status, URLs, credentials). For project FILES and docs, also check jarvis_file_list with prefix "projects/{slug}/".`,
+DO NOT USE WHEN:
+- You need one project's description, repository URLs or recent activity: this list shows only slug, name, status, site URL and credential names — use project_get when it is among your tools.
+- You want to create a project or change its status: this tool only reads — use project_update when it is among your tools.
+
+NOTE: This returns DB project metadata (status, site URL, credential names). For project FILES and docs, also check jarvis_file_list with prefix "projects/{slug}/" when it is among your tools.`,
       parameters: {
         type: "object",
         properties: {
@@ -437,25 +441,30 @@ export const projectGetTool: Tool = {
     type: "function",
     function: {
       name: "project_get",
-      description: `Get full details of a project including credential names (secret values hidden), config, and recent activity log.
+      description: `Get the details of a project including credentials (values that look secret are hidden), URLs, and recent activity log.
 
 USE WHEN:
-- You need a project's credentials (WP password, API key, FTP host)
-- You need to check project configuration or URLs
+- You need to know which credentials a project has stored (a value that looks secret is hidden, shown by its reference name when it has one)
+- You need to check a project's site or repository URLs
 - User asks about a specific project's status or details
 
-ALWAYS call this when the user mentions a project by name — it loads the full context
-(credentials, URLs, config) so you don't need to ask the user for information they've
+ALWAYS call this when the user mentions a project by name — it loads the stored details
+(status, description, URLs, credential names, recent activity) so you don't need to ask the user for information they've
 already provided.
 
-For project documentation and notes, also read jarvis_file_read("projects/{slug}/README.md").`,
+For project documentation and notes, also read jarvis_file_read("projects/{slug}/README.md") when it is among your tools.
+
+DO NOT USE WHEN:
+- You need a project's config entries: this tool does not show config.
+- You want every project, or you do not know the slug: this tool returns one project, and an unknown slug or id returns an error — use project_list when it is among your tools.
+- You want to change the project: this tool only reads — use project_update when it is among your tools.`,
       parameters: {
         type: "object",
         properties: {
           slug: {
             type: "string",
             description:
-              "Project slug or ID. Use project_list first if you don't know the slug.",
+              "Project slug or ID. Use project_list first, when it is among your tools, if you don't know the slug.",
           },
         },
         required: ["slug"],
@@ -571,6 +580,12 @@ USE WHEN:
 - User provides project credentials (WP password, API key, FTP host) — store them here
 - User creates a new project or changes project status
 - Auto-detected credentials should be stored here
+
+DO NOT USE WHEN:
+- You only want to read a project: this tool writes (an unknown slug can create a project) and replies with a short summary, not the full details — use project_get when it is among your tools.
+- You want to add notes or tasks to the project's README: this tool does not write the README — use jarvis_file_update when it is among your tools.
+- You want to keep a password or key under config: a new value that looks like a credential under a credential-like name in config is not stored — pass it under credentials.
+- You want to change a config key that decides what runs or what it may reach (for example trusted, egress, capabilities, secrets, routing): only the operator changes those.
 
 WORKFLOW for new projects:
 1. Call project_update with slug + name to create

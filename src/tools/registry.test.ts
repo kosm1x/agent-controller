@@ -490,7 +490,7 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
         "2D-array contract + dedup + append/overwrite modes + provenance rule (usability Phase 3.2)",
     },
     jarvis_file_read: {
-      maxLen: 1630,
+      maxLen: 1950,
       reason: "KB read modes (by path vs by tags) + result shape",
     },
     jarvis_files_batch_write: {

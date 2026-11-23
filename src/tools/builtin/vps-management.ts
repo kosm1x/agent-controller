@@ -45,12 +45,17 @@ export const vpsStatusTool: Tool = {
     type: "function",
     function: {
       name: "vps_status",
-      description: `System health dashboard — CPU, memory, disk, Docker, services.
+      description: `System health dashboard — CPU, memory, disk, Docker, mission-control service.
 
 USE WHEN:
 - User asks "estado del servidor", "how's the VPS", "system status"
-- Before deploying to check if the system is healthy
+- Before the operator deploys, to check whether the system is healthy
 - Debugging slow responses or timeouts
+
+DO NOT USE WHEN:
+- You want what a service logged (errors, startup lines): this tool returns no log lines — use vps_logs when it is among your tools.
+- You want to deploy or restart the service: this tool only reads.
+- You want the state of a unit other than mission-control: this tool checks only that one unit, the first ten running Docker containers and the health endpoint.
 
 AFTER CHECKING: Report the key metrics concisely.`,
       parameters: { type: "object", properties: {} },
@@ -201,8 +206,8 @@ USE WHEN:
 - A pull request from the jarvis_dev workflow was merged and the change has to go live
 
 DO NOT USE WHEN:
-- You want to check whether the service is healthy — use vps_status
-- You want the service logs, for example after the operator's deploy — use vps_logs
+- You want to check whether the service is healthy — use vps_status when it is among your tools
+- You want the service logs, for example after the operator's deploy — use vps_logs when it is among your tools
 
 AFTER CALLING: Give the user the command from the error text exactly as written and say that only the operator runs it. Never report the deploy as done, started or scheduled.`,
       parameters: { type: "object", properties: {} },
@@ -234,12 +239,16 @@ export const vpsBackupTool: Tool = {
     type: "function",
     function: {
       name: "vps_backup",
-      description: `Back up the mc.db database. Copies to backups/ with timestamp. Auto-prunes >7 days.
+      description: `Back up the mc.db database. Copies to backups/ with timestamp. Deletes files in backups/ older than 7 days.
 
 USE WHEN:
 - Before risky operations (schema changes, bulk deletes)
 - User asks "haz backup", "backup the database"
-- Nightly ritual backup
+
+DO NOT USE WHEN:
+- You want to back up files or a database other than mc.db: this tool copies only mc.db.
+- You want to restore a backup: this tool has no restore.
+- You only want to see which backups exist, or need the files older than 7 days in backups/ kept: each successful call writes a new copy and then deletes such files.
 
 AFTER BACKUP: Report the backup file path and size.`,
       parameters: { type: "object", properties: {} },
@@ -314,6 +323,11 @@ USE WHEN:
 - Debugging an issue — check what happened recently
 - After a deploy to verify startup
 - User asks "logs", "qué dicen los logs"
+
+DO NOT USE WHEN:
+- You want to know whether the mission-control service is up or healthy now: this tool returns log lines only, with no unit state or health check — use vps_status when it is among your tools.
+- You want a Docker container's output: this tool reads a systemd unit's journal by unit name (journalctl -u), and a container name is not a unit name.
+- You want entries older than the newest few hundred: the filter runs only over the newest 3 × lines journal entries (at most 300), not over the whole journal.
 
 Returns filtered log entries. Default: last 30 lines of mission-control.`,
       parameters: {

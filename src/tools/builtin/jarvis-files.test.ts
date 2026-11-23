@@ -1494,3 +1494,114 @@ describe("jarvis_file_write and jarvis_file_update qualifier texts", () => {
     );
   });
 });
+
+describe("model-visible descriptions of the KB file tools", () => {
+  it("jarvis_file_read: the whole description", () => {
+    expect(jarvisFileReadTool.definition.function.description).toBe(`Read a file from your internal knowledge base by path, or search by tags.
+
+USE WHEN:
+- You need to recall your directives, SOPs, or behavioral rules
+- You need context about a project, client, or schedule
+- You want to check what you've stored about a topic
+
+LARGE FILE BEHAVIOR (>8000 chars):
+When the file is large AND you don't pass \`lines\`, this tool returns a structured envelope
+INSTEAD of the full content:
+  { truncated: true, total_chars, total_lines, outline: [...headings AND timestamped log entries ("- [HH:MM:SS] **WHO**: …", e.g. day-logs) with line numbers...],
+    preview: <first ~1500 chars>, next_steps: [...] }
+The preview is the first ~1500 chars only — DO NOT infer the file's content from it.
+Read the outline (each entry is prefixed with its line number, e.g. "L42: # Section" or "L31: [11:45:00] USER: …"),
+decide which sections matter, then call again with \`lines='42-90'\` for each one.
+
+WORKFLOW for large files:
+  1. jarvis_file_read(path="logs/day-logs/2026-04-04.md")  → {truncated, outline, preview}
+  2. From the outline, pick sections of interest (line ranges)
+  3. jarvis_file_read(path="...", lines="200-350")  → exact slice you need
+
+For small files (≤8000 chars), the full content is returned as before;
+\`total_chars\` is included so you always know the file size.
+
+DO NOT USE WHEN:
+- The file is on the server's disk, not in the knowledge base: this tool reads only knowledge-base paths — use file_read when it is among your tools.
+- You know a topic, not the path: this tool matches a path or tags, not words in the text — use jarvis_file_search when it is among your tools.
+
+RETURNS: File content + metadata (tags, qualifier, priority, related files), with
+\`total_chars\` always present. If searching by tags, returns each matching file's path, title and metadata, without content.
+
+AFTER READING: When reporting data from this file, cite the path. If the data is time-sensitive, note when it was last updated.`);
+  });
+  it("jarvis_file_search: the whole description", () => {
+    expect(jarvisFileSearchTool.definition.function.description).toBe(`Search the files in your Knowledge Base by keyword. Searches file content, titles, and paths.
+
+USE WHEN:
+- You need to find which files mention a topic, project, person, or concept
+- jarvis_file_list found nothing by path but you suspect the info exists somewhere
+- User asks "qué sabes sobre X?" or "dónde hay info de X?"
+- PREFER THIS over jarvis_file_list when you know WHAT you want but not WHERE it is
+
+DO NOT USE WHEN:
+- You are looking for text in files on the server's disk (code, logs, attachments): this tool searches only the knowledge base — use grep when it is among your tools.
+- You want the files under a folder: this tool matches words and returns at most 30 hits — use jarvis_file_list when it is among your tools.
+
+Returns: matching file paths + short snippet around the match, plus a citation per hit: \`L<n>\` = 1-indexed line of the first line holding the query terms, \`§ <heading>\` = the section it sits in, and a ready-made \`lines='N-M'\` range around it. Does NOT return full content — use jarvis_file_read on specific results, when it is among your tools, to get details.
+
+WORKFLOW: search → pick best match → jarvis_file_read(path, lines=<the range printed on the hit, verbatim>), when it is among your tools, to jump straight to the cited section (skip the outline round-trip). Never narrate from snippet alone.`);
+  });
+  it("jarvis_file_update: the whole description", () => {
+    expect(jarvisFileUpdateTool.definition.function.description).toBe(`Append content to an existing file, or update its metadata (tags, qualifier, priority).
+
+USE WHEN:
+- You need to add new information to an existing file without rewriting it
+- You want to change a file's qualifier or priority
+- You're building up a document incrementally
+
+PROVENANCE: same rule as jarvis_file_write — figures in the appended text must come from a tool result of this run or the user's message, or the paragraph must carry "fuente:" / "calc:" / "supuesto:"; unsourced figures are REJECTED.
+
+DO NOT USE WHEN:
+- You want to replace or remove text in the file, or the file does not exist yet: this tool adds text only at the end of an existing file — use jarvis_file_write when it is among your tools.
+- You want to change a standing order (directives/): this tool does not write there — use jarvis_propose_directive when it is among your tools.
+- You want to change a project's record (projects/<slug>/project.md): this tool does not write it — use project_update when it is among your tools.
+- You want to add to the day-log (logs/day-logs/): the system writes it and this tool does not append there; narrative goes to logs/day-narratives/.`);
+  });
+  it("jarvis_file_delete: the whole description", () => {
+    expect(jarvisFileDeleteTool.definition.function.description).toBe(`Delete a file from your knowledge base.
+
+USE WHEN:
+- A file is outdated and no longer relevant
+- You're cleaning up workspace files after completing a task
+
+CAUTION: Files in knowledge/, projects/ require user confirmation. directives/ (standing orders) cannot be deleted here — use jarvis_propose_directive with change_type "remove" when it is among your tools.
+First call returns CONFIRMATION_REQUIRED — present the file to the user, ask to confirm.
+After user confirms, call again with confirmed:true to proceed.
+
+DO NOT USE WHEN:
+- You want to delete several files: this tool takes one path per call — use jarvis_files_batch_delete when it is among your tools.
+- You want to remove a project: this tool does not delete a project's record or its folder; project_update, when it is among your tools, can set the project's status to "archived".
+- The file is on the server's disk, not in the knowledge base: this tool deletes only knowledge-base entries — use file_delete when it is among your tools.`);
+  });
+  it("jarvis_file_move: the whole description", () => {
+    expect(jarvisFileMoveTool.definition.function.description).toBe(`Move/rename a file in your knowledge base. Atomic operation — content never passes through the LLM.
+
+USE WHEN:
+- Reorganizing the file system (moving files between directories)
+- Renaming a file to a better path
+- Migrating files from old paths to new ones
+
+THIS IS A TRANSPORT OPERATION — use it instead of jarvis_file_read + jarvis_file_write when you only need to move a file without modifying its content. It's faster and doesn't consume context.
+
+For batch moves, call this tool multiple times (one per file).
+
+DO NOT USE WHEN:
+- A file already exists at new_path and must be kept: this tool replaces it, and the file that was there is deleted.
+- You want a copy and to keep the original: this tool moves the entry to new_path.
+- The file is a standing order (directives/), a project record or its folder (projects/<slug>/project.md) or a skill's SKILL.md: this tool moves none of them, in or out.`);
+  });
+  it("jarvis_file_read: the path parameter text", () => {
+    const props = (jarvisFileReadTool.definition.function.parameters as {
+      properties: Record<string, { description?: string }>;
+    }).properties;
+    expect(props.path.description).toBe(
+      'Virtual file path (e.g. "directives/core.md", "projects/example-project/README.md"). Omit to search by tags.',
+    );
+  });
+});
