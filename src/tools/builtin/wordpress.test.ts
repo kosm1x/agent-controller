@@ -495,3 +495,137 @@ describe("wp_categories failure envelope", () => {
     );
   });
 });
+
+describe("site tool descriptions (exact text)", () => {
+  // The model reads these texts when it chooses a tool: a change is deliberate, never incidental.
+  it("wp_list_posts", () => {
+    expect(wpListPostsTool.definition.function.description).toBe(`List WordPress posts from a site. Returns post IDs, titles, statuses, and links.
+
+WHEN TO USE:
+- To find a post's ID before updating it with wp_publish
+- To see what posts exist on a site
+- To check the current status of posts (draft, published, etc.)
+
+ALWAYS call this BEFORE wp_publish with post_id — you need the real post ID, do NOT guess.
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+DO NOT USE WHEN:
+- You need a post's text or HTML: this tool returns no body (only ID, title, status, date, link, categories and tags) — use wp_read_post.
+- You want the site's pages (About, Contact): this tool lists posts only — use wp_pages.
+- You want to change a post's status or content: this tool only reads — use wp_publish with the post's ID.`);
+  });
+  it("wp_read_post", () => {
+    expect(wpReadPostTool.definition.function.description).toBe(`Read a single WordPress post's full content by ID.
+
+WHEN TO USE:
+- BEFORE editing a post's content with wp_publish
+- To verify a post was published correctly after calling wp_publish
+- To get the full HTML content of an existing post
+
+HOW IT WORKS:
+The full article HTML is saved to a temp file at /tmp/wp_content/<site>_<post_id>.html.
+This file is the source of truth for the article content. You get back the file path +
+metadata (title, status, categories, word count, etc.), not the content itself.
+
+WORKFLOW for editing content:
+1. Call wp_read_post — saves full HTML to file, returns file path
+2. Use file_read to inspect the file if needed
+3. Use file_edit to make targeted changes to the HTML file
+4. Call wp_publish with post_id and content_file=<the file path>
+
+This approach prevents content truncation and article destruction.
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+DO NOT USE WHEN:
+- You only change a post's status, categories, tags or featured image: wp_publish needs no read for that — a read is required only when content is sent (inline or as a file).
+- You need to find a post or its ID: this tool reads one post by a known ID — use wp_list_posts.
+- You want a page: this tool reads the posts route only.`);
+  });
+  it("wp_publish", () => {
+    expect(wpPublishTool.definition.function.description).toBe(`Create or update a WordPress post via the REST API.
+
+WHEN TO USE:
+- User asks to publish, create, or upload a blog post / article
+- User asks to update an existing post (provide post_id)
+- User asks to republish or change post status
+
+WORKFLOW for new posts:
+1. Write the full HTML body to a temp file using file_write (e.g. /tmp/wp_content/new_post.html)
+2. Call wp_publish with content_file=<that path> and status "draft"
+3. If you have an image URL, call wp_media_upload first to get a media_id, then pass it as featured_media
+4. Call wp_publish again with status "publish" and post_id to go live
+
+IMPORTANT: NEVER pass long content inline via the "content" parameter — it will be truncated by
+the inference engine. ALWAYS use file_write + content_file for any content longer than 2 paragraphs.
+
+WORKFLOW for status-only changes (republish, unpublish, etc.):
+1. Call wp_list_posts to find the post ID
+2. Call wp_publish with post_id and status ONLY — do NOT include "content" or "content_file"
+   Omitting content preserves the existing article body. No need for wp_read_post.
+
+WORKFLOW for editing existing content (PREFERRED — prevents truncation):
+1. Call wp_list_posts to find the post ID
+2. Call wp_read_post — saves full HTML to a temp file, returns the file path in content_file
+3. Use file_edit to make targeted changes to the HTML file
+4. Call wp_publish with post_id and content_file=<the file path from step 2>
+   The tool reads the full content from the file and publishes it.
+
+CRITICAL: If you only want to change status, tags, categories, or featured_media — do NOT
+include "content" or "content_file". The "content" field REPLACES the entire article body.
+
+ALWAYS use content_file for any substantial content (new or existing). Write the HTML to a file
+with file_write first, then pass the path here. Inline "content" is only safe for very short text.
+
+DO NOT narrate or simulate publishing — you MUST call this tool. If it fails, report the actual error.
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+DO NOT USE WHEN:
+- You want to create or change a page: this tool writes only to the posts route — use wp_raw_api.
+- You want a post removed: this tool never deletes — use wp_delete.
+
+AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post ID.`);
+  });
+  it("wp_media_upload", () => {
+    expect(wpMediaUploadTool.definition.function.description).toBe(`Upload an image to the WordPress media library from a URL.
+
+WHEN TO USE:
+- Before creating a post that needs a featured/hero image
+- When you have a generated image URL and need a WordPress media_id
+
+Returns a media_id that wp_publish takes as featured_media.
+
+DO NOT fabricate media_ids — you MUST call this tool to get a real one.
+
+DO NOT USE WHEN:
+- The image is a local file outside the temp folder wp_read_post saves to: this tool refuses every other local path (web URLs and that folder only).
+- You want to change the alt text, caption or title of an image already uploaded: this tool takes no media ID and only uploads a new file — use wp_raw_api when it is among your tools (path "/wp/v2/media/<id>").`);
+  });
+  it("wp_categories", () => {
+    expect(wpCategoriesTool.definition.function.description).toBe(`List WordPress categories or tags. Use this to look up IDs before creating a post.
+
+WHEN TO USE:
+- Before calling wp_publish with categories or tags — you need integer IDs, not names
+- To check what categories/tags exist on the site
+
+DO NOT USE WHEN:
+- You want to create, rename or delete a category or tag: this tool only lists — use wp_raw_api when it is among your tools (path "/wp/v2/categories" or "/wp/v2/tags", plus "/<id>" for one item).
+- You want the posts in a category: this tool returns no posts, only the categories or tags themselves.
+
+Returns {success, site, count, items}; each item is {id, name, slug, count, parent}.`);
+  });
+  it("wp_publish post_id parameter", () => {
+    const properties = wpPublishTool.definition.function.parameters.properties as Record<string, { description: string }>;
+    expect(properties.post_id.description).toBe(
+      "Existing post ID to update. Omit to create a new post. Before changing the body (content or content_file), call wp_read_post on this post; a status-only change needs no read.",
+    );
+  });
+  it("wp_media_upload title parameter", () => {
+    const properties = wpMediaUploadTool.definition.function.parameters.properties as Record<string, { description: string }>;
+    expect(properties.title.description).toBe(
+      "Media title in WordPress library; sent only together with alt_text or caption. Defaults to the filename without its extension.",
+    );
+  });
+});

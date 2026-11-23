@@ -116,7 +116,14 @@ WHEN TO USE:
 - To see what posts exist on a site
 - To check the current status of posts (draft, published, etc.)
 
-ALWAYS call this BEFORE wp_publish with post_id — you need the real post ID, do NOT guess.`,
+ALWAYS call this BEFORE wp_publish with post_id — you need the real post ID, do NOT guess.
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+DO NOT USE WHEN:
+- You need a post's text or HTML: this tool returns no body (only ID, title, status, date, link, categories and tags) — use wp_read_post.
+- You want the site's pages (About, Contact): this tool lists posts only — use wp_pages.
+- You want to change a post's status or content: this tool only reads — use wp_publish with the post's ID.`,
       parameters: {
         type: "object",
         properties: {
@@ -234,7 +241,7 @@ WHEN TO USE:
 HOW IT WORKS:
 The full article HTML is saved to a temp file at /tmp/wp_content/<site>_<post_id>.html.
 This file is the source of truth for the article content. You get back the file path +
-metadata (title, status, categories, etc.) + a short content preview.
+metadata (title, status, categories, word count, etc.), not the content itself.
 
 WORKFLOW for editing content:
 1. Call wp_read_post — saves full HTML to file, returns file path
@@ -242,7 +249,14 @@ WORKFLOW for editing content:
 3. Use file_edit to make targeted changes to the HTML file
 4. Call wp_publish with post_id and content_file=<the file path>
 
-This approach prevents content truncation and article destruction.`,
+This approach prevents content truncation and article destruction.
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+DO NOT USE WHEN:
+- You only change a post's status, categories, tags or featured image: wp_publish needs no read for that — a read is required only when content is sent (inline or as a file).
+- You need to find a post or its ID: this tool reads one post by a known ID — use wp_list_posts.
+- You want a page: this tool reads the posts route only.`,
       parameters: {
         type: "object",
         properties: {
@@ -362,6 +376,12 @@ with file_write first, then pass the path here. Inline "content" is only safe fo
 
 DO NOT narrate or simulate publishing — you MUST call this tool. If it fails, report the actual error.
 
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+DO NOT USE WHEN:
+- You want to create or change a page: this tool writes only to the posts route — use wp_raw_api.
+- You want a post removed: this tool never deletes — use wp_delete.
+
 AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post ID.`,
       parameters: {
         type: "object",
@@ -399,7 +419,7 @@ AFTER PUBLISHING: Report the post title, URL, status (draft/publish), and post I
           post_id: {
             type: "integer",
             description:
-              "Existing post ID to update. Omit to create a new post. MUST call wp_read_post first to get current content.",
+              "Existing post ID to update. Omit to create a new post. Before changing the body (content or content_file), call wp_read_post on this post; a status-only change needs no read.",
           },
           slug: {
             type: "string",
@@ -683,9 +703,13 @@ WHEN TO USE:
 - Before creating a post that needs a featured/hero image
 - When you have a generated image URL and need a WordPress media_id
 
-Returns a media_id that you pass to wp_publish as featured_media.
+Returns a media_id that wp_publish takes as featured_media.
 
-DO NOT fabricate media_ids — you MUST call this tool to get a real one.`,
+DO NOT fabricate media_ids — you MUST call this tool to get a real one.
+
+DO NOT USE WHEN:
+- The image is a local file outside the temp folder wp_read_post saves to: this tool refuses every other local path (web URLs and that folder only).
+- You want to change the alt text, caption or title of an image already uploaded: this tool takes no media ID and only uploads a new file — use wp_raw_api when it is among your tools (path "/wp/v2/media/<id>").`,
       parameters: {
         type: "object",
         properties: {
@@ -714,7 +738,7 @@ DO NOT fabricate media_ids — you MUST call this tool to get a real one.`,
           title: {
             type: "string",
             description:
-              "Media title in WordPress library. Defaults to filename.",
+              "Media title in WordPress library; sent only together with alt_text or caption. Defaults to the filename without its extension.",
           },
         },
         required: ["image_url", "filename"],
@@ -893,6 +917,10 @@ export const wpCategoriesTool: Tool = {
 WHEN TO USE:
 - Before calling wp_publish with categories or tags — you need integer IDs, not names
 - To check what categories/tags exist on the site
+
+DO NOT USE WHEN:
+- You want to create, rename or delete a category or tag: this tool only lists — use wp_raw_api when it is among your tools (path "/wp/v2/categories" or "/wp/v2/tags", plus "/<id>" for one item).
+- You want the posts in a category: this tool returns no posts, only the categories or tags themselves.
 
 Returns {success, site, count, items}; each item is {id, name, slug, count, parent}.`,
       parameters: {

@@ -458,7 +458,7 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
       reason: "quality-gate ritual instructions for report drafts",
     },
     wp_publish: {
-      maxLen: 2107,
+      maxLen: 2350,
       reason: "WordPress publish policy + idempotency rules",
     },
     hf_generate: {

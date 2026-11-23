@@ -26,11 +26,13 @@ export const wpPagesTool: Tool = {
 
 USE WHEN:
 - To find pages on a site (About, Contact, etc.)
-- To get a page ID before updating it with wp_publish (pages use post_id too)
+- To get a page ID before changing or removing the page
 - To check what pages exist
 
-Pages can be created/updated with wp_publish — just add type="page" mentally. The WP REST API
-treats pages similarly to posts for create/update operations.`,
+DO NOT USE WHEN:
+- You want to create or change a page: this tool only lists, and wp_publish writes posts only — use wp_raw_api when it is among your tools (path "/wp/v2/pages" to create, "/wp/v2/pages/<id>" to change).
+- You want blog posts: this tool lists pages only — use wp_list_posts when it is among your tools.
+- You need more than one batch: this tool has no page parameter and returns only the first per_page results (20 by default).`,
       parameters: {
         type: "object",
         properties: {
@@ -122,11 +124,15 @@ WORKFLOW for GA4 / script injection:
 1. Call wp_plugins action="list" to check if a header scripts plugin exists
 2. If not: wp_plugins action="install" slug="insert-headers-and-footers" (or "wpcode-insert-headers-and-footers")
 3. wp_plugins action="activate" plugin="<plugin_file>" (use the "plugin" field from the list)
-4. Use wp_raw_api to configure the plugin's settings (each plugin stores its options differently)
+4. Use wp_raw_api when it is among your tools to configure the plugin's settings (each plugin stores its options differently)
 
 COMMON PLUGINS for script injection:
 - "insert-headers-and-footers" (WPCode) — stores header scripts in wp_option "ihaf_insert_header"
-- "header-footer-code-manager" — stores in custom post type`,
+- "header-footer-code-manager" — stores in custom post type
+
+DO NOT USE WHEN:
+- You want a plugin installed but left off: install here also activates it — run deactivate afterwards if it must stay off.
+- You want a plugin removed or updated: this tool has no delete, uninstall or update action; deactivate only turns it off.`,
       parameters: {
         type: "object",
         properties: {
@@ -279,14 +285,18 @@ export const wpSettingsTool: Tool = {
     type: "function",
     function: {
       name: "wp_settings",
-      description: `Read or update WordPress site settings (title, tagline, URL, timezone, etc.).
+      description: `Read WordPress site settings (title, tagline, URL, timezone, etc.) or update the title and tagline.
 
 USE WHEN:
 - To check or change the site title, tagline, or description
 - To verify the site URL or admin email
 - To check the timezone or date/time format
 
-For reading, call without any update fields. For updating, include the fields to change.`,
+For reading, call without any update fields. For updating, include the fields to change.
+
+DO NOT USE WHEN:
+- You want to change the URL, admin email, timezone, date format or language: this tool updates only the title and tagline — use wp_raw_api when it is among your tools (path "/wp/v2/settings").
+- You need a setting outside title, tagline, URL, email, timezone, date and time format, language and posts per page: this tool returns only those.`,
       parameters: {
         type: "object",
         properties: {
@@ -469,7 +479,14 @@ EXAMPLES:
 - Read options (if exposed): method="GET" path="/wp/v2/settings"
 - Call plugin endpoint: method="POST" path="/wpcode/v1/snippet" body={...}
 
-The path is appended to the site's /wp-json/ base URL.`,
+The path is appended to the site's /wp-json/ base URL.
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+DO NOT USE WHEN:
+- You want to create or update a post: this tool skips wp_publish's read-before-write and content-loss checks — use wp_publish.
+- You want to upload an image: this tool sends JSON bodies only, never a file — use wp_media_upload.
+- You need a post's full HTML: answers over 3000 characters are cut here — use wp_read_post.`,
       parameters: {
         type: "object",
         properties: {
