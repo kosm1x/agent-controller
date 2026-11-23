@@ -14,7 +14,7 @@
 ├── Layer 1: ALWAYS ON (31 tools: CORE 15 + MISC 16) — every message
 ├── Layer 2: SCOPE-GATED (193 names across the *_TOOLS arrays) — activated by topic detection
 ├── Layer 3: DEFERRED (143 of 194 static tools) — name+description only, schema on demand
-└── Layer 4: CONDITIONAL (Google 22, gws 1, WordPress 10, CRM 1, Hindsight memory 3, MCP 43) — env/service gated at startup
+└── Layer 4: CONDITIONAL (Google 22, gws 1, WordPress 10, CRM 1, Hindsight memory 2, MCP 43) — env/service gated at startup
 ```
 
 A message with no topic signal sees the 31 always-on tools: 29 static (20 full schema, 9 deferred — name only) + 2 LightPanda MCP tools (`browser__goto`, `browser__markdown`). Prompt-token figures are in the 2026-04-10 snapshot table below.
@@ -158,9 +158,9 @@ Round 3: Tool executes normally
 
 Only tools WITHOUT `deferred: true` send full schemas:
 
-- CORE_TOOLS except `memory_forget`, `skill_describe` and `skill_load` (17)
+- CORE_TOOLS except `memory_forget`, `skill_describe` and `skill_load` (18)
 - `gmail_send` (explicitly `deferred: false`)
-- `memory_search`, `memory_store`, `memory_reflect` (3; registered only with the Hindsight backend)
+- `memory_store`, `memory_reflect` (2; registered only with the Hindsight backend)
 - Also non-deferred: `data_summarize`, `submit_report`, `market_quote`, `market_calendar`, `crm_query`, all 10 `wp_*`, `gdrive_list`, `gdocs_read_full`, `gsheets_read`, the coding core, and most MISC tools
 - Tools without the `deferred` property default to non-deferred
 
@@ -176,7 +176,7 @@ Tools only registered at startup if their service is configured:
 | `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` + `GOOGLE_REFRESH_TOKEN` | `google_workspace_cli` (1)                                                                                           |
 | `WP_SITES`                                                           | 10 WordPress tools                                                                                                   |
 | `CRM_API_TOKEN`                                                      | 1 CRM tool                                                                                                           |
-| Memory backend = `hindsight`                                         | `memory_search` / `memory_store` / `memory_reflect` (3); otherwise only `memory_kg_query` + `memory_forget` register |
+| Memory backend = `hindsight`                                         | `memory_store` / `memory_reflect` (2); `memory_search`, `memory_kg_query` and `memory_forget` on any backend         |
 | Lightpanda MCP server running                                        | 10 browser tools                                                                                                     |
 | Playwright MCP server running                                        | 21 Playwright tools (lazy connect on first use)                                                                      |
 | graphify-code MCP server running                                     | 7 `graphify-code__*` tools                                                                                           |

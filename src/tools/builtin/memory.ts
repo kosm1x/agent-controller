@@ -1,8 +1,9 @@
 /**
  * Memory tools — agent-accessible memory search, store, and reflect.
  *
- * 3 native builtin tools exposed to LLMs during goal execution.
- * Only registered when Hindsight is enabled (semantic memory available).
+ * 5 native builtin tools exposed to LLMs during goal execution.
+ * memory_search is registered on either store; memory_store and memory_reflect
+ * only when the remote memory service is the store.
  *
  * Governance: Per-task store counter caps memory_store at MAX_STORES_PER_TASK
  * to prevent memory pollution from runaway tool loops.
@@ -61,22 +62,21 @@ export const memorySearchTool: Tool = {
     type: "function",
     function: {
       name: "memory_search",
-      description: `Search the long-term memory system for relevant past experiences, learnings, and context.
+      description: `Search one long-term memory bank with a text query. Results are entries chosen for the query, best first; when nothing matches, the bank's newest entries may be listed instead, and "No relevant memories found." can also mean the search failed.
 
 USE WHEN:
 - You need context from previous task executions (planning patterns, tool failure workarounds)
 - You want to recall user preferences or conversation history (jarvis bank)
-- You need infrastructure or ritual outcome history (system bank)
 
 DO NOT USE WHEN:
 - The information is available in the current task description or goal context
-- You need real-time data (use tools like shell_exec or http instead)
+- You need real-time data
 - You're looking for code or file contents (use file_read)
 
 BANKS:
 - "operational" — Task execution learnings, planning patterns, tool strategies
 - "jarvis" — User conversations, preferences, schedule, personal context
-- "system" — Infrastructure events, ritual outcomes, agent performance`,
+- "system" — the system bank (nothing in the agent writes to it automatically; it may be empty)`,
       parameters: {
         type: "object",
         properties: {

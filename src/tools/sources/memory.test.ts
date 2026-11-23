@@ -11,11 +11,13 @@ describe("MemoryToolSource modes (2026-09-12)", () => {
     );
   });
 
-  it("'backend_independent' registers only the KG/pgvector tools — the production path while Hindsight is off", async () => {
+  it("'backend_independent' registers search, kg_query and forget, and not store or reflect", async () => {
     const reg = new ToolRegistry();
     const names = await new MemoryToolSource("backend_independent").registerTools(reg);
-    expect(names.sort()).toEqual(["memory_forget", "memory_kg_query"]);
+    expect(names.sort()).toEqual(["memory_forget", "memory_kg_query", "memory_search"]);
     expect(reg.get("memory_forget")).toBeDefined();
+    expect(reg.get("memory_search")).toBeDefined();
     expect(reg.get("memory_store")).toBeUndefined();
+    expect(reg.get("memory_reflect")).toBeUndefined();
   });
 });

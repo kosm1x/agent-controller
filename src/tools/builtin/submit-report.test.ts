@@ -423,12 +423,12 @@ describe("submit_report — the text the model reads", () => {
     );
   });
 
-  it("every tool name it cites is registered; gmail_send and memory_search only under a setting", async () => {
+  it("every tool name it cites is registered; gmail_send and memory_search are absent when the Google and memory sources are left out", async () => {
     const widest = await registryNames(true);
     expect(TOOL_NAMES.filter((n) => !widest.has(n))).toEqual([]);
     expect(NON_TOOL_WORDS.filter((n) => widest.has(n))).toEqual([]);
     // gmail_send needs Google configured (GoogleToolSource); memory_search
-    // needs the memory tools in mode "all" (MemoryToolSource).
+    // needs the memory source (MemoryToolSource), which this registry leaves out.
     const always = await registryNames(false);
     expect(TOOL_NAMES.filter((n) => !always.has(n))).toEqual([
       "gmail_send",

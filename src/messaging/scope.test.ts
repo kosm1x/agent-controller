@@ -2577,13 +2577,16 @@ describe("getAllAvailableTools — fullCount producer/consumer coupling", () => 
     }
   });
 
-  it("memory tools are gated by hasMemory (3 tools, not 2 — pre-fix off-by-one)", () => {
+  it("hasMemory adds exactly memory_store and memory_reflect to the universe; memory_search is in both", () => {
     const noMemory = getAllAvailableTools({ ...ALL_ON, hasMemory: false });
     const withMemory = getAllAvailableTools(ALL_ON);
-    expect(withMemory.size - noMemory.size).toBe(3);
+    expect([...withMemory].filter((t) => !noMemory.has(t)).sort()).toEqual([
+      "memory_reflect",
+      "memory_store",
+    ]);
+    expect(withMemory.size - noMemory.size).toBe(2);
+    expect(noMemory.has("memory_search")).toBe(true);
     expect(withMemory.has("memory_search")).toBe(true);
-    expect(withMemory.has("memory_store")).toBe(true);
-    expect(withMemory.has("memory_reflect")).toBe(true);
   });
 
   it("expand_read is CORE (2026-10-15)", () => {
@@ -2597,6 +2600,16 @@ describe("getAllAvailableTools — fullCount producer/consumer coupling", () => 
   it("memory_forget is CORE, reachable even when hasMemory is false (Hindsight is off in prod)", () => {
     expect(CORE_TOOLS).toContain("memory_forget");
     expect(getAllAvailableTools({ ...ALL_ON, hasMemory: false }).has("memory_forget")).toBe(true);
+  });
+
+  it("memory_search is CORE: in a message's list once, with hasMemory false or true", () => {
+    expect(CORE_TOOLS).toContain("memory_search");
+    for (const hasMemory of [false, true]) {
+      const tools = scope("hola", [], { ...ALL_ON, hasMemory });
+      expect(tools.filter((t) => t === "memory_search"), `hasMemory=${hasMemory}`).toEqual([
+        "memory_search",
+      ]);
+    }
   });
 
   it("CRM is in the universe when hasCrm=true (was missing from old fullCount)", () => {
@@ -2615,11 +2628,11 @@ describe("getAllAvailableTools — fullCount producer/consumer coupling", () => 
       hasCrm: false,
     });
     const max = getAllAvailableTools(ALL_ON);
-    // Gated contributions: GOOGLE_TOOLS + WORDPRESS_TOOLS + CRM_TOOLS_SCOPE + 3
-    // memory tools. WordPress also adds humanize_text but that is unconditional
+    // Gated contributions: GOOGLE_TOOLS + WORDPRESS_TOOLS + CRM_TOOLS_SCOPE + 2
+    // memory tools (store, reflect). WordPress also adds humanize_text but that is unconditional
     // in the universe (already in min), so the delta does NOT include it.
     const expectedDelta =
-      GOOGLE_TOOLS.length + WORDPRESS_TOOLS.length + CRM_TOOLS_SCOPE.length + 3;
+      GOOGLE_TOOLS.length + WORDPRESS_TOOLS.length + CRM_TOOLS_SCOPE.length + 2;
     expect(max.size - min.size).toBe(expectedDelta);
   });
 
@@ -3514,6 +3527,22 @@ describe("applyCommunityChannelScopeOverride", () => {
     });
     expect(out.restricted).toBe(true);
     expect(out.tools).not.toContain("jarvis_file_read");
+  });
+
+  it("a real message list carries memory_search from CORE; both restricted email modes drop it", () => {
+    const base = scope("hola", [], ENV);
+    expect(base).toContain("memory_search");
+    for (const mode of ["community-manager", undefined] as const) {
+      const out = applyCommunityChannelScopeOverride({
+        isEmail: true,
+        mode,
+        baseTools: base,
+        baseActiveGroups: baseGroups,
+        envFlags: ENV,
+      });
+      expect(out.restricted, String(mode)).toBe(true);
+      expect(out.tools, String(mode)).not.toContain("memory_search");
+    }
   });
 
   it("owner-only email passes through unchanged (backward-compat)", () => {

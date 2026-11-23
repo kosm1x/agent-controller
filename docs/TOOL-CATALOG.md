@@ -134,6 +134,7 @@ Each tool has `deferred: true|false` controlling whether it loads at prompt-cons
 - `expand_read` — fetch a public URL through Expand (real browser capture); optional `query` returns ranked passages with citation links to the capture; dormant without `EXPAND_API_KEY`
 - `user_fact_set` / `user_fact_list` / `user_fact_delete` — user profile
 - `memory_forget` — 2026-09-12, deferred, confirm-gated: invalidates the active knowledge-graph facts of a subject (temporal, history kept) and/or deletes ONE correction-loop entry `corrections/<12 hex>.md` from the pgvector KB via `pgDelete`; NOT for personal facts (`user_fact_delete`) or KB files (`jarvis_file_delete`)
+- `memory_search` — search one memory bank (`operational`, `jarvis`, `system`); not deferred; registered with any memory backend
 - `skill_save` / `skill_list` — reusable skill vault
 - `file_read` — read `.txt`, `.docx`, downloaded attachments
 - `data_summarize` — deterministic row counts + column statistics over CSV/TSV/JSON/markdown tables (computed, never estimated)
@@ -224,7 +225,7 @@ Signals ingested from 8 sources, queryable.
 - `gemini_upload` / `gemini_research` / `gemini_audio_overview` — Gemini document upload, research with URL + local file support, podcast-style audio overview
 - `knowledge_map` / `knowledge_map_expand` — structured domain knowledge maps
 - The research group also adds `pdf_read` and `http_fetch`
-- `memory_search` / `memory_store` / `memory_reflect` — Hindsight memory; registered and scoped only when the memory backend is `hindsight` (off in production: the memory ToolSource registers only `memory_kg_query` + `memory_forget`)
+- `memory_store` / `memory_reflect` — Hindsight memory; registered and scoped only when the memory backend is `hindsight` (otherwise the memory ToolSource registers `memory_search`, `memory_kg_query` and `memory_forget`)
 
 ### Browser automation (scope group: `browser`)
 

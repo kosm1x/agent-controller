@@ -45,7 +45,7 @@ import {
   gslidesCreateTool,
   gtasksCreateTool,
 } from "./builtin/google-docs.js";
-// Tools registered by MemoryToolSource (Hindsight backend).
+// Tools registered by MemoryToolSource (store and reflect only in its "all" mode).
 import {
   memorySearchTool,
   memoryStoreTool,
@@ -275,7 +275,7 @@ const ALL_TOOLS: Tool[] = [
   gslidesReadTool,
   gslidesCreateTool,
   gtasksCreateTool,
-  // MemoryToolSource — gated on Hindsight availability
+  // MemoryToolSource — store and reflect only in its "all" mode
   memorySearchTool,
   memoryStoreTool,
   memoryReflectTool,

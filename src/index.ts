@@ -365,9 +365,8 @@ async function main(): Promise<void> {
   if (memory.backend === "hindsight") {
     sourceManager.addSource(new MemoryToolSource());
   } else {
-    // KG + pgvector tools need no Hindsight (2026-09-12: the whole source
-    // used to be skipped here, so memory_kg_query / memory_forget were never
-    // registered in production).
+    // Any other store: the narrow mode (memory_search, memory_kg_query,
+    // memory_forget).
     sourceManager.addSource(new MemoryToolSource("backend_independent"));
   }
   sourceManager.addSource(new SkillsToolSource());

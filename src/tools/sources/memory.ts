@@ -1,12 +1,10 @@
 /**
  * Memory tool source — registers the memory tools.
  *
- * Two modes (2026-09-12): "all" needs the Hindsight backend (search / store /
- * reflect go through the memory service); "backend_independent" registers
- * only the tools that read SQLite / pgvector directly (memory_kg_query,
- * memory_forget). Before this, the WHOLE source was skipped when Hindsight
- * was off — which is production since the SQLite cutover — so those two
- * tools were never registered at all ("registry holds 232", not 233).
+ * Two modes: "all" registers memory_search, memory_store, memory_reflect,
+ * memory_kg_query and memory_forget; "backend_independent" registers
+ * memory_search, memory_kg_query and memory_forget, which work on the local
+ * store too.
  */
 
 import type { ToolRegistry } from "../registry.js";
@@ -28,12 +26,12 @@ export class MemoryToolSource implements ToolSource {
       description:
         mode === "all"
           ? "Memory tools (search, store, reflect, kg_query, forget) — Hindsight backend"
-          : "Memory tools that need no Hindsight (kg_query, forget)",
+          : "Memory tools that work on either store (search, kg_query, forget)",
     };
   }
 
   async initialize(): Promise<void> {
-    // Hindsight availability already checked before this source is added
+    // Nothing to set up.
   }
 
   async registerTools(registry: ToolRegistry): Promise<string[]> {
@@ -54,7 +52,7 @@ export class MemoryToolSource implements ToolSource {
             memoryKgQueryTool,
             memoryForgetTool,
           ]
-        : [memoryKgQueryTool, memoryForgetTool];
+        : [memorySearchTool, memoryKgQueryTool, memoryForgetTool];
     for (const tool of tools) {
       registry.register(tool);
     }

@@ -19,6 +19,7 @@ export const CORE_TOOLS = [
   "user_fact_list",
   "user_fact_delete",
   "memory_forget", // deferred (one catalog line); NOT under hasMemory — that gate is false in prod (Hindsight off) — qa-audit 2026-09-12
+  "memory_search", // not deferred; in CORE_TOOLS so the offer does not depend on which memory store is in use
   "web_search",
   "web_read",
   "exa_search",
@@ -1635,7 +1636,7 @@ export function scopeToolsForMessage(
   }
   tools.push(...projectGroupTools(activeGroups));
   if (options.hasMemory) {
-    tools.push("memory_search", "memory_store", "memory_reflect");
+    tools.push("memory_store", "memory_reflect");
   }
 
   // Deduplicate: multiple scope groups can push the same tool
@@ -1723,7 +1724,6 @@ export function getAllAvailableTools(options: ScopeOptions): Set<string> {
     for (const t of CRM_TOOLS_SCOPE) all.add(t);
   }
   if (options.hasMemory) {
-    all.add("memory_search");
     all.add("memory_store");
     all.add("memory_reflect");
   }

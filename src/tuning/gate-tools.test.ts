@@ -34,9 +34,13 @@ describe("registerEvalGateTools", () => {
         "skill_list",
         "skill_save", // skills source
         "memory_kg_query", // memory source (backend_independent)
+        "memory_search", // memory source (backend_independent)
       ]) {
         expect(registry.has(name), name).toBe(true);
       }
+      // The narrow memory mode leaves out the store and reflect tools.
+      expect(registry.has("memory_store")).toBe(false);
+      expect(registry.has("memory_reflect")).toBe(false);
       // MCP-server tools and the SDK's ToolSearch are never registered here.
       expect(registry.list().some((n) => n.startsWith("mcp__"))).toBe(false);
       expect(registry.has("ToolSearch")).toBe(false);

@@ -1,7 +1,8 @@
 /**
  * memory_search over the real SQLite backend: with MEMORY_RECALL_FLOOR=on a
  * query made only of common words gets the honest empty text, not the rows
- * that happen to share those words.
+ * that happen to share those words. The tool's description is pinned whole, so
+ * a sentence added beside it fails here.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
@@ -61,5 +62,47 @@ describe("memory_search with the recall floor", () => {
     process.env.MEMORY_RECALL_FLOOR = "on";
     const out = await search("que paso con el proyecto zafiro");
     expect(out).toMatch(/^1\. Usuario: el proyecto zafiro arranca el lunes \(relevance: \d\.\d\d\)$/);
+  });
+});
+
+describe("memory_search description", () => {
+  it("is exactly this text", () => {
+    expect(memorySearchTool.definition.function.description).toBe(
+      [
+        'Search one long-term memory bank with a text query. Results are entries chosen for the query, best first; when nothing matches, the bank\'s newest entries may be listed instead, and "No relevant memories found." can also mean the search failed.',
+        "",
+        "USE WHEN:",
+        "- You need context from previous task executions (planning patterns, tool failure workarounds)",
+        "- You want to recall user preferences or conversation history (jarvis bank)",
+        "",
+        "DO NOT USE WHEN:",
+        "- The information is available in the current task description or goal context",
+        "- You need real-time data",
+        "- You're looking for code or file contents (use file_read)",
+        "",
+        "BANKS:",
+        '- "operational" — Task execution learnings, planning patterns, tool strategies',
+        '- "jarvis" — User conversations, preferences, schedule, personal context',
+        '- "system" — the system bank (nothing in the agent writes to it automatically; it may be empty)',
+      ].join("\n"),
+    );
+  });
+
+  it("each property carries exactly this text", () => {
+    const props = (
+      memorySearchTool.definition.function.parameters as {
+        properties: Record<string, { description?: string }>;
+      }
+    ).properties;
+    expect({
+      query: props.query?.description,
+      bank: props.bank?.description,
+      max_results: props.max_results?.description,
+    }).toEqual({
+      query: "Natural language search query. Be specific — 'API timeout handling' works better than 'errors'.",
+      bank: "Which memory bank to search. Default: operational.",
+      max_results: "Maximum memories to return (1-20). Default: 5.",
+    });
+    expect(Object.keys(props).sort()).toEqual(["bank", "max_results", "query"]);
   });
 });
