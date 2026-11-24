@@ -126,3 +126,36 @@ describe("http_fetch — stored secrets (ruling 3c)", () => {
     expect(body).not.toContain(SCRUB_SYN.slice(0, 5));
   });
 });
+
+// Description pins: the tool's whole description text as registered.
+describe("tool description texts", () => {
+  it("http_fetch: the whole description", () => {
+    expect(httpTool.definition.function.description).toBe(`Make an HTTP request to a public URL and return the response (status + headers + truncated body).
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+DO NOT USE WHEN:
+- You want the readable text of a web page → use web_read (clean Markdown, no headers noise).
+- A dedicated tool covers the service (gmail_*, gdocs_*, crm_query, wp_*) → use it (it handles auth).
+
+WHEN TO USE:
+- Calling a JSON API without a dedicated tool (small internal service, webhook test, an ad-hoc REST endpoint)
+- POSTing to a form or webhook the user supplies
+- Fetching a raw file that is NOT an HTML page (PDF → pdf_read, HTML → web_read instead)
+
+WHEN NOT TO USE:
+- Search → use web_search / exa_search
+- Google Workspace APIs → use the gdocs/gsheets/gdrive/gmail/calendar tools (they handle OAuth)
+- Creating a GitHub repository or pull request → use gh_repo_create or gh_create_pr
+- WordPress → use wp_* tools (auth, media handling)
+
+STORED CREDENTIALS:
+- Write {{SECRET_<NAME>}} in the url, a header or the body (e.g. "Authorization": "Bearer {{SECRET_<NAME>}}"); the saved value is substituted at execution and never shown to you. Never type the value or a hidden-value placeholder.
+
+BOUNDARIES:
+- Body is truncated to 20,000 chars.
+- Timeout is 15s. Slow endpoints will fail — don't retry in a loop.
+- SSRF-protected: private IPs (10.x, 192.168.x, 169.254.x), localhost, metadata endpoints all rejected.
+- Supports GET, POST, PUT, DELETE, PATCH.`);
+  });
+});

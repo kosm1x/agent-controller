@@ -192,3 +192,29 @@ describe("seo_keyword_research", () => {
     );
   });
 });
+
+// Description pins: the tool's whole description text as registered.
+describe("tool description texts", () => {
+  it("seo_keyword_research: the whole description", () => {
+    expect(seoKeywordResearchTool.definition.function.description).toBe(`Discover SEO keywords from seed terms. Pulls SERP titles via web_search, extracts candidates via LLM, classifies intent, flags GEO (AI overview) potential, and clusters into topics.
+
+USE WHEN:
+- User wants keyword ideas from a topic or seed terms
+- Building a content strategy for a new niche
+- Identifying AI-overview-friendly keywords (GEO candidates)
+- Grouping keywords into content clusters
+
+DO NOT USE WHEN:
+- User wants search volume/competition metrics (Phase 2 — requires paid API)
+- User wants to track rankings (this tool returns no ranking data)
+- Need to audit a specific URL's keywords (use seo_page_audit when it is among your tools)
+
+OUTPUT:
+- keywords: list of candidates with intent, GEO score, and cluster assignment
+- clusters: topical groupings with member keywords
+- geo_candidates: keywords most likely to trigger AI overviews
+- intent_breakdown: counts by informational/navigational/commercial/transactional
+
+Intent classification is deterministic (rules-based regex). GEO scoring rewards question formats, definitions, comparisons, lists, and how-to queries. Clustering uses simple Jaccard similarity on tokens.`);
+  });
+});

@@ -245,3 +245,33 @@ describe("ads_audit", () => {
     expect(metaIds.has("m_creative_rotation_min_3")).toBe(true);
   });
 });
+
+// Description pins: the tool's whole description text as registered, and the exact text of the parameters pinned below.
+describe("tool description texts", () => {
+  it("ads_audit: the whole description", () => {
+    expect(adsAuditTool.definition.function.description).toBe(`Audit a digital ad account against a weighted check framework (7 platforms, ~70 checks v1, scaling to 225+). Returns an A-F grade, category scores (targeting / budget / creative / technical / tracking), prioritized fix list, and optional industry-benchmark context.
+
+USE WHEN:
+- User pastes ad account performance data and asks "how are we doing?" / "audita esta cuenta"
+- Preparing an ad-buyer report for a client
+- Before a campaign strategy meeting
+- When ROAS / CPA / CTR look off and the cause isn't obvious
+
+DO NOT USE WHEN:
+- User wants to create a campaign (no creation in this tool)
+- User wants creative copy generated (use ads_creative_gen when it is among your tools)
+- User wants to extract brand-identity signals from a website (use ads_brand_dna when it is among your tools)
+- User wants live API data (this tool is snapshot-based)
+
+INPUT: one account snapshot with whatever fields the operator has. Partial data is fine — checks that need a missing field are marked not_applicable and excluded from the grade so the score stays honest.
+
+PLATFORMS: google_ads, meta_ads, linkedin_ads, tiktok_ads, youtube_ads, microsoft_ads, apple_search_ads.
+
+The full graded report (score, category scores, prioritized findings, benchmark notes) is returned in-band in this result — read it here now. The tool also tries to write the audit to ads_audits for the operator's records, but no tool can fetch that row back, so do not tell the user to "reference it later" or promise a follow-up lookup.`);
+  });
+
+  it("ads_audit: the account_name parameter text", () => {
+    const params = adsAuditTool.definition.function.parameters as { properties: Record<string, { description: string }> };
+    expect(params.properties.account_name.description).toBe("Operator-facing name for the account (e.g. 'ACME Retail — Meta').");
+  });
+});

@@ -39,21 +39,16 @@ export const screenshotElementTool: Tool = {
       description: `Capture a web page element as a HiDPI PNG screenshot, optionally with a vision description.
 
 DO NOT USE WHEN:
-- You need the page's TEXT or data → use web_read (cheaper — no screenshot pipeline).
+- You need the page's TEXT or data → use web_read when it is among your tools (cheaper — no screenshot pipeline).
 - The page needs a login the browser session does not have → report the auth wall instead of retrying.
 
 USE WHEN:
 - Need a screenshot of a web page or specific element for content creation
-- Creating visual assets for overlay videos (video_create mode:"overlay")
 - Capturing social media posts, articles, or data visualizations
 - You need to SEE what an image at a URL looks like (set describe:true)
 
 Uses Playwright Chromium in headless mode with HiDPI rendering.
 Output: PNG file saved to /tmp/screenshots/.
-
-WORKFLOW for video content:
-1. screenshot_element url:"..." selector:".post" → PNG path
-2. video_create mode:"overlay" with the screenshot as an image asset
 
 WORKFLOW for "see this image":
 - screenshot_element url:"https://site.com/path/img.png" describe:true

@@ -3,7 +3,7 @@
  *
  * Fetches the page via Jina Reader (stealth browser fallback for CF),
  * parses markdown output for title/meta/headings/schema/images/content,
- * scores against a rubric, persists to seo_audits table.
+ * scores against a rubric, tries to write the result to the seo_audits table.
  *
  * Part of v7.3 Phase 1 SEO/GEO tool suite.
  */
@@ -622,7 +622,7 @@ export const seoPageAuditTool: Tool = {
     type: "function",
     function: {
       name: "seo_page_audit",
-      description: `Technical SEO audit of a single URL. Fetches the page, parses title/meta/headings/schema/images/content, and scores 0-100 against a rubric with prioritized findings. Also writes the result to the seo_audits table for the operator's records.
+      description: `Technical SEO audit of a single URL. Fetches the page, parses title/meta/headings/schema/images/content, and scores 0-100 against a rubric with prioritized findings. Also tries to write the result to the seo_audits table for the operator's records.
 
 USE WHEN:
 - User asks to audit/analyze/review the SEO of a specific URL
@@ -632,9 +632,9 @@ USE WHEN:
 
 DO NOT USE WHEN:
 - User wants a full site crawl (Phase 1 is single-page only)
-- Need PageSpeed / Core Web Vitals scores (Phase 2 — not yet available)
-- User wants to generate new metadata (use seo_meta_generate)
-- User wants schema markup (use seo_schema_generate)
+- Need PageSpeed / Core Web Vitals scores (this tool does not measure them)
+- User wants to generate new metadata (use seo_meta_generate when it is among your tools)
+- User wants schema markup (use seo_schema_generate when it is among your tools)
 
 RUBRIC (100 points):
 - Title length 30-60 (10pt)
@@ -646,7 +646,7 @@ RUBRIC (100 points):
 - H2 section structure for long content (10pt)
 - Target keyword in title + H1 (10pt — only if target_keyword provided)
 
-Returns score, prioritized issues (critical first), and a list of what's already good — all in-band in this result, so read them here now. The audit is also written to seo_audits for the operator's records, but no tool can fetch that row back, so do not tell the user to "reference it later" or promise a follow-up lookup.`,
+Returns score, prioritized issues (critical first), and a list of what's already good — all in-band in this result, so read them here now. The tool also tries to write the audit to seo_audits for the operator's records, but no tool can fetch that row back, so do not tell the user to "reference it later" or promise a follow-up lookup.`,
       parameters: {
         type: "object",
         properties: {

@@ -5,7 +5,7 @@ import { describe, it, expect, vi } from "vitest";
 // request client, the Drive query helper, the path-safety check, the path
 // resolver, the run-context lookup, the read-back gate declaration, the secret
 // scrubber and the provenance check (their real modules are never loaded);
-// every function export of "fs" and "node:fs" (other exports are kept); and
+// every function export of "fs" and "node:fs"; and
 // the global fetch. "path", "node:path" and the three tool modules stay real.
 const stub = vi.hoisted(() => (what: string) =>
   vi.fn(() => {

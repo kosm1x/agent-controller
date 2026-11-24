@@ -264,3 +264,65 @@ describe("pmPaperHistoryTool", () => {
     expect(futureOut).toMatch(/no fills/);
   });
 });
+
+// Description pins: each tool's whole description text as registered.
+describe("tool description texts", () => {
+  it("pm_paper_rebalance: the whole description", () => {
+    expect(pmPaperRebalanceTool.definition.function.description).toBe(`Executes a Polymarket paper-trading rebalance from the latest \`pm_alpha_run\` output.
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+DO NOT USE WHEN:
+- The user means the equities paper book (tickers, Alpaca-style) → use paper_rebalance / paper_portfolio.
+- No pm_alpha_run has produced signals yet → run pm_alpha_run first.
+
+Pipeline:
+  pm_alpha_latest → per-token |weight| × total_equity sizing → diff vs current
+  PM positions → sells-first ordering → synthetic fills at midpoint × (1 ± 20 bps
+  slip) → persists fills + PM thesis row.
+
+USE WHEN operator asks to "rebalance polymarket positions", "pm paper trade",
+"ejecuta pm rebalance", "rotar polymarket", "aplica pesos polymarket".
+NOT WHEN equity rebalance (use \`paper_rebalance\` — F8) or alpha analysis only
+(use \`pm_alpha_run\` / \`pm_alpha_latest\`).
+
+No F7.5 ship_gate at v1 — deferred to F8.1d. Negative α weights now open
+NO-side positions (buy the complement outcome) as of F8.1c; legacy v1
+exit-only behavior is no longer active.
+
+Cadence param (F8.1c): "weekly" (default, preserves F8.1b behavior) or
+"daily". Daily cadence uses a 24h staleness gate + tags thesis entry_signal
+as pm_daily_rebalance for audit separation.
+
+Takes ~0.5-1s. Starts with $10K USDC paper cash on first run. No leverage.
+MARKET orders only. Dust threshold: $10 per trade.`);
+  });
+  it("pm_paper_portfolio: the whole description", () => {
+    expect(pmPaperPortfolioTool.definition.function.description).toBe(`Current Polymarket paper portfolio: positions (market + outcome + shares + avg_cost + market_value + unr P&L), USDC cash, total equity.
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+DO NOT USE WHEN:
+- The user asks about the equities paper book → use paper_portfolio.
+- The user wants fills / trade history → use pm_paper_history.
+
+USE WHEN operator asks "pm portfolio", "polymarket positions", "posiciones polymarket".
+NOT WHEN asking for trade history (use \`pm_paper_history\`) or equity positions (use \`paper_portfolio\`).
+
+Reads only, except that it creates the paper account row when none exists yet. Marks to market using cached midpoint per token.`);
+  });
+  it("pm_paper_history: the whole description", () => {
+    expect(pmPaperHistoryTool.definition.function.description).toBe(`Recent Polymarket paper fills. Filter by market_id (Polymarket condition_id UUID), outcome, since-date, limit.
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+DO NOT USE WHEN:
+- The user asks for equities fills → use paper_history.
+- The user wants current positions or equity → use pm_paper_portfolio.
+
+USE WHEN operator asks "pm history", "polymarket fills", "historial de pm paper".
+NOT WHEN asking for current positions (use \`pm_paper_portfolio\`) or equities fills (use \`paper_history\`).
+
+Reads only, except that it creates the paper account row when none exists yet.`);
+  });
+});

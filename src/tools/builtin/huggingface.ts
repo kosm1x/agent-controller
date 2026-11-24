@@ -175,12 +175,12 @@ export const hfGenerateTool: Tool = {
       description: `Generate media (image, speech, video, music) using HuggingFace. All tasks work with Pro subscription — no extra credits.
 
 USE WHEN:
-- The user asks to create audio/speech, produce a video, or make music (ONLY tool for these)
+- The user asks to create audio/speech, produce a video, or make music
 - The user wants artistic image styles: anime, oil painting, 3D render, vector art, illustrations (FLUX is better for these)
 - The user explicitly asks for HuggingFace, FLUX, or Stable Diffusion
 - The user says "genera una imagen", "crea un audio", "haz un video", "genera música", "text to speech", "TTS"
 
-USE gemini_image INSTEAD WHEN:
+USE gemini_image, when it is among your tools, INSTEAD WHEN:
 - The user needs photorealistic images or editorial photography for WordPress blog posts
 - The user needs aspect ratio control or 2K resolution
 
@@ -193,7 +193,7 @@ TASK TYPES:
 WORKFLOW:
 1. Call hf_generate with task, prompt, and optional parameters
 2. Tool returns a local file path to the generated media
-3. Share the file via Telegram, upload to WordPress (wp_media_upload), or use in other tools
+3. Share the file via Telegram, upload to WordPress (wp_media_upload, when it is among your tools), or use in other tools
 
 PROMPT TIPS:
 - Images: Be specific with style ("photorealistic", "oil painting"), lighting, composition

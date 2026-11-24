@@ -419,7 +419,7 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
 
   const DESC_THRESHOLD = 1500;
   // Sprint 2 target: lower DESC_THRESHOLD to 1200 once the exception list is
-  // trimmed. The current 1500 produces a manageable list (15 outliers); 1200
+  // trimmed. The current 1500 produces a manageable list (16 outliers); 1200
   // would surface 11 additional tools that are reasonable trim candidates.
 
   // Exceptions: tool names that legitimately exceed DESC_THRESHOLD. Each
@@ -439,7 +439,7 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     // confirmation flows, etc.).
     //
     // Sprint 2 first targets the >2500-char outliers — halving those three
-    // alone trims ~5400 chars from the catalog. maxLen = current_len + 50
+    // alone trims ~5400 chars from the catalog. maxLen = current_len plus a small
     // slack (lets minor edits pass without re-tripping the test).
     video_html_compose: {
       maxLen: 5350,
@@ -506,6 +506,10 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     gemini_research: {
       maxLen: 1597,
       reason: "Gemini Q&A research mode + document reference shape",
+    },
+    run_schedule: {
+      maxLen: 1550,
+      reason: "run-now contract + refusal cases + extra-run-not-re-send rule",
     },
   };
 

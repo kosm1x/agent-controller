@@ -15,9 +15,8 @@
  * **When NOT to use this tool:** prefer the hardened builtin handlers for
  * services Jarvis already supports natively: `gmail_send`, `gmail_search`,
  * `gmail_read`, `gdrive_*`, `calendar_*`, `gsheets_*`, `gdocs_*`, `gslides_*`.
- * Those have scope integration, confirmation gates, and battle-tested error
- * handling that this dispatch tool does not reproduce. `google_workspace_cli`
- * is the fallback for Workspace APIs WITHOUT a dedicated handler.
+ * `google_workspace_cli` is the fallback for Workspace APIs WITHOUT a dedicated
+ * handler.
  *
  * v7.6 — ships as the infrastructure unblocker for Chat/Tasks/People/Forms
  * that v7.3 Phase 2 and beyond will consume.
@@ -149,8 +148,10 @@ export const googleWorkspaceCliTool: Tool = {
       description: `Dispatch tool for Google Workspace APIs NOT covered by a dedicated Jarvis handler.
 
 USE WHEN:
-- The user wants to work with Google Chat (spaces, messages), Google Tasks (tasklists, tasks), Google People (contacts), Google Forms, Google Meet, Classroom, Admin Reports, Apps Script, Keep, or Workspace Events — services Jarvis does NOT have dedicated tools for.
+- The user wants to work with Google Chat (spaces, messages), Google Tasks (tasklists, and tasks beyond adding one to the first list), Google People (contacts), Google Forms, Google Meet, Classroom, Admin Reports, Apps Script, Keep, or Workspace Events — services Jarvis does NOT have dedicated tools for.
 - You need a long-tail Google Workspace API that's accessible via Google's Discovery Service at runtime.
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
 
 DO NOT USE WHEN:
 - A dedicated handler exists for the service. ALWAYS prefer:
@@ -160,7 +161,6 @@ DO NOT USE WHEN:
   - Docs → gdocs_read, gdocs_write, gdocs_replace
   - Sheets → gsheets_read, gsheets_write
   - Slides → gslides_read, gslides_create
-  The dedicated handlers have scope integration, confirmation gates, and mature error handling that this tool does not reproduce.
 
 COMMAND SHAPE (reads Google's Discovery Service dynamically):
   {service, resource, method, params?, json?, page_all?, timeout_ms?}

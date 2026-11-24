@@ -226,8 +226,8 @@ USE WHEN:
 
 DO NOT USE WHEN:
 - User wants search volume/competition metrics (Phase 2 — requires paid API)
-- User wants to track rankings (Phase 2 — requires GSC)
-- Need to audit a specific URL's keywords (use seo_page_audit)
+- User wants to track rankings (this tool returns no ranking data)
+- Need to audit a specific URL's keywords (use seo_page_audit when it is among your tools)
 
 OUTPUT:
 - keywords: list of candidates with intent, GEO score, and cluster assignment

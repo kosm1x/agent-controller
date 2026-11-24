@@ -49,13 +49,13 @@ export const scheduleTaskTool: Tool = {
       name: "schedule_task",
       description: `Create a recurring scheduled task that runs automatically on a cron schedule.
 
-DO NOT USE WHEN: the user wants a calendar appointment or an entry on their agenda → calendar_create (a schedule runs Jarvis tasks; it is not a calendar event).
+DO NOT USE WHEN: the user wants a calendar appointment or an entry on their agenda (a schedule runs Jarvis tasks; it is not a calendar event).
 Use this when the user asks for recurring reports, daily summaries, periodic checks, or any task that should repeat on a schedule.
 
 The task will be executed autonomously — you write the task description (what to do), specify the tools needed, and choose the delivery method (telegram, email, or both).
 
 Examples:
-- "Send me a daily AI news report at 8am" → cron "0 8 * * *", tools: ["web_search", "gmail_send"], delivery: "email"
+- "Send me a daily AI news report at 8am" → cron "0 8 * * *", tools: ["web_search", "gmail_send"], delivery: "email", email_to: the address the user gives
 - "Every Monday remind me of my weekly goals" → cron "0 9 * * 1", tools: ["jarvis_file_read"], delivery: "telegram"
 - "Check my overdue tasks twice a day" → cron "0 9,18 * * *", tools: ["jarvis_file_read"], delivery: "telegram"
 
@@ -104,7 +104,7 @@ AFTER CREATING: Report the schedule name, cron in human-readable form, and deliv
           email_to: {
             type: "string",
             description:
-              "Email recipient (required if delivery is 'email' or 'both'). Default: fede@eurekamd.net",
+              "Email recipient (required if delivery is 'email' or 'both').",
           },
           email_subject: {
             type: "string",
@@ -213,7 +213,7 @@ export const listSchedulesTool: Tool = {
       description: `List all active recurring scheduled tasks (reports, monitors, syncs). Shows: name, cron schedule, delivery method, and last run time.
 
 DO NOT USE WHEN:
-- The user asks about their agenda, meetings or events → use calendar_list.
+- The user asks about their agenda, meetings or events → use calendar_list when it is among your tools.
 
 USE WHEN:
 - User asks "qué tareas tengo programadas", "mis schedules", "tareas recurrentes"
@@ -290,8 +290,10 @@ export const runScheduleTool: Tool = defineTool({
   description: `Run an EXISTING recurring schedule now, on demand, outside its cron time. It is the same run the cron starts (same prompt, tools, gates and delivery: Telegram, email or both), marked as a manual run. It starts in the background and this tool returns at once; the report arrives later through the schedule's own delivery, not in this reply.
 
 USE WHEN:
-- "ejecuta ahora el schedule X", "corre el reporte ahora", "lanza la rutina de pharma", "run the daily report now"
+- "ejecuta ahora el schedule X", "corre el reporte ahora", "lanza la rutina de X", "run the daily report now"
 - The user wants one extra run of a schedule that already exists
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
 
 DO NOT USE WHEN:
 - The schedule does not exist yet → schedule_task (it also runs once on creation)

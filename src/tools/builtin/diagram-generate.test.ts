@@ -458,3 +458,34 @@ describe("diagram_generate — boundary + cleanup (audit W5/W6)", () => {
     expect(result).toContain("output: /tmp/arch.html");
   });
 });
+
+// Description pins: the tool's whole description text as registered.
+describe("tool description texts", () => {
+  it("diagram_generate: the whole description", () => {
+    expect(diagramGenerateTool.definition.function.description).toBe(`Render a diagram from a natural-language description or raw DSL. Two formats at MVP:
+
+FORMATS:
+- graphviz: DOT-based auto-layout. Best for architecture, ER, class, state, topology with labeled edges. Renders via \`dot -Tsvg\` (sub-second, deterministic layout).
+- svg_html: LLM-generated single-file HTML with inline SVG + Cocoon palette + JetBrains Mono. Best for architecture sketches where hand-placed layout + semantic colors matter (shipped/deprecated/degraded/etc.).
+
+USE WHEN:
+- Visualizing components, data flow, state machines, ER, or any node+edge structure
+- Producing a single shareable .svg or .html artifact (not interactive)
+- You have a description or a rough spec, not tabular data
+
+DO NOT USE for:
+- Charts/graphs of numeric data → use chart_generate when it is among your tools (QuickChart)
+- Mermaid-format diagrams → deferred to v7.12.1 (mmdc CLI hangs on this VPS)
+- Editing an existing diagram → not supported; regenerate from new description
+
+PARAMS:
+- description: NL or raw DSL (valid DOT \`digraph ... {\` starts the render directly, bypassing LLM)
+- format: "graphviz" | "svg_html"
+- diagram_type: "architecture" | "flowchart" | "sequence" | "er" | "class" | "state"
+- theme: "dark" (default) | "light"
+- output_path: absolute path under /tmp/ or /workspace/ (default /tmp/diagram-<uuid>.<ext>)
+- emit: "render" (default, produces output file) | "source" (returns DSL/HTML text only, no render)
+
+Output file is overwritten if present.`);
+  });
+});

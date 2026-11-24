@@ -66,3 +66,23 @@ describe("currency_convert", () => {
     expect(result.error).toContain("422");
   });
 });
+
+// Description pins: the tool's whole description text as registered.
+describe("tool description texts", () => {
+  it("currency_convert: the whole description", () => {
+    expect(currencyConvertTool.definition.function.description).toBe(`Convert currencies using European Central Bank reference rates.
+
+USE WHEN:
+- User asks to convert money between currencies
+- Need current or historical exchange rates
+- Comparing prices across different currencies
+- Working with international budgets or invoices
+
+DO NOT USE WHEN:
+- Need cryptocurrency rates (ECB doesn't track crypto — use web_search when it is among your tools)
+- Need intraday trading rates (ECB publishes daily reference rates)
+
+Supports all major currencies (USD, EUR, MXN, GBP, JPY, BRL, etc.).
+Default: 1 USD to MXN and EUR.`);
+  });
+});

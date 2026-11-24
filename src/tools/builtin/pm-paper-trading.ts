@@ -2,8 +2,8 @@
  * F8.1b — Polymarket paper-trading tools.
  *
  * pm_paper_rebalance   (write) — runs PM rebalance from `pm_alpha_latest`
- * pm_paper_portfolio   (read)  — current PM positions + USDC cash + equity
- * pm_paper_history     (read)  — recent PM fills
+ * pm_paper_portfolio   (read; creates the account row if missing) — current PM positions + USDC cash + equity
+ * pm_paper_history     (read; creates the account row if missing) — recent PM fills
  *
  * All deferred, all in the new `pm_paper` scope group. Parallel to F8's
  * equity paper tools but scoped to Polymarket. At v1 there is NO F7.5 ship-gate
@@ -50,6 +50,8 @@ export const pmPaperRebalanceTool: Tool = {
     function: {
       name: "pm_paper_rebalance",
       description: `Executes a Polymarket paper-trading rebalance from the latest \`pm_alpha_run\` output.
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
 
 DO NOT USE WHEN:
 - The user means the equities paper book (tickers, Alpaca-style) → use paper_rebalance / paper_portfolio.
@@ -226,7 +228,7 @@ MARKET orders only. Dust threshold: $10 per trade.`,
 };
 
 // ---------------------------------------------------------------------------
-// pm_paper_portfolio (READ)
+// pm_paper_portfolio (READ; creates the account row if missing)
 // ---------------------------------------------------------------------------
 
 export const pmPaperPortfolioTool: Tool = {
@@ -242,6 +244,8 @@ export const pmPaperPortfolioTool: Tool = {
       name: "pm_paper_portfolio",
       description: `Current Polymarket paper portfolio: positions (market + outcome + shares + avg_cost + market_value + unr P&L), USDC cash, total equity.
 
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
 DO NOT USE WHEN:
 - The user asks about the equities paper book → use paper_portfolio.
 - The user wants fills / trade history → use pm_paper_history.
@@ -249,7 +253,7 @@ DO NOT USE WHEN:
 USE WHEN operator asks "pm portfolio", "polymarket positions", "posiciones polymarket".
 NOT WHEN asking for trade history (use \`pm_paper_history\`) or equity positions (use \`paper_portfolio\`).
 
-Read-only, ~100ms. Marks to market using cached midpoint per token.`,
+Reads only, except that it creates the paper account row when none exists yet. Marks to market using cached midpoint per token.`,
       parameters: {
         type: "object",
         properties: {},
@@ -291,7 +295,7 @@ Read-only, ~100ms. Marks to market using cached midpoint per token.`,
 };
 
 // ---------------------------------------------------------------------------
-// pm_paper_history (READ)
+// pm_paper_history (READ; creates the account row if missing)
 // ---------------------------------------------------------------------------
 
 export const pmPaperHistoryTool: Tool = {
@@ -307,14 +311,16 @@ export const pmPaperHistoryTool: Tool = {
       name: "pm_paper_history",
       description: `Recent Polymarket paper fills. Filter by market_id (Polymarket condition_id UUID), outcome, since-date, limit.
 
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
 DO NOT USE WHEN:
 - The user asks for equities fills → use paper_history.
 - The user wants current positions or equity → use pm_paper_portfolio.
 
 USE WHEN operator asks "pm history", "polymarket fills", "historial de pm paper".
-NOT WHEN asking for current positions (use \`pm_paper_portfolio\`) or equity (use \`paper_history\`).
+NOT WHEN asking for current positions (use \`pm_paper_portfolio\`) or equities fills (use \`paper_history\`).
 
-Read-only.`,
+Reads only, except that it creates the paper account row when none exists yet.`,
       parameters: {
         type: "object",
         properties: {

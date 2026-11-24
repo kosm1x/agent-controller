@@ -28,11 +28,11 @@ USE WHEN:
 - Working with international budgets or invoices
 
 DO NOT USE WHEN:
-- Need cryptocurrency rates (ECB doesn't track crypto — use web_search)
+- Need cryptocurrency rates (ECB doesn't track crypto — use web_search when it is among your tools)
 - Need intraday trading rates (ECB publishes daily reference rates)
 
 Supports all major currencies (USD, EUR, MXN, GBP, JPY, BRL, etc.).
-Default: 1 USD to MXN.`,
+Default: 1 USD to MXN and EUR.`,
   parameters: {
     type: "object",
     properties: {

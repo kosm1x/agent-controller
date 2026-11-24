@@ -87,3 +87,29 @@ describe("screenshot_element tool definition", () => {
     expect(params.required).not.toContain("describe_prompt");
   });
 });
+
+// Description pins: the tool's whole description text as registered.
+describe("tool description texts", () => {
+  it("screenshot_element: the whole description", async () => {
+    const { screenshotElementTool } = await import("./screenshot.js");
+    expect(screenshotElementTool.definition.function.description).toBe(`Capture a web page element as a HiDPI PNG screenshot, optionally with a vision description.
+
+DO NOT USE WHEN:
+- You need the page's TEXT or data → use web_read when it is among your tools (cheaper — no screenshot pipeline).
+- The page needs a login the browser session does not have → report the auth wall instead of retrying.
+
+USE WHEN:
+- Need a screenshot of a web page or specific element for content creation
+- Capturing social media posts, articles, or data visualizations
+- You need to SEE what an image at a URL looks like (set describe:true)
+
+Uses Playwright Chromium in headless mode with HiDPI rendering.
+Output: PNG file saved to /tmp/screenshots/.
+
+WORKFLOW for "see this image":
+- screenshot_element url:"https://site.com/path/img.png" describe:true
+  → returns { path, description } so you can verify the rendered image
+- For raw image URLs, selector:"img" or "body" both work — the browser
+  renders the image and the screenshot captures it.`);
+  });
+});

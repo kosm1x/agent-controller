@@ -159,10 +159,10 @@ FORMATS:
 USE WHEN:
 - Visualizing components, data flow, state machines, ER, or any node+edge structure
 - Producing a single shareable .svg or .html artifact (not interactive)
-- You have a description or a rough spec, not tabular data (for data viz → use \`chart\`)
+- You have a description or a rough spec, not tabular data
 
 DO NOT USE for:
-- Charts/graphs of numeric data → use \`chart\` (QuickChart)
+- Charts/graphs of numeric data → use chart_generate when it is among your tools (QuickChart)
 - Mermaid-format diagrams → deferred to v7.12.1 (mmdc CLI hangs on this VPS)
 - Editing an existing diagram → not supported; regenerate from new description
 

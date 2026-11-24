@@ -415,3 +415,57 @@ describe("google_workspace_cli", () => {
     expect(mockExecFile).not.toHaveBeenCalled();
   });
 });
+
+// Description pins: the tool's whole description text as registered.
+describe("tool description texts", () => {
+  it("google_workspace_cli: the whole description", () => {
+    expect(googleWorkspaceCliTool.definition.function.description).toBe(`Dispatch tool for Google Workspace APIs NOT covered by a dedicated Jarvis handler.
+
+USE WHEN:
+- The user wants to work with Google Chat (spaces, messages), Google Tasks (tasklists, and tasks beyond adding one to the first list), Google People (contacts), Google Forms, Google Meet, Classroom, Admin Reports, Apps Script, Keep, or Workspace Events — services Jarvis does NOT have dedicated tools for.
+- You need a long-tail Google Workspace API that's accessible via Google's Discovery Service at runtime.
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+DO NOT USE WHEN:
+- A dedicated handler exists for the service. ALWAYS prefer:
+  - Email → gmail_send, gmail_search, gmail_read
+  - Drive → gdrive_list, gdrive_create, gdrive_share, gdrive_delete, gdrive_move, gdrive_upload
+  - Calendar → calendar_list, calendar_create, calendar_update
+  - Docs → gdocs_read, gdocs_write, gdocs_replace
+  - Sheets → gsheets_read, gsheets_write
+  - Slides → gslides_read, gslides_create
+
+COMMAND SHAPE (reads Google's Discovery Service dynamically):
+  {service, resource, method, params?, json?, page_all?, timeout_ms?}
+
+CANONICAL EXAMPLES:
+
+1. Google Chat — post a message to a space:
+   { "service": "chat", "resource": "spaces.messages", "method": "create",
+     "params": { "parent": "spaces/AAAA1234" },
+     "json": { "text": "Deploy complete." } }
+
+2. Google Tasks — insert a new task into a tasklist:
+   { "service": "tasks", "resource": "tasks", "method": "insert",
+     "params": { "tasklist": "MDkyNTE5NjAyMzQxNjA..." },
+     "json": { "title": "Review v7 roadmap", "notes": "Check F1 timeline" } }
+
+3. Google People — list contacts:
+   { "service": "people", "resource": "people.connections", "method": "list",
+     "params": { "resourceName": "people/me", "pageSize": 25,
+                 "personFields": "names,emailAddresses,phoneNumbers" } }
+
+4. Google Forms — list responses for a form:
+   { "service": "forms", "resource": "forms.responses", "method": "list",
+     "params": { "formId": "1abc...xyz" } }
+
+INTROSPECTION: if you don't know a method's shape, pass --help via the method field:
+   { "service": "chat", "resource": "spaces", "method": "--help" }
+This returns the service's subcommand tree so you can discover what's available.
+
+PAGINATION: set page_all=true to auto-paginate. Output becomes an array where each element is one page. Default page limit is 10 pages; use params.pageSize for per-page count.
+
+RESPONSE SHAPE: { "ok": true, "result": <parsed JSON> } on success, or { "ok": false, "error": <stderr>, "exitCode": N } on failure.`);
+  });
+});
