@@ -7,15 +7,15 @@
  *
  * This is the **single-pass** boundary: the LLM controls retries (see
  * tool description). On `ok:false`, the LLM revises the draft and re-calls;
- * after 3 calls per `task_id` (the cap below), the tool refuses further
- * audits and instructs the LLM to proceed to the actual delivery sink
- * (e.g. `gmail_send`) with the report content. The persisted records form
- * the audit trail.
+ * a call whose `task_id` already has 3 stored reports with a verdict other
+ * than `pass` (the cap below) is refused without an audit, and the result
+ * tells the LLM to proceed to delivery with its most recent draft (a failed
+ * count read refuses nothing). The persisted records form the audit trail.
  *
  * Critical operating invariant: this tool is observability + discipline,
  * NOT a delivery gate. Even on `fail_returned_anyway`, the LLM should
- * proceed to send the report — the failure surfaces in `reports.critic_verdict`
- * for post-hoc operator inspection, not by blocking the user-facing channel.
+ * proceed to send the report — the failure does not block the user-facing
+ * channel.
  * (Phase 2b — community-manager email — uses the critic as a TRUE
  * write-gate where send-blocking is appropriate.)
  */
@@ -25,7 +25,9 @@ import { submitReport } from "../../audit/submit-report.js";
 import type { Tool } from "../types.js";
 
 /**
- * Per-task hard cap on submit_report invocations. Independent of the
+ * Per-task cap: a call is refused once this many reports with a verdict other
+ * than `pass` are stored for its `task_id` (a failed count read refuses
+ * nothing). Independent of the
  * `MAX_RETRIES=3` inside `submitReport`'s reviseFn loop (which this tool
  * doesn't use — single-pass + LLM retry instead). Belt-and-suspenders to
  * bound critic spend when the LLM mis-implements the cap in its own loop.
@@ -77,7 +79,7 @@ export const submitReportTool: Tool = {
       name: "submit_report",
       description: `Validate and audit a draft report before delivering it to the operator.
 
-USE WHEN composing any operator-facing report that quotes aggregate metrics, project status, recent events, or recommendations — BEFORE the actual delivery tool (gmail_send, etc.).
+USE WHEN composing any operator-facing report that quotes aggregate metrics, project status, recent events, or recommendations — BEFORE the actual delivery tool (for example gmail_send, when it is among your tools).
 
 EVERY claim must cite a data source via verified_against. Build each citation while reading the source:
   - jarvis_file_read result → {type:"file", path, sha256?:"<64-hex>", queried_at}
@@ -95,13 +97,18 @@ CONCERNS — list explicitly when any apply:
   - stale_data: data more than expected window-age behind
   - incomplete_coverage: known data-source gaps
 
+DO NOT USE WHEN:
+- You want the report sent: this tool delivers nothing; delivering the report is a separate step.
+- You want the cited sources re-checked: this tool opens no cited file and re-runs no cited query.
+- The text quotes no data source: a draft needs at least one citation and one claim; without them it is not accepted.
+
 RESPONSE shapes:
   - {ok:true, report_id, critic_verdict:"pass", retry_count}  — ship the report as-is
-  - {ok:true, report_id, critic_verdict:"fail_returned_anyway", retry_count, critic_critique} — critic flagged issues but report is still persisted; SHIP the report anyway (don't drop the user's brief) and surface the critique in operator-visible logs. The failure is recorded in the reports table for post-hoc inspection.
+  - {ok:true, report_id, critic_verdict:"fail_returned_anyway", retry_count, critic_critique} — critic flagged issues but the report is not blocked; SHIP the report anyway (don't drop the user's brief) and surface the critique in operator-visible logs.
   - {ok:false, kind:"schema"|"invariants", issues:[...]}  — fix the cited issues and CALL submit_report AGAIN with a corrected draft.
   - {ok:false, kind:"cap_exceeded", message}  — you've already audited 3 times. PROCEED to delivery with the latest draft; the audit trail exists in the reports table.
 
-NEVER skip the actual delivery tool because of an audit failure. submit_report is observability, not a gate.`,
+NEVER skip delivery because of an audit failure. submit_report is observability, not a gate.`,
       parameters: {
         type: "object",
         properties: {

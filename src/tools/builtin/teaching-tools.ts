@@ -81,7 +81,7 @@ export const learningPlanCreateTool: Tool = {
     type: "function",
     function: {
       name: "learning_plan_create",
-      description: `Create a learning plan for a topic. Uses an LLM to decompose the topic into 2-8 ordered atomic units (default 5) with predicted difficulties and prerequisites. Persists the plan + units. First unit is marked 'ready'; the rest 'locked' until prerequisites are mastered.
+      description: `Create a learning plan for a topic. Uses an LLM to decompose the topic into 2-8 ordered atomic units (at most ceiling_units, default 5) with predicted difficulties and prerequisites. Persists the plan + units. First unit is marked 'ready'; the rest 'locked'.
 
 USE WHEN:
 - User says "teach me X", "enséñame X", "I want to learn X", "explain X from scratch".
@@ -203,18 +203,23 @@ export const learningPlanAdvanceTool: Tool = {
     type: "function",
     function: {
       name: "learning_plan_advance",
-      description: `Advance a learning plan to the next ready unit. Checks the current unit's mastery_score (must be >= 0.7) and the next unit's prerequisites (all must be mastered) before advancing. Pass force=true to override the mastery check (prerequisite check is still enforced).`,
+      description: `Advance a learning plan to the next ready unit. Checks the current unit's mastery_score (must be >= 0.7) before advancing. Pass force=true to override the mastery check.
+
+DO NOT USE WHEN:
+- The learner has not reached 0.7 mastery on the current unit: without force this tool does not advance, and when force makes it advance the unit is marked skipped, not mastered.
+- You expect it to stop on a later unit's unmet prerequisites: it does not refuse for that; it passes over such units, and marks the plan completed when no later unit can be opened.
+- You only want to see where the learner is: a call that advances writes the plan's current unit or status; use learning_plan_status when it is among your tools.`,
       parameters: {
         type: "object",
         properties: {
           plan_id: {
             type: "string",
-            description: "Plan UUID returned by learning_plan_create. Optional — if omitted, uses the most recently active plan.",
+            description: "Plan UUID returned by learning_plan_create. Optional — if omitted, uses the active plan created or advanced most recently.",
           },
           force: {
             type: "boolean",
             description:
-              "Bypass current-unit mastery threshold (prereqs still enforced)",
+              "Bypass current-unit mastery threshold",
           },
         },
         required: [],
@@ -247,7 +252,12 @@ export const learningPlanQuizTool: Tool = {
     type: "function",
     function: {
       name: "learning_plan_quiz",
-      description: `Generate an adaptive-difficulty quiz for a unit of a learning plan. Difficulty is derived from the unit's current mastery_score (< 0.3 easy, 0.3-0.7 medium, > 0.7 hard). Deduplicates against recent quiz questions for this unit. Persists a quiz session with the questions + expected answers for grading on the next turn.`,
+      description: `Generate an adaptive-difficulty quiz for a unit of a learning plan. Difficulty is derived from the unit's current mastery_score (< 0.3 easy, 0.3-0.7 medium, > 0.7 hard). The quiz generator is shown up to 15 earlier quiz questions for this unit and is asked not to repeat them. Persists the questions + expected answers in a quiz session.
+
+DO NOT USE WHEN:
+- The learner has answered and wants a grade: this tool grades nothing, and it does not return the expected answers.
+- You want the unit's mastery updated: a quiz changes no mastery score.
+- The unit is still locked: this tool checks no prerequisites or unit status, and a generated quiz marks the unit in progress.`,
       parameters: {
         type: "object",
         properties: {
@@ -366,7 +376,12 @@ export const learningPlanExplainBackTool: Tool = {
 
 Two modes:
 - Without user_explanation: emits a Socratic prompt asking the learner to explain the unit in their own words. Starts a session.
-- With user_explanation: grades the explanation via LLM judge (5 criteria), updates the learner_model concept for the unit, closes the session, returns quality (0-5) + feedback + flagged_misconceptions.`,
+- With user_explanation: grades the explanation via LLM judge (5 criteria), updates the learner_model concept for the unit, closes the session, returns quality (0-5) + feedback + flagged_misconceptions.
+
+DO NOT USE WHEN:
+- You want one quiz answer checked against its question: a grade judges the text against the unit's title, summary and predicted difficulties, not against a quiz question or its expected answer.
+- The text covers several concepts or a whole session: a grade updates one concept, named after the unit, and replaces the unit's mastery score with this one estimate; use learning_plan_summarize when it is among your tools.
+- The explanation is longer than 8,000 characters: it is refused, not shortened.`,
       parameters: {
         type: "object",
         properties: {
@@ -526,7 +541,12 @@ export const learningPlanSummarizeTool: Tool = {
     type: "function",
     function: {
       name: "learning_plan_summarize",
-      description: `Retrospective mastery summary for a learning session. Takes a transcript (the session's conversation) + the unit it covered, asks an LLM judge to extract every concept the learner engaged with, cite evidence quotes from the learner, and estimate mastery 0..1 per concept. Upserts each concept into learner_model via SM-2, updates the unit's mastery_score to the mean of its concepts, closes the session. Returns concept-count + next review dates.`,
+      description: `Retrospective mastery summary for a learning session. Takes a transcript (the session's conversation) + the unit it covered, asks an LLM judge to extract every concept the learner engaged with, cite evidence quotes from the learner, and estimate mastery 0..1 per concept. Upserts each concept into learner_model via SM-2 and sets the unit's mastery_score to the mean of the judge's estimates. Returns concept-count + next review dates.
+
+DO NOT USE WHEN:
+- You have no transcript with the learner's own words: a transcript is required (up to 50,000 characters), and when the judge finds no concept the learner engaged with, nothing is written.
+- You want feedback on one explanation: this tool returns no feedback and no misconceptions; use learning_plan_explain_back when it is among your tools.
+- You only want to read mastery: each call that finds concepts writes those concepts' scores and review dates, and the unit's mastery score and status; use learner_model_status when it is among your tools.`,
       parameters: {
         type: "object",
         properties: {
@@ -692,16 +712,16 @@ USE WHEN:
 - You need to know which unit to resume without asking the user.
 - You lost plan_id context between sessions.
 
-DO NOT USE for actual teaching (use learning_plan_quiz / learning_plan_explain_back).
+DO NOT USE for actual teaching (use learning_plan_quiz / learning_plan_explain_back when they are among your tools).
 
-plan_id is OPTIONAL — omit it to get the most recently active plan automatically.`,
+plan_id is OPTIONAL — omit it to get the active plan created or advanced most recently; with no active plan it returns an error.`,
       parameters: {
         type: "object",
         properties: {
           plan_id: {
             type: "string",
             description:
-              "Plan UUID. Optional — if omitted, uses the most recently active plan.",
+              "Plan UUID. Optional — if omitted, uses the active plan created or advanced most recently.",
           },
         },
         required: [],
@@ -772,13 +792,18 @@ export const learnerModelStatusTool: Tool = {
     type: "function",
     function: {
       name: "learner_model_status",
-      description: `Read-only report on the learner model. Groups concepts by category:
+      description: `Read-only report on the learner model. Lists the concepts of one category, chosen by filter:
 - "due": review_due_date <= now
 - "mastered": mastery_score >= 0.8
 - "shaky": 0 < mastery_score < 0.5
 - "all": everything, ordered by last_seen DESC
 
-Use for morning-ritual "what's due today" surfacing and operator status checks.`,
+Use for morning-ritual "what's due today" surfacing and operator status checks.
+
+DO NOT USE WHEN:
+- You want to know where the learner is in a plan (current unit, unit statuses): this tool reads only the learner model's concepts, not plans or units; use learning_plan_status when it is among your tools.
+- You want to record progress or a review: this tool writes nothing.
+- You need more than 50 concepts: one call returns at most 50 (default 20), and this tool takes no offset.`,
       parameters: {
         type: "object",
         properties: {

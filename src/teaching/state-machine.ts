@@ -24,10 +24,11 @@ export interface AdvanceResult {
 }
 
 /**
- * Advance to the next unit if the current unit's mastery >= threshold AND the
- * next unit's prerequisites are all mastered.
+ * Advance to the next ready unit unless the plan is missing or completed, or
+ * the current unit's mastery is below threshold and the unit is not already
+ * mastered or skipped; with no ready unit left, mark the plan completed.
  *
- * `force` bypasses the current-unit mastery check (prereqs still enforced).
+ * `force` bypasses the current-unit mastery check.
  */
 export function advance(plan_id: string, force = false): AdvanceResult {
   const plan = getPlan(plan_id);

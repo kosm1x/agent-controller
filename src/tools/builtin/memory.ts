@@ -71,7 +71,7 @@ USE WHEN:
 DO NOT USE WHEN:
 - The information is available in the current task description or goal context
 - You need real-time data
-- You're looking for code or file contents (use file_read)
+- You're looking for code or file contents (use file_read when it is among your tools)
 
 BANKS:
 - "operational" — Task execution learnings, planning patterns, tool strategies
@@ -144,9 +144,9 @@ export const memoryStoreTool: Tool = {
       name: "memory_store",
       description: `Store a durable learning in long-term memory. Use sparingly — only for knowledge that should survive across sessions.
 
-MEMORY TYPES (choose carefully):
+MEMORY TYPES:
 - FACT: Durable knowledge — IPs, hostnames, API endpoints, credentials paths, architecture decisions. Survives decay long-term. Use for things that don't change.
-- OBSERVATION: Ephemeral context — what the user discussed, preferences expressed. Decays faster. Use for "Fede mentioned X" moments.
+- OBSERVATION: Ephemeral context — what the user discussed, preferences expressed. Decays faster. Use for "the user mentioned X" moments.
 - CORRECTION: "When I say X, I mean Y" — user corrected a mistake. Persists for intent learning.
 
 USE WHEN:
@@ -158,8 +158,7 @@ DO NOT USE WHEN:
 - Greeting noise ("user said hi", "session started") — not worth storing
 - Content is trivially short — be specific and actionable
 - The information is transient (temporary errors, one-time states)
-- Background extraction will capture this automatically (tasks with ≥3 tools auto-extract)
-- You're storing raw data that belongs in a file (use jarvis_file_write instead)
+- You're storing raw data that belongs in a file (use jarvis_file_write when it is among your tools)
 
 TIPS:
 - Be specific: "ShellExec fails with ENOENT for npm — use /usr/bin/npm" > "npm doesn't work"
@@ -239,7 +238,7 @@ USE WHEN:
 - You need strategic context (e.g., "What has worked well for deployment tasks?")
 
 DO NOT USE WHEN:
-- You need specific, individual memories (use memory_search instead)
+- You need specific, individual memories (use memory_search when it is among your tools)
 - You need current/real-time information`,
       parameters: {
         type: "object",
@@ -293,7 +292,11 @@ export const memoryKgQueryTool: Tool = {
         "Query the temporal knowledge graph for entity facts and relationships. " +
         "Tracks what is/was true about people, projects, and concepts over time. " +
         "Use to check current entity state or historical state at a specific date. " +
-        "Example: subject='cuatro flor' to see all known facts about that project.",
+        "Example: subject='acme website' to see current facts about that project.\n\n" +
+        "DO NOT USE WHEN:\n" +
+        "- You know only part of a name or a keyword: this tool does no partial or keyword match on subject, and a miss returns a plain \"No knowledge graph entries found\" line.\n" +
+        "- You combine include_history with predicate or as_of: with include_history both are ignored, and up to 50 facts, current and superseded, come back.\n" +
+        "- You want a stored note, a file or a user profile fact: this tool reads only the knowledge-graph facts.",
       parameters: {
         type: "object",
         properties: {
@@ -360,9 +363,8 @@ USE WHEN:
 - A correction stored by the correction loop (path corrections/<hash>.md) is wrong. Until now removing one needed a manual database delete.
 
 DO NOT USE WHEN:
-- The fact is a personal fact about the user (name, birthday, preference) → use user_fact_delete.
-- The user wants to delete a KB note or file → use jarvis_file_delete.
-- The fact is outdated rather than wrong → use memory_store with the new value; the graph supersedes the old one automatically.
+- The fact is a personal fact about the user (name, birthday, preference) → use user_fact_delete when it is among your tools.
+- The user wants to delete a KB note or file → use jarvis_file_delete when it is among your tools.
 
 Knowledge-graph invalidation is temporal (valid_to is stamped, history is kept). Correction deletion is permanent. Always confirm with the user first.`,
   parameters: {
@@ -371,7 +373,7 @@ Knowledge-graph invalidation is temporal (valid_to is stamped, history is kept).
       subject: {
         type: "string",
         description:
-          "Knowledge-graph subject whose active facts to invalidate (case-insensitive, e.g. 'cuatro flor'). Add predicate to narrow to one relation.",
+          "Knowledge-graph subject whose active facts to invalidate (case-insensitive, e.g. 'acme website'). Add predicate to narrow to one relation.",
       },
       predicate: {
         type: "string",
@@ -381,7 +383,7 @@ Knowledge-graph invalidation is temporal (valid_to is stamped, history is kept).
       correction_path: {
         type: "string",
         description:
-          "KB path of the correction entry to delete, exactly 'corrections/<12 hex chars>.md' as shown by memory_search.",
+          "KB path of the correction entry to delete, exactly 'corrections/<12 lowercase hex chars>.md'.",
       },
       reason: {
         type: "string",

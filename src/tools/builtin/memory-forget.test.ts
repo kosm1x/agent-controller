@@ -95,3 +95,48 @@ describe("memory_forget", () => {
     expect(out.error).toMatch(/subject/);
   });
 });
+
+// Description pins: the tool's whole description text as registered, and the exact text of the parameters pinned below.
+describe("tool description texts", () => {
+  it("memory_forget carries exactly this description", () => {
+    expect(memoryForgetTool.definition.function.description).toBe(
+      [
+        "Retract a WRONG memory — KG facts by subject and/or ONE corrections/<hash>.md; confirm first; not for user facts or files.",
+        "",
+        "Invalidates the ACTIVE knowledge-graph facts about a subject and/or deletes a rephrase-correction entry from the KB so it is never injected again.",
+        "",
+        "USE WHEN:",
+        "- The user says a remembered fact is wrong (\"eso no es así\", \"olvida eso\", \"borra ese recuerdo\") and names the subject.",
+        "- A correction stored by the correction loop (path corrections/<hash>.md) is wrong. Until now removing one needed a manual database delete.",
+        "",
+        "DO NOT USE WHEN:",
+        "- The fact is a personal fact about the user (name, birthday, preference) → use user_fact_delete when it is among your tools.",
+        "- The user wants to delete a KB note or file → use jarvis_file_delete when it is among your tools.",
+        "",
+        "Knowledge-graph invalidation is temporal (valid_to is stamped, history is kept). Correction deletion is permanent. Always confirm with the user first.",
+      ].join("\n"),
+    );
+  });
+
+  it("memory_forget property subject carries exactly this text", () => {
+    const props = (
+      memoryForgetTool.definition.function.parameters as {
+        properties: Record<string, { description?: string }>;
+      }
+    ).properties;
+    expect(props.subject?.description).toBe(
+      "Knowledge-graph subject whose active facts to invalidate (case-insensitive, e.g. 'acme website'). Add predicate to narrow to one relation.",
+    );
+  });
+
+  it("memory_forget property correction_path carries exactly this text", () => {
+    const props = (
+      memoryForgetTool.definition.function.parameters as {
+        properties: Record<string, { description?: string }>;
+      }
+    ).properties;
+    expect(props.correction_path?.description).toBe(
+      "KB path of the correction entry to delete, exactly 'corrections/<12 lowercase hex chars>.md'.",
+    );
+  });
+});

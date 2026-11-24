@@ -454,7 +454,7 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
       reason: "dispatch routing across Google Workspace APIs",
     },
     submit_report: {
-      maxLen: 2174,
+      maxLen: 2350,
       reason: "quality-gate ritual instructions for report drafts",
     },
     wp_publish: {

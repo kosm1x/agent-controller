@@ -41,14 +41,7 @@ export const NOT_FOR_RE =
   /\b(?:DO NOT USE|DON'T USE|DO NOT CALL)\b|^\s*(?:NOT FOR|AVOID WHEN|NOT WHEN|WHEN NOT TO USE)\b|\bUSE (?!IT\b)[^\n]* INSTEAD\b/im;
 
 /** Tools that predate the rule and still lack a not-for section. Shrink only. */
-const LEGACY_WITHOUT_NOT_FOR = new Set([
-  "evolution_deactivate_skill",
-  "learner_model_status",
-  "learning_plan_advance", "learning_plan_explain_back", "learning_plan_quiz",
-  "learning_plan_summarize",
-  "memory_kg_query",
-  "submit_report",
-]);
+const LEGACY_WITHOUT_NOT_FOR = new Set<string>([]);
 
 type Road = (registry: ToolRegistry) => Promise<unknown>;
 const each = (tools: Tool[]): Road => async (r) => tools.forEach((t) => r.register(t));

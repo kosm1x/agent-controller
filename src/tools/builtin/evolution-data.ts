@@ -29,8 +29,8 @@ export const evolutionGetDataTool: Tool = {
       description: `Get aggregated outcome data for skill evolution analysis.
 
 Returns three datasets:
-1. tool_effectiveness: Per-tool success rates grouped by task classification (last 7 days)
-2. runner_performance: Daily success rate and avg latency (last 7 days)
+1. tool_effectiveness: Per-tool success rates grouped by task classification (top 30 rows, last \`days\` days)
+2. runner_performance: Per-runner success rate and avg duration (last \`days\` days)
 3. underperforming_skills: Active skills with success rate below 40% on 5+ uses
 
 USE WHEN: Running the nightly evolution ritual to analyze patterns.
@@ -96,7 +96,11 @@ export const evolutionDeactivateSkillTool: Tool = {
 
 The skill remains in the database but will not match in findSkillsByKeywords queries.
 Use only during evolution analysis for skills
-with consistently low success rates (<30%) on 5+ uses.`,
+with consistently low success rates on 5+ uses.
+
+DO NOT USE WHEN:
+- The skill was not in the underperforming list you just read: this tool checks no success rate or use count itself, and it reports success even when no skill has that id.
+- You want a skill removed or switched back on: this tool only marks a skill inactive; it deletes nothing and cannot undo the change.`,
       parameters: {
         type: "object",
         properties: {

@@ -395,7 +395,7 @@ describe("submit_report — the text the model reads", () => {
 
   it("names only gmail_send as the delivery tool", () => {
     expect(description().split("\n")).toContain(
-      "USE WHEN composing any operator-facing report that quotes aggregate metrics, project status, recent events, or recommendations — BEFORE the actual delivery tool (gmail_send, etc.).",
+      "USE WHEN composing any operator-facing report that quotes aggregate metrics, project status, recent events, or recommendations — BEFORE the actual delivery tool (for example gmail_send, when it is among your tools).",
     );
     expect(description()).not.toContain("telegram_send");
   });
@@ -469,5 +469,47 @@ describe("submit_report — the text the model reads", () => {
     expect(missing).toEqual([]);
     // 9 top-level, window.start/end, concerns[].type/detail.
     expect(seen).toBe(13);
+  });
+});
+
+// Description pins: each tool's whole description text as registered.
+describe("tool description texts", () => {
+  it("submit_report carries exactly this description", () => {
+    expect(submitReportTool.definition.function.description).toBe(
+      [
+        "Validate and audit a draft report before delivering it to the operator.",
+        "",
+        "USE WHEN composing any operator-facing report that quotes aggregate metrics, project status, recent events, or recommendations — BEFORE the actual delivery tool (for example gmail_send, when it is among your tools).",
+        "",
+        "EVERY claim must cite a data source via verified_against. Build each citation while reading the source:",
+        "  - jarvis_file_read result → {type:\"file\", path, sha256?:\"<64-hex>\", queried_at}",
+        "  - intel_query / intel_alert_history output → {type:\"tool_output\", tool_name, call_id, output_sha256, queried_at}",
+        "  - memory_search results → {type:\"tool_output\", tool_name:\"memory_search\", call_id, output_sha256, queried_at}",
+        "  - git history → {type:\"git\", sha:\"<40-hex>\", path?, queried_at}",
+        "  - cost_ledger / SQLite queries → {type:\"sqlite\", table, query_sha:\"<64-hex>\", row_count, queried_at}",
+        "",
+        "Every claim.evidence_index points into verified_against by zero-based index.",
+        "",
+        "CONCERNS — list explicitly when any apply:",
+        "  - small_sample: any aggregate where sample_n < 30",
+        "  - mixed_pid_window: window spans a service restart",
+        "  - extrapolation: single-day metric projected to monthly",
+        "  - stale_data: data more than expected window-age behind",
+        "  - incomplete_coverage: known data-source gaps",
+        "",
+        "DO NOT USE WHEN:",
+        "- You want the report sent: this tool delivers nothing; delivering the report is a separate step.",
+        "- You want the cited sources re-checked: this tool opens no cited file and re-runs no cited query.",
+        "- The text quotes no data source: a draft needs at least one citation and one claim; without them it is not accepted.",
+        "",
+        "RESPONSE shapes:",
+        "  - {ok:true, report_id, critic_verdict:\"pass\", retry_count}  — ship the report as-is",
+        "  - {ok:true, report_id, critic_verdict:\"fail_returned_anyway\", retry_count, critic_critique} — critic flagged issues but the report is not blocked; SHIP the report anyway (don't drop the user's brief) and surface the critique in operator-visible logs.",
+        "  - {ok:false, kind:\"schema\"|\"invariants\", issues:[...]}  — fix the cited issues and CALL submit_report AGAIN with a corrected draft.",
+        "  - {ok:false, kind:\"cap_exceeded\", message}  — you've already audited 3 times. PROCEED to delivery with the latest draft; the audit trail exists in the reports table.",
+        "",
+        "NEVER skip delivery because of an audit failure. submit_report is observability, not a gate.",
+      ].join("\n"),
+    );
   });
 });
