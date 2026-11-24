@@ -626,3 +626,40 @@ describe("personalDataSection (Ruling 3c, 2026-10-01)", () => {
     expect(s).not.toContain("rechaza");
   });
 });
+
+// Text pin: the whole site section, exactly.
+describe("site section text", () => {
+  it("is the reviewed text", () => {
+    expect(wordpressSection()).toBe(`## PROTOCOLO OBLIGATORIO: WordPress
+
+### Cambio de estado (publicar, despublicar, republicar):
+Solo necesitas post_id + status. NO envíes content. NO necesitas wp_read_post.
+1. wp_list_posts para encontrar el post_id
+2. wp_publish con post_id y status (ej: "publish", "draft") — SIN campo content
+Esto cambia el estado sin tocar el contenido del artículo.
+
+### Modificación de contenido (editar texto, agregar sección, etc.):
+1. PRIMERO: wp_list_posts para encontrar el post_id correcto
+2. SEGUNDO: wp_read_post → guarda el HTML completo en un archivo temporal, te devuelve content_file
+3. TERCERO: file_edit para hacer los cambios necesarios EN EL ARCHIVO (no en tu contexto)
+4. CUARTO: wp_publish con post_id y content_file=<ruta del archivo>
+NUNCA envíes "content" inline al editar artículos existentes — usa content_file para evitar truncamiento.
+El campo "content" REEMPLAZA todo el cuerpo del artículo.
+
+### Administración del sitio (plugins, scripts, configuración):
+- wp_plugins para listar, instalar, activar o desactivar plugins
+- wp_settings para leer título, tagline y timezone del sitio, y actualizar solo título y tagline
+- wp_delete para eliminar posts, páginas o medios
+- wp_pages para listar páginas del sitio
+- wp_raw_api para llamar CUALQUIER endpoint REST de WordPress (plugins custom, widgets, etc.)
+
+### Inyección de código (GA4, tracking, scripts en head):
+Las herramientas wp_* tienen autenticación integrada — SIEMPRE úsalas en vez de http_fetch.
+Si necesitas configurar un plugin que no expone REST API (como WPCode Lite):
+1. Usa browser__goto para navegar al panel de admin del plugin
+2. Usa browser__fill para llenar los campos de configuración
+3. Usa browser__click para guardar los cambios
+4. Usa browser__evaluate para verificar que el código aparece en el <head> del sitio
+Las credenciales de WordPress ya están guardadas en WP_SITES — NO necesitas pedirlas al usuario.`);
+  });
+});

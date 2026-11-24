@@ -375,7 +375,7 @@ El campo "content" REEMPLAZA todo el cuerpo del artículo.
 
 ### Administración del sitio (plugins, scripts, configuración):
 - wp_plugins para listar, instalar, activar o desactivar plugins
-- wp_settings para leer/actualizar título, tagline, timezone del sitio
+- wp_settings para leer título, tagline y timezone del sitio, y actualizar solo título y tagline
 - wp_delete para eliminar posts, páginas o medios
 - wp_pages para listar páginas del sitio
 - wp_raw_api para llamar CUALQUIER endpoint REST de WordPress (plugins custom, widgets, etc.)
