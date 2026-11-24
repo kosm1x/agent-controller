@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-24 01:29 UTC — batch 10 piece 17 part 5 of 8 COMMITTED `3579d69d` (queue 4im; not deployed, ships with the batch): the file read and delete tools and five git tool descriptions say when not to use the tool; 8 statements in 10 places replaced or removed, 1 unconditional pointer made conditional, 5 private values replaced; one statement about another tool also cut from the catalog and two comments. Review: pass with warnings, two looks; four of five reviewer faults red, one survived as predicted. Next: parts 6 to 8.**
+
 **Status 2026-11-23 10:49 UTC — batch 10 piece 17 part 4 of 8 COMMITTED `62436812` (queue 4il; not deployed, ships with the batch): ten mail, drive, sheets, docs, slides and tasks tool descriptions say when not to use the tool; 8 statements the code contradicted and 7 unconditional pointers replaced; the pointers of seven neighbouring tools in the same files made conditional. Review: pass with warnings after a second look (one fold: two sentences false, three tightened); six reviewer faults red. Next: parts 5 to 8.**
 
 **Status 2026-11-23 09:40 UTC — batch 10 piece 17 part 3 of 8 COMMITTED `3ba04977` (queue 4ik; not deployed, ships with the batch): the nine site tool descriptions say when not to use the tool; 6 statements the code contradicted and 2 unconditional pointers replaced; four texts carry one covering sentence for their pointers. Review: pass with warnings (two sentences of mine, no code finding); 34 sentences re-derived, all true; four reviewer faults red. Next: parts 4 to 8.**
