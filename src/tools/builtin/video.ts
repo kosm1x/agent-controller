@@ -114,25 +114,31 @@ export const videoCreateTool: Tool = {
     type: "function",
     function: {
       name: "video_create",
-      description: `Create a video from a topic description. Full pipeline: script → TTS → images → compose → MP4.
+      description: `Create a video from a topic description. Full pipeline: script → images → TTS → compose → MP4.
 
 USE WHEN:
 - User asks "hazme un video sobre..."
 - User wants a video explainer, presentation, or content piece
 
-Requires confirmation before starting. Returns a job ID to check progress with video_status.
+Returns a job ID to check progress with video_status.
 Duration: 15-120 seconds. Template: landscape (YouTube), portrait (TikTok/Reels), square (Instagram).
 
 Modes:
-- slideshow (default): static image per scene, concatenated. Simple and fast.
-- overlay: images overlaid on background video with timed visibility. Produces professional-looking content.
+- slideshow (default): static image per scene, concatenated.
+- overlay: images overlaid on background video with timed visibility.
 
 OVERLAY MODE WORKFLOW:
 1. First: video_background_download name:"ocean-waves" (or any catalog name)
 2. Then: video_create topic:"..." mode:"overlay" background:"ocean-waves" template:"portrait"
 3. Optional: voice:"es-MX-JorgeNeural" for male voice (use video_list_voices to browse)
 
-The overlay engine uses per-scene TTS with individual timing, so each image appears exactly when its narration plays.`,
+The overlay engine uses per-scene TTS with individual timing.
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+DO NOT USE WHEN:
+- You want it made from your own images or script: it writes its own script and fetches each scene's image from a query that script holds; it takes no image files or script. For your own scene text, use video_compose_manifest.
+- You want transitions, music, or captions in overlay mode: scenes are joined with plain cuts, no music is added, and only slideshow mode burns in captions.`,
       parameters: {
         type: "object",
         properties: {
@@ -415,6 +421,11 @@ USE WHEN:
 - After calling video_create, to check if the video is ready
 - User asks "ya está mi video?"
 
+DO NOT USE WHEN:
+- You lost the job id or want a list of jobs: it looks up exactly one job_id and lists nothing.
+- You want the finished video sent to the user: it returns the file's path on the server and sends nothing.
+- You want progress detail: its only progress field is the stage name, with no percentage or time left.
+
 Returns: status, output file path (when completed), or error message (when failed).`,
       parameters: {
         type: "object",
@@ -461,7 +472,7 @@ export const videoScriptTool: Tool = {
   name: "video_script",
   // Round-2 audit C3 fix (Spine 4): pure LLM transform — no FS write,
   // no DB mutation, returns script JSON. Description: "Generate a video
-  // script without rendering. For previewing/editing before committing."
+  // script without rendering."
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: true,
@@ -471,11 +482,16 @@ export const videoScriptTool: Tool = {
     type: "function",
     function: {
       name: "video_script",
-      description: `Generate a video script without rendering. For previewing/editing before committing to a full render.
+      description: `Generate a video script without rendering.
 
 USE WHEN:
-- User wants to see the script before creating the video
-- Planning video content structure`,
+- User wants to see a draft script
+- Planning video content structure
+
+DO NOT USE WHEN:
+- You want audio, images or a video: it returns the script JSON only (scenes with narration, duration and image query); nothing is rendered and no job is created.
+- You want this exact script rendered next: video_create takes no script and writes a new one of its own.
+- You need under 15 or over 120 seconds: the duration is clamped to that range without an error.`,
       parameters: {
         type: "object",
         properties: {
@@ -532,8 +548,12 @@ USE WHEN:
 - Need a voice-over audio file from text
 - Testing narration before full video render
 
-Supports 324 edge-tts voices. Use video_list_voices to see available options.
-Long texts (>2000 chars) are automatically split at sentence boundaries with silence gaps.`,
+Uses edge-tts voices. To see available options, use video_list_voices when it is among your tools.
+Long texts (>2000 chars) are automatically split, at sentence boundaries where possible, with silence gaps.
+
+DO NOT USE WHEN:
+- You want to send a voice note or audio to the user: it writes the MP3 (and its working files) under /tmp on the server and returns the MP3's path; it sends nothing to the user.
+- You must know the narration was spoken: if the speech program fails, it returns a silent MP3 of estimated length with no error, still naming the voice.`,
       parameters: {
         type: "object",
         properties: {
@@ -546,7 +566,7 @@ Long texts (>2000 chars) are automatically split at sentence boundaries with sil
           voice: {
             type: "string",
             description:
-              "Edge-tts voice name (e.g. es-MX-DaliaNeural, en-US-BrianNeural). Use video_list_voices to see options.",
+              "Edge-tts voice name (e.g. es-MX-DaliaNeural, en-US-BrianNeural). To see options, use video_list_voices when it is among your tools.",
           },
         },
         required: ["text"],
@@ -597,17 +617,21 @@ export const videoListVoicesTool: Tool = {
       description: `List available TTS voices for video narration.
 
 USE WHEN:
-- User wants to hear available voice options
+- User wants to know the available voice options
 - Choosing a voice for video_tts or video_create
 
-Returns voice names, genders, and locales. Filter by language to narrow results.`,
+Returns voice names (each begins with its locale) and genders. Filter by language to narrow results.
+
+DO NOT USE WHEN:
+- You want to hear a voice: it returns names and genders only, no audio sample.
+- You filter by a language name ("Spanish") or in capitals ("ES"): the filter matches the start of the locale exactly (es, es-MX), and a miss returns the "No voices found" error.`,
       parameters: {
         type: "object",
         properties: {
           language: {
             type: "string",
             description:
-              "Language filter prefix (e.g. 'es' for Spanish, 'en' for English). Omit to list all 324 voices.",
+              "Language filter prefix (e.g. 'es' for Spanish, 'en' for English). Omit to list all voices.",
           },
         },
       },
@@ -652,11 +676,16 @@ export const videoImageTool: Tool = {
     type: "function",
     function: {
       name: "video_image",
-      description: `Fetch a stock image from Pexels for a given query.
+      description: `Fetch an image for a given query, from a stock photo search when it can.
 
 USE WHEN:
 - Need a stock image for a specific concept
-- Testing image queries before full video render`,
+- Testing image queries before full video render
+
+DO NOT USE WHEN:
+- You need a real stock photo: when the stock search is not set up, fails or finds nothing, it returns an AI-generated image or a plain dark placeholder, and the result does not say which.
+- You want several options or a portrait image: it saves one image only, always asked for in landscape.
+- You want the file in a manifest scene: it saves under /tmp outside the folders a manifest image path may name, so that manifest is refused.`,
       parameters: {
         type: "object",
         properties: {
@@ -708,7 +737,11 @@ export const videoListProfilesTool: Tool = {
 
 USE WHEN:
 - User asks what video formats are available
-- Before creating a video, to show options`,
+- Before creating a video, to show options
+
+DO NOT USE WHEN:
+- You want frame rate, length or file-size limits: it returns only the three templates (landscape, portrait, square) with width, height and a label.
+- You want the available voices: it lists render templates only; use video_list_voices when it is among your tools.`,
       parameters: { type: "object", properties: {} },
     },
   },
@@ -742,7 +775,12 @@ USE WHEN:
 Available backgrounds: ocean-waves, city-timelapse, abstract-particles, nature-forest, clouds-sky.
 Or provide a custom Pexels/YouTube URL.
 
-Videos are cached in /tmp/video-backgrounds/ — subsequent calls for the same name skip the download.`,
+Videos are cached in /tmp/video-backgrounds/ — subsequent calls for the same name skip the download.
+
+DO NOT USE WHEN:
+- You want new footage under a name already cached: the link you give is not downloaded for that name.
+- Your link is a page on some other site: the tool takes direct .mp4, .webm or .mov links, Pexels links and links on a short list of video sites; a file over 500 MB is not kept, and a failed download returns only a generic error.
+- You want the footage's own sound in the video: overlay mode drops the background's audio.`,
       parameters: {
         type: "object",
         properties: {
@@ -857,16 +895,20 @@ export const videoTransitionPreviewTool: Tool = {
     type: "function",
     function: {
       name: "video_transition_preview",
-      description: `Render a 2-second sample MP4 demonstrating a named transition between two solid-color test cards.
+      description: `Render a short sample MP4 demonstrating a named transition between two solid-color test cards.
 
 USE WHEN:
 - User wants to see what a specific transition looks like
 - Comparing transitions before committing to one in a storyboard
 
 Available transitions: fade, wipeleft, wiperight, circleopen, circlecrop, pixelize, dissolve, radial (8 native ffmpeg xfade);
-plus domain-warp, ridged-burn, gravitational-lens, chromatic-radial-split, sdf-iris, rgb-displacement (6 GL-only, fall back to dissolve until v7.4.4).
+plus domain-warp, ridged-burn, gravitational-lens, chromatic-radial-split, sdf-iris, rgb-displacement (6 GL-only, fall back to dissolve).
 
-Returns the path to a small MP4 under /tmp/video-previews/.`,
+Returns the path to a small MP4 under /tmp/video-previews/.
+
+DO NOT USE WHEN:
+- You expect the transition in a rendered video: the topic and manifest renders join scenes with plain cuts, so a transition chosen here or set in a manifest does not appear.
+- You want it shown on your own images or clips: it always shows the transition between two plain colour cards at 320x180.`,
       parameters: {
         type: "object",
         properties: {
@@ -980,9 +1022,14 @@ export const videoComposeManifestTool: Tool = {
 
 USE WHEN:
 - Caller already has a VideoCompositionManifest (pre-authored or emitted by a storyboard pipeline)
-- User wants fine control over scene count, durations, transitions, brand profile
+- User wants fine control over scene count and durations
 
-Requires confirmation (cost-bearing). Returns a job_id to track with video_status.`,
+Returns a job_id; to track it, use video_status when it is among your tools.
+
+DO NOT USE WHEN:
+- You want the manifest's transitions, frame rate, background footage, music or brand profile used: the render reads only the title, template, language, voice and each scene's text, duration and image, and joins scenes with plain cuts at 24 fps.
+- Your scene images sit elsewhere: an image path must be under /tmp/video-jobs/, /tmp/video-previews/ or /tmp/video-backgrounds/, or the manifest is refused.
+- You have only a topic or a brief: this tool writes no scenes; use video_storyboard when it is among your tools.`,
       parameters: {
         type: "object",
         properties: {
@@ -1193,13 +1240,17 @@ export const videoJobCancelTool: Tool = {
     type: "function",
     function: {
       name: "video_job_cancel",
-      description: `Mark a video job as cancelled. NOTE: currently only marks the DB row — does NOT yet kill the underlying ffmpeg child (v7.4 S1 limitation). Running ffmpeg processes will complete or time out at the 2-min ffmpeg-step cap. Pid-kill wiring lands in v7.4 S1.1 when the composer is migrated from execFileSync to spawn.
+      description: `Mark a video job as cancelled. NOTE: currently only marks the DB row — does NOT yet kill the underlying ffmpeg child (v7.4 S1 limitation). It does not stop the job's work: if that work is still running, its later steps write their own status over the cancelled mark.
 
 USE WHEN:
 - User asks to stop a video render (note the caveat above)
 - A job is stuck in a non-terminal state (scripting/generating_assets/composing) and the operator wants the DB row marked cancelled
 
-No-op if the job is already completed/failed/cancelled. Returns {ok:false} if the job does not exist.`,
+No-op if the job is already completed/failed/cancelled. Returns {ok:false} if the job does not exist.
+
+DO NOT USE WHEN:
+- You want the job's files or its row removed: cancelling deletes nothing, and video_job_cleanup, when it is among your tools, leaves the job alone for at least an hour after the cancel.
+- You cancel to free a slot for a new job: the work is not stopped, and a topic or manifest job still running can write a running stage over the cancelled mark, which counts it toward the two-job limit again.`,
       parameters: {
         type: "object",
         properties: {
@@ -1280,14 +1331,19 @@ USE WHEN:
 - Operator wants to reclaim disk
 - Disk is tight and /tmp/video-jobs/ has many leftover directories
 
-Default: removes jobs that are completed/failed/cancelled AND older than 24h. Returns counts.`,
+DO NOT USE WHEN:
+- You want to keep a finished video: a removed job loses its row and its folder under /tmp/video-jobs/, which holds the MP4 of a topic or manifest render.
+- You want to free space used by backgrounds, previews, single audio or image files, or an HTML job's MP4: it removes only each job's own folder under /tmp/video-jobs/ and its row.
+- You want to stop a running job: it skips every job that is not completed, failed or cancelled.
+
+Default: removes completed, failed or cancelled jobs that finished more than 24h ago, and any of them with no recorded finish time at any age (a failed job records none unless it was cancelled first). Returns counts.`,
       parameters: {
         type: "object",
         properties: {
           older_than_hours: {
             type: "number",
             description:
-              "Only remove jobs older than this (default 24, min 1, max 720)",
+              "Only remove jobs that finished more than this many hours ago (default 24, min 1, max 720); a completed, failed or cancelled job with no recorded finish time is removed at any age.",
           },
         },
       },
@@ -1380,22 +1436,27 @@ export const videoStoryboardTool: Tool = {
     type: "function",
     function: {
       name: "video_storyboard",
-      description: `Generate a structured VideoCompositionManifest from a brief + duration. Uses the LLM to author scene-by-scene narration, image queries, and transitions. Does NOT render — operator reviews the manifest then pipes into video_compose_manifest for actual MP4 production.
+      description: `Generate a structured VideoCompositionManifest from a brief + duration. Uses the LLM to author scene-by-scene narration, image queries, and transitions. Does NOT render: pass the manifest it returns to video_compose_manifest when it is among your tools.
 
 USE WHEN:
 - User wants a video but hasn't authored the manifest themselves
-- Quickly draft 3-8 scenes from a topic/brief
+- Draft scenes from a topic/brief
 
-Optional brand_id pulls a profile from ads_brand_profiles (v7.3 P4a) — brand voice, keywords lexicon, colors — and merges into the prompt.
+Optional brand_id pulls a profile from ads_brand_profiles (v7.3 P4a) — brand voice and keyword lists — and merges into the prompt.
 
-URLs in the brief are redacted before hitting the LLM (prompt-injection defense). Output is validated via validateManifest.`,
+Links the redaction recognises in the brief are replaced by a placeholder before the brief reaches the LLM. Output is validated via validateManifest.
+
+DO NOT USE WHEN:
+- You want the brief's links read: links are never fetched, and those the redaction recognises are replaced by a placeholder; for a brand taken from a website, use ads_brand_dna when it is among your tools and pass the profile id it returns, when it returns one, as brand_id.
+- You expect the chosen transitions on screen: the manifest render joins scenes with plain cuts.
+- Your brief is long: only its first 4000 characters, counted after the link redaction, reach the model; the rest is dropped without an error.`,
       parameters: {
         type: "object",
         properties: {
           brief: {
             type: "string",
             description:
-              "Plain-language description of what the video should be about. Max 4000 chars. URLs will be redacted.",
+              "Plain-language description of what the video should be about. Max 4000 chars. Links the redaction recognises are replaced by a placeholder.",
           },
           duration: {
             type: "number",
@@ -1497,7 +1558,11 @@ export const videoBrandApplyTool: Tool = {
 
 USE WHEN:
 - Operator wants to confirm a brand_id is valid before running video_storyboard
-- Inspecting what brand voice / lexicon will be injected into the prompt`,
+- Inspecting what brand voice / lexicon will be injected into the prompt
+
+DO NOT USE WHEN:
+- You want a stored profile changed, or a new one made: it only reads one stored profile by its number. For a new profile from the brand's site or text, use ads_brand_dna when it is among your tools.
+- You need the brand's colors: the summary holds the tagline, voice and the keyword and avoid lists only, and the storyboard prompt does not use colors either.`,
       parameters: {
         type: "object",
         properties: {
@@ -1617,7 +1682,7 @@ ${htmlCompositionSkillSection()}
 
 Example HTML: <style>@keyframes fade-in { from {opacity:0} to {opacity:1} } .fade-in { animation: fade-in 0.5s forwards }</style><h1 class="fade-in" data-start="0" data-duration="2">Hello</h1>
 
-Requires confirmation (cost-bearing). Returns a job_id to track with video_status.`,
+Returns a job_id to track with video_status.`,
       parameters: {
         type: "object",
         properties: {

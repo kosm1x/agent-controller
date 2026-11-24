@@ -442,7 +442,7 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     // alone trims ~5400 chars from the catalog. maxLen = current_len + 50
     // slack (lets minor edits pass without re-tripping the test).
     video_html_compose: {
-      maxLen: 5328,
+      maxLen: 5350,
       reason: "HTML/CSS composition rules + render policy",
     },
     infographic_generate: {

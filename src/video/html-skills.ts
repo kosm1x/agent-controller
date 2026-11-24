@@ -21,8 +21,10 @@ USE WHEN
 - Operator says "render this HTML as a video" / "convert HTML to MP4" / "hacer un video desde HTML"
 - A composition HTML file already exists under /root/tmp-video-html/ with data-start / data-duration attributes (or a window.__hf.duration()/seek() contract)
 
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
 DO NOT USE WHEN
-- Operator wants a slideshow from a script — use video_create
+- Operator wants a video from a topic — use video_create
 - Operator wants a vertical overlay video — use video_create with overlay engine
 - Operator just wants a screenshot — use screenshot_element
 

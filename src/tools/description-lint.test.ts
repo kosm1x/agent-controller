@@ -52,10 +52,6 @@ const LEGACY_WITHOUT_NOT_FOR = new Set([
   "market_watchlist_remove", "memory_kg_query",
   "paper_history", "pm_alpha_latest",
   "sentiment_snapshot", "submit_report",
-  "video_background_download", "video_brand_apply", "video_compose_manifest",
-  "video_create", "video_image", "video_job_cancel", "video_job_cleanup",
-  "video_list_profiles", "video_list_voices", "video_script", "video_status",
-  "video_storyboard", "video_transition_preview", "video_tts",
   "whale_trades",
 ]);
 
