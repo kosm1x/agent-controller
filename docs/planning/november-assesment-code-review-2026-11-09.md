@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-24 23:49 UTC — LIVE build `b3d1eb5e` unchanged; no code changed (queue 4iv). Operator rulings of 2026-11-24 that touch code: the per-message effort rating is not built on the other model path (two comments to correct); the site publish tool's ask-first flag has no effect and is to be removed; the status screen is to count completed with concerns as completed. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: these three small pieces, the two ruled batch-3 leftover pieces (error texts; the write record), then the Code re-score.**
+
 **Status 2026-11-24 19:02 UTC — build `b3d1eb5e` is LIVE since 2026-11-24 18:59 UTC (queue 4iu); everything committed is deployed: the evaluation batch and the non-owner turn piece. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: the two ruled batch-3 leftover pieces (error texts; the write record), then the Code re-score.**
 
 **Status 2026-11-24 18:31 UTC — the batch's paid evaluation run PASSED (2026-11-24: 76.68 against 78.63, tolerance 2); one more piece COMMITTED `718db01a` (queue 4it; NOT deployed), ordered by the operator before the deploy: a turn from a messaging group or from a mailbox that is not owner-only neither reads nor feeds the owner's memory. Review: two rounds, pass with warnings, no critical finding. Next: the operator's deploy; then the two ruled batch-3 leftover pieces (error texts; the write record).**

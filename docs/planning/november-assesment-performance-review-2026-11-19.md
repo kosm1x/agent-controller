@@ -66,7 +66,7 @@ Given by the operator on 2026-11-19 (UTC), one at a time (queue 4gg).
 | 1 | NO | The typing sign is used for agents with several users, not for a personal one-on-one agent. Not to be proposed again for this agent. |
 | 2 | NO — one hour stays | The operator sometimes returns to a thread after more than 20 minutes. Batch P5 is dropped; not to be proposed again. |
 | 3 | YES | Two failed checks before a restart; operator-installed. |
-| 4 | YES | Follow the design: the effort rating reaches the main model path. Batch 10; ships only on a passing eval-gate run. |
+| 4 | YES on 2026-11-19 — **re-ruled 2026-11-24: NOT BUILT** | The yes rested on a question that left out one fact: the change overrides the low effort setting the operator ruled after a paid comparison, and can only raise effort. Put again with that fact, the operator ruled: do not build it, and ask again at every model update or upgrade cycle, with a measurement that can see effort (the eval-gate run cannot). Queue 4iv. |
 | 5 | YES — study and propose | Design and numbers only; a build comes back as its own ruling. |
 
 ## Tool-list study (ruling 5) — result and ruling
@@ -116,7 +116,7 @@ Order: the Code build queue finishes first (operator ruling 2026-11-18); Perform
 
 ### Batch P4 — Model-visible, with the one eval-gate run of batch 10 (rulings 4, 5)
 
-1. Effort setting on the main path (ruling 4).
+1. Effort setting on the main path (ruling 4): NOT BUILT, re-ruled 2026-11-24; a standing question for each model update or upgrade cycle (queue 4iv).
 2. Stable tool list: studied and closed, not built (section above). In its place: an explicit short tool list of a scheduled job is loaded up front.
 3. Candidates that wait for P1 numbers before they are proposed: what planning and reflecting receive (the full chat prompt today); the second classifier call for 1 in 3 messages; a result-size limit for the largest tool outputs; the `task_history` search (scans every run's output per search word; 55 calls in 30 days).
 
