@@ -1,9 +1,9 @@
 /**
- * Lock test: four house rules over the production files under src/, read
+ * Lock test: five house rules over the production files under src/, read
  * with the TypeScript parser (syntax only: no program, no type checker;
- * nothing of the scanned code is imported or run). Each rule has a home where
- * the thing it guards belongs, and every exception that exists on purpose is
- * named in conventions.lock.json with its reason.
+ * nothing of the scanned code is imported or run). The first four rules have
+ * a home where the thing they guard belongs, and every exception that exists
+ * on purpose is named in conventions.lock.json with its reason.
  *
  * Files scanned: every `.ts` file under src/, except `*.test.ts`, `*.d.ts`,
  * everything under src/test-utils/, any `__fixtures__` folder and any
@@ -55,10 +55,43 @@
  *   module's namespace. `buildDockerRunArgs` is not: it only builds an
  *   argument list, and starting the runtime with that list is itself a
  *   child-process start that the rule reports.
+ * - plainTextToolResult: a plain-text return of a tool handler in a file
+ *   under src/tools/. The house form for a tool failure is JSON with `error`
+ *   as its first key, and plain text is meant for results; the list also
+ *   holds failures kept as plain text for now. The rule does not judge
+ *   whether a text is a failure: it reports each plain-text return it can
+ *   read, results included, and the reason of each entry says why that text
+ *   is plain. A new plain-text success therefore needs an entry with its
+ *   reason too.
+ *   A handler is an `execute` method, or an `execute:` property whose value
+ *   is a function, a call with a function among its arguments
+ *   (`wrap(async () => …)`), or the name of a function or variable declared
+ *   at the top of the same file whose value is a function or such a call;
+ *   the nearest enclosing object literal with a string `name` names its
+ *   tool, and an `execute` without one is not a handler. Its
+ *   returns are the `return` statements of the handler itself (not of a
+ *   function nested in it) and a concise arrow body; `a ? b : c`, `a || b`
+ *   and `a ?? b` count as their branches. A branch is plain text when it is a
+ *   string or template literal, a `+` chain that starts with one, an array
+ *   literal that starts with one and is joined with `.join(…)`, or a name
+ *   bound by `const` to one of these, in the handler or at the top of the
+ *   file (a name the handler binds as a `let`, a `var` or a parameter is not
+ *   followed to a `const` elsewhere). The entry text is the tool name and the
+ *   first 60 characters of the normalised text, each substitution shown as
+ *   `${…}`; two returns of one tool with the same first 60 characters share a
+ *   key and are counted by multiplicity.
+ *   Not seen: text that exists only at run time (a call's result, a `let`,
+ *   `var` or parameter, a property read, a `+` chain that starts with a
+ *   run-time value, an array built before it is joined); returns inside a
+ *   callback the handler passes on; handlers not written in the forms
+ *   above; tools served by an external tool server;
+ *   throws; JSON results — the rule does not check the shape of a JSON
+ *   result.
  *
  * Limits (review catches these):
- * - names are matched by text, without scopes: a local that shadows an
- *   imported name is still counted (the error leans towards reporting);
+ * - for the first four rules, names are matched by text, without scopes: a
+ *   local that shadows an imported name is still counted (the error leans
+ *   towards reporting);
  * - a module object passed around as a value (a parameter, a property, the
  *   argument of `.then`) is not followed, nor an alias made by assignment
  *   rather than a variable declaration;
@@ -76,8 +109,9 @@
  *   tool, which has its own gate; they are outside this lock.
  *
  * The allow-list holds, per rule, one entry per exception: the file, the
- * normalised text of the call or statement (never a line number) and a
- * one-line reason stating the rule the exception serves. The comparison runs
+ * normalised text of the call or statement, or for a tool's plain-text
+ * return the tool name and the first 60 characters of the text (never a
+ * line number) and a one-line reason for the exception. The comparison runs
  * in both directions, with multiplicity, and has no switch that turns it off:
  * a finding the list does not hold fails (NEW), and an entry that matches
  * nothing any more fails (STALE: the exception was removed, delete the entry
@@ -101,7 +135,7 @@ const SELF_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(SELF_DIR, "..", "..");
 const LOCK_PATH = join(SELF_DIR, "conventions.lock.json");
 
-const RULES = ["rawCron", "secondDatabaseHandle", "columnChangeOutsideMigrations", "containerCallOutsideSeam"] as const;
+const RULES = ["rawCron", "secondDatabaseHandle", "columnChangeOutsideMigrations", "containerCallOutsideSeam", "plainTextToolResult"] as const;
 type Rule = (typeof RULES)[number];
 interface Finding {
   file: string;
@@ -129,12 +163,17 @@ const RUNTIME = /^(?:docker(?:-[a-z]+)?|podman|nerdctl)$/;
 /** Groups: 1 = table, 2 = column. */
 const COLUMN_CHANGE =
   /\bALTER\s+TABLE\s+(\$\{[^}]*\}|"[^"]*"|\S+)\s+(?:ADD|DROP|RENAME(?!\s+TO\b))\b(?:\s+COLUMN\b)?\s*(\$\{[^}]*\}|"[^"]*"|[^\s;]*)[^;]*/gi;
+const TOOLS_DIR = "src/tools/";
+/** Characters of a plain-text return's normalised text that key its entry. */
+const HEAD_CHARS = 60;
+const SUBSTITUTION = "${…}";
 
 const PURPOSE: Record<Rule, string> = {
   rawCron: "a raw schedule has no job name and its missed or failed runs are not recorded",
   secondDatabaseHandle: "a second handle does not share the service handle's pragmas",
   columnChangeOutsideMigrations: "a column change outside the numbered list runs on every boot and is not counted in the schema version",
   containerCallOutsideSeam: "the seam picks the sandbox backend and applies its guards",
+  plainTextToolResult: "a tool failure is returned as JSON, not as plain text",
 };
 
 const HINT: Record<Rule, string> = {
@@ -142,6 +181,7 @@ const HINT: Record<Rule, string> = {
   secondDatabaseHandle: "use getDatabase() from src/db/index.ts",
   columnChangeOutsideMigrations: "append a numbered entry to SCHEMA_MIGRATIONS in src/db/index.ts",
   containerCallOutsideSeam: "start containers through spawnSandbox() in src/runners/sandbox-backend.ts",
+  plainTextToolResult: "return JSON.stringify({ error: <words> }) with error as the first key",
 };
 
 const empty = (): Findings => ({
@@ -149,6 +189,7 @@ const empty = (): Findings => ({
   secondDatabaseHandle: [],
   columnChangeOutsideMigrations: [],
   containerCallOutsideSeam: [],
+  plainTextToolResult: [],
 });
 
 /** Production .ts files under `<root>/src`, as paths relative to `root` with `/`. */
@@ -330,6 +371,165 @@ function functionName(node: ts.Node): string | undefined {
 const isExported = (node: ts.Node): boolean =>
   ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
 
+const isFunctionLike = (n: ts.Node): boolean =>
+  ts.isFunctionDeclaration(n) ||
+  ts.isFunctionExpression(n) ||
+  ts.isArrowFunction(n) ||
+  ts.isMethodDeclaration(n) ||
+  ts.isGetAccessor(n) ||
+  ts.isSetAccessor(n) ||
+  ts.isConstructorDeclaration(n);
+
+/** The text of a property's or method's name, when it is an identifier or a string. */
+const nameOf = (n: ts.PropertyAssignment | ts.MethodDeclaration): string | undefined =>
+  ts.isIdentifier(n.name) || ts.isStringLiteral(n.name) ? n.name.text : undefined;
+
+/** The tool an object literal defines: its `name: "<string>"` property. */
+function toolNameOf(o: ts.ObjectLiteralExpression): string | undefined {
+  for (const p of o.properties)
+    if (ts.isPropertyAssignment(p) && nameOf(p) === "name" && ts.isStringLiteralLike(p.initializer)) return p.initializer.text;
+  return undefined;
+}
+
+function boundNames(n: ts.BindingName, out: string[]): string[] {
+  if (ts.isIdentifier(n)) out.push(n.text);
+  else for (const el of n.elements) if (!ts.isOmittedExpression(el)) boundNames(el.name, out);
+  return out;
+}
+
+/**
+ * Names bound in a scope: name -> the initializer of `const name = …`, or null
+ * for any other binding of the name (`let`, `var`, a parameter, a pattern).
+ * The file scope is its top-level variable statements; a handler's scope is
+ * its body without the functions nested in it.
+ */
+function bindingsOf(scope: ts.SourceFile | ts.FunctionLikeDeclaration): Map<string, ts.Expression | null> {
+  const out = new Map<string, ts.Expression | null>();
+  const bind = (name: string, init: ts.Expression | null): void => {
+    if (!out.has(name)) out.set(name, init);
+  };
+  const list = (l: ts.VariableDeclarationList): void => {
+    const isConst = (l.flags & ts.NodeFlags.Const) !== 0;
+    for (const d of l.declarations)
+      for (const name of boundNames(d.name, [])) bind(name, isConst && ts.isIdentifier(d.name) && d.initializer ? d.initializer : null);
+  };
+  if (ts.isSourceFile(scope)) {
+    for (const s of scope.statements) if (ts.isVariableStatement(s)) list(s.declarationList);
+    return out;
+  }
+  const visit = (n: ts.Node): void => {
+    if (n !== scope && isFunctionLike(n)) return;
+    if (ts.isVariableDeclarationList(n)) list(n);
+    if (ts.isParameter(n)) for (const name of boundNames(n.name, [])) bind(name, null);
+    ts.forEachChild(n, visit);
+  };
+  visit(scope);
+  return out;
+}
+
+/** The text of a plain-text expression, a substitution shown as `${…}`; undefined for anything else. */
+function plainText(e: ts.Expression, resolve: (name: string) => ts.Expression | null, depth = 0): string | undefined {
+  if (depth > 8) return undefined;
+  const u = unwrap(e);
+  if (ts.isStringLiteral(u) || ts.isNoSubstitutionTemplateLiteral(u)) return u.text;
+  if (ts.isTemplateExpression(u)) return u.head.text + u.templateSpans.map((s) => SUBSTITUTION + s.literal.text).join("");
+  if (ts.isBinaryExpression(u) && u.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = plainText(u.left, resolve, depth + 1);
+    return left === undefined ? undefined : left + (plainText(u.right, resolve, depth + 1) ?? SUBSTITUTION);
+  }
+  if (ts.isCallExpression(u) && ts.isPropertyAccessExpression(u.expression) && u.expression.name.text === "join") {
+    const arr = unwrap(u.expression.expression);
+    if (!ts.isArrayLiteralExpression(arr) || arr.elements.length === 0 || plainText(arr.elements[0], resolve, depth + 1) === undefined)
+      return undefined;
+    const sep = u.arguments[0] === undefined ? "," : (plainText(u.arguments[0], resolve, depth + 1) ?? SUBSTITUTION);
+    return arr.elements.map((x) => plainText(x, resolve, depth + 1) ?? SUBSTITUTION).join(sep);
+  }
+  if (ts.isIdentifier(u)) {
+    const init = resolve(u.text);
+    return init ? plainText(init, resolve, depth + 1) : undefined;
+  }
+  return undefined;
+}
+
+/** A returned expression's branches: `a ? b : c`, `a || b` and `a ?? b` count as their parts. */
+function branches(e: ts.Expression, out: ts.Expression[]): ts.Expression[] {
+  const u = unwrap(e);
+  if (ts.isConditionalExpression(u)) {
+    branches(u.whenTrue, out);
+    branches(u.whenFalse, out);
+  } else if (
+    ts.isBinaryExpression(u) &&
+    (u.operatorToken.kind === ts.SyntaxKind.BarBarToken || u.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken)
+  ) {
+    branches(u.left, out);
+    branches(u.right, out);
+  } else out.push(u);
+  return out;
+}
+
+/** The function an `execute:` value names: a function, a call wrapping one, or a top-level function of this file. */
+function handlerOf(sf: ts.SourceFile, init: ts.Expression): ts.FunctionLikeDeclaration | undefined {
+  const u = unwrap(init);
+  if (ts.isFunctionExpression(u) || ts.isArrowFunction(u)) return u;
+  if (ts.isCallExpression(u)) {
+    for (const a of u.arguments) {
+      const fn = handlerOf(sf, a);
+      if (fn) return fn;
+    }
+    return undefined;
+  }
+  if (ts.isIdentifier(u))
+    for (const s of sf.statements) {
+      if (ts.isFunctionDeclaration(s) && s.name?.text === u.text && s.body) return s;
+      if (ts.isVariableStatement(s))
+        for (const d of s.declarationList.declarations)
+          if (ts.isIdentifier(d.name) && d.name.text === u.text && d.initializer) return handlerOf(sf, d.initializer);
+    }
+  return undefined;
+}
+
+/** The plain-text returns of the tool handlers in one file, keyed `<tool> <first HEAD_CHARS characters>`. */
+function plainTextReturns(sf: ts.SourceFile, file: string): Finding[] {
+  const fileScope = bindingsOf(sf);
+  const out: Finding[] = [];
+  const read = (fn: ts.FunctionLikeDeclaration, tool: string): void => {
+    const local = bindingsOf(fn);
+    const resolve = (name: string): ts.Expression | null => (local.has(name) ? local.get(name)! : (fileScope.get(name) ?? null));
+    const add = (e: ts.Expression): void => {
+      for (const b of branches(e, [])) {
+        const text = plainText(b, resolve);
+        if (text === undefined) continue;
+        const head = Array.from(normalise(text)).slice(0, HEAD_CHARS).join("");
+        out.push({ file, line: sf.getLineAndCharacterOfPosition(b.getStart(sf)).line + 1, text: normalise(`${tool} ${head}`) });
+      }
+    };
+    if (ts.isArrowFunction(fn) && !ts.isBlock(fn.body)) return add(fn.body);
+    const walk = (n: ts.Node): void => {
+      if (n !== fn && isFunctionLike(n)) return;
+      if (ts.isReturnStatement(n) && n.expression) add(n.expression);
+      ts.forEachChild(n, walk);
+    };
+    walk(fn);
+  };
+  const tools: string[] = [];
+  const visit = (n: ts.Node): void => {
+    const name = ts.isObjectLiteralExpression(n) ? toolNameOf(n) : undefined;
+    if (name !== undefined) tools.push(name);
+    const tool = tools.at(-1);
+    if (tool !== undefined) {
+      if (ts.isMethodDeclaration(n) && nameOf(n) === "execute" && n.body) read(n, tool);
+      else if (ts.isPropertyAssignment(n) && nameOf(n) === "execute") {
+        const fn = handlerOf(sf, n.initializer);
+        if (fn) read(fn, tool);
+      }
+    }
+    ts.forEachChild(n, visit);
+    if (name !== undefined) tools.pop();
+  };
+  visit(sf);
+  return out;
+}
+
 /** A call, in another file, of a function this file imports by name from a relative module. */
 interface ImportedCall extends Finding {
   module: string;
@@ -442,6 +642,7 @@ function scanSource(file: string, text: string): Scan {
   };
   find(sf);
   for (const c of calls) if (helpers.has(c.name)) add("columnChangeOutsideMigrations", c.node, callText(sf, c.node, c.node.arguments));
+  if (file.startsWith(TOOLS_DIR)) out.plainTextToolResult.push(...plainTextReturns(sf, file));
   const exportedHelpers = new Set([...helpers].flatMap((h) => (exportedAs.has(h) ? [exportedAs.get(h)!] : [])));
   return { findings: out, exportedHelpers, importedCalls };
 }
@@ -494,7 +695,13 @@ function compareLock(findings: Findings, lock: Lock): string[] {
 }
 
 const texts = (f: Findings, rule: Rule): string[] => f[rule].map((x) => x.text);
-const emptyLock = (): Lock => ({ rawCron: [], secondDatabaseHandle: [], columnChangeOutsideMigrations: [], containerCallOutsideSeam: [] });
+const emptyLock = (): Lock => ({
+  rawCron: [],
+  secondDatabaseHandle: [],
+  columnChangeOutsideMigrations: [],
+  containerCallOutsideSeam: [],
+  plainTextToolResult: [],
+});
 const scan = (src: string, file = "src/x.ts"): Findings => scanSource(file, src).findings;
 
 const fixtureRoots: string[] = [];
@@ -1024,6 +1231,153 @@ describe("conventions lock — containerCallOutsideSeam", () => {
   });
 });
 
+describe("conventions lock — plainTextToolResult", () => {
+  const TOOL_FILE = "src/tools/builtin/x.ts";
+  const plain = (src: string, file = TOOL_FILE): string[] => texts(scan(src, file), "plainTextToolResult");
+  const tool = (name: string, body: string): string => `export const t = { name: "${name}", async execute(args: { q: string }) {\n${body}\n} };`;
+
+  it("a plain-text return of a tool handler is a finding, keyed by the tool name and the text", () => {
+    const f = scan(tool("t_one", '  if (!args.q) return "Error: q is required";\n  return ("done" as string);'), TOOL_FILE).plainTextToolResult;
+    expect(f).toEqual([
+      { file: TOOL_FILE, line: 2, text: "t_one Error: q is required" },
+      { file: TOOL_FILE, line: 3, text: "t_one done" },
+    ]);
+  });
+
+  it("each handler form: an execute method, an execute property holding a function, a call wrapping one, a top-level function or const", () => {
+    const src = [
+      'function runD() { return "d"; }',
+      'const runE = async () => { return "e"; };',
+      "export const tools = [",
+      '  { name: "a", async execute() { return "a"; } },',
+      '  { name: "b", execute: async function () { return "b"; } },',
+      '  { name: "c", execute: wrap("c", async () => { return "c"; }) },',
+      '  { name: "d", execute: runD },',
+      '  { name: "e", execute: runE },',
+      '  { name: "f", execute: async () => "f" },',
+      "];",
+    ].join("\n");
+    expect(plain(src)).toEqual(["a a", "b b", "c c", "d d", "e e", "f f"]);
+  });
+
+  it("an execute without a string name around it is not a handler: a class method, an object without a name", () => {
+    const src = [
+      'class Registry { async execute() { return "class"; } }',
+      'export const noName = { execute() { return "no name"; } };',
+      'export const computed = { name: toolName, execute() { return "computed name"; } };',
+      'export const named = { name: "n", execute() { return "named"; } };',
+    ].join("\n");
+    expect(plain(src)).toEqual(["n named"]);
+  });
+
+  it("text that exists only at run time is not a finding: JSON, a call, a let, a var, a parameter, a property read", () => {
+    const body = [
+      '  if (args.q === "j") return JSON.stringify({ error: "q is j" });',
+      '  if (args.q === "c") return format(args.q);',
+      '  let s = "let text";',
+      '  var v = "var text";',
+      "  if (args.q === \"l\") return s;",
+      "  if (args.q === \"v\") return v;",
+      "  if (args.q === \"p\") return args.q;",
+      "  return result.text;",
+    ].join("\n");
+    expect(plain(tool("t", body))).toEqual([]);
+  });
+
+  it("a conditional, `||` and `??` count as their branches", () => {
+    const body = [
+      '  if (args.q === "a") return ok ? "done" : JSON.stringify({ error: "failed" });',
+      '  if (args.q === "b") return out || "nothing returned";',
+      '  if (args.q === "c") return out ?? "no output";',
+      '  return n > 0 ? (n > 1 ? "many" : "one") : "none";',
+    ].join("\n");
+    expect(plain(tool("t", body))).toEqual(["t done", "t nothing returned", "t no output", "t many", "t one", "t none"]);
+  });
+
+  it("a template and a `+` chain that starts with text are findings, each substitution shown as ${…}", () => {
+    const body = [
+      "  if (args.q === \"a\") return `Found ${n} rows in ${args.q}.`;",
+      '  if (args.q === "b") return "Found " + n + " rows";',
+      '  return n + " rows";',
+    ].join("\n");
+    expect(plain(tool("t", body))).toEqual(["t Found ${…} rows in ${…}.", "t Found ${…} rows"]);
+  });
+
+  it("an array literal that starts with text and is joined is a finding; an array built before it is joined is not", () => {
+    const body = [
+      '  if (args.q === "a") return ["Header", n, "footer"].join("\\n");',
+      '  if (args.q === "b") return [n, "tail"].join("\\n");',
+      '  const lines = ["Header"];',
+      "  lines.push(String(n));",
+      '  return lines.join("\\n");',
+    ].join("\n");
+    expect(plain(tool("t", body))).toEqual(["t Header ${…} footer"]);
+  });
+
+  it("a const name is followed in the handler and at the top of the file; a let of the handler and a const of another function are not", () => {
+    const src = [
+      'const TOP = "top-level text";',
+      'function other() { const header = "another function\'s text"; const hidden = "hidden text"; return header + hidden; }',
+      "export const tools = [",
+      '  { name: "a", execute() { return TOP; } },',
+      '  { name: "b", execute() { const local = "handler text"; return local; } },',
+      '  { name: "c", execute(args: { q: string }) { let header = compute(args.q); return header; } },',
+      '  { name: "d", execute() { return hidden; } },',
+      '  { name: "e", execute() { let TOP = compute(); return TOP; } },',
+      "];",
+    ].join("\n");
+    expect(plain(src)).toEqual(["a top-level text", "b handler text"]);
+  });
+
+  it("returns of a function nested in the handler are not findings; the handler's own returns are", () => {
+    const body = [
+      '  const names = items.map((i) => { return "mapped"; });',
+      '  function inner() { return "inner"; }',
+      '  rows.forEach(function () { return "callback"; });',
+      '  return "outer";',
+    ].join("\n");
+    expect(plain(tool("t", body))).toEqual(["t outer"]);
+  });
+
+  it("a file outside src/tools/ is not scanned for the rule", () => {
+    const src = tool("t", '  return "Error: plain";');
+    expect(plain(src, "src/lib/x.ts")).toEqual([]);
+    expect(plain(src, "src/tools/x.ts")).toEqual(["t Error: plain"]);
+  });
+
+  it("the key is the tool name and the first 60 characters of the normalised text; texts equal in them share a key", () => {
+    const head = "Nothing was found for this query in any of the indexed sources";
+    expect(Array.from(head).length).toBeGreaterThan(60);
+    const body = `  if (args.q) return \`${head}, try again\`;\n  return "${head}\\n   and more";`;
+    const key = `t ${Array.from(head).slice(0, 60).join("").trim()}`;
+    expect(plain(tool("t", body))).toEqual([key, key]);
+    expect(plain(tool("t", '  return "two   spaces\\n and a line break";'))).toEqual(["t two spaces and a line break"]);
+  });
+
+  it("a moved line keeps the key; a changed text changes it", () => {
+    const src = tool("t", '  return "nothing to do";');
+    const moved = scan("\n\n\n" + src, TOOL_FILE).plainTextToolResult;
+    expect(moved.map((f) => f.text)).toEqual(plain(src));
+    expect(moved[0].line).toBe(5);
+    expect(plain(tool("t", '  return "nothing to do now";'))).not.toEqual(plain(src));
+  });
+
+  it("against the list: an allowed return gives no difference; a second equal return is NEW; a removed one leaves its entry STALE", () => {
+    const entry: Entry = { file: TOOL_FILE, text: "t nothing to do", reason: "nothing to do is a result, not a failure" };
+    const list: Lock = { ...emptyLock(), plainTextToolResult: [entry] };
+    const one = scan(tool("t", '  return "nothing to do";'), TOOL_FILE);
+    expect(compareLock(one, list)).toEqual([]);
+    const two = scan(tool("t", '  if (args.q) return "nothing to do";\n  return "nothing to do";'), TOOL_FILE);
+    expect(compareLock(two, list)).toEqual([
+      `NEW plainTextToolResult ${TOOL_FILE}:3 t nothing to do — a tool failure is returned as JSON, not as plain text: return JSON.stringify({ error: <words> }) with error as the first key; an exception on purpose needs an entry in src/lib/conventions.lock.json with its reason`,
+    ]);
+    const none = scan(tool("t", '  return JSON.stringify({ error: "nothing to do" });'), TOOL_FILE);
+    expect(compareLock(none, list)).toEqual([
+      `STALE plainTextToolResult ${TOOL_FILE} t nothing to do — the exception matches nothing any more: delete the entry in the same commit`,
+    ]);
+  });
+});
+
 describe("conventions lock — the normalised text that keys an entry", () => {
   it("whitespace, line breaks, a trailing comma and bracket spacing give the same key; a changed argument does not", () => {
     const key = 'f("x", [1, 2], {k: v})';
@@ -1036,7 +1390,7 @@ describe("conventions lock — the normalised text that keys an entry", () => {
 
 describe("conventions lock — the allow-list comparison", () => {
   const finding = (file: string, text: string, line = 1): Finding => ({ file, line, text });
-  const lockOf = (rawCron: Entry[]): Lock => ({ rawCron, secondDatabaseHandle: [], columnChangeOutsideMigrations: [], containerCallOutsideSeam: [] });
+  const lockOf = (rawCron: Entry[]): Lock => ({ ...emptyLock(), rawCron });
   const found = (rawCron: Finding[]): Findings => ({ ...empty(), rawCron });
   const entry = (file: string, text: string): Entry => ({ file, text, reason: "pending: to be moved to the scheduling wrapper" });
 
@@ -1059,6 +1413,9 @@ describe("conventions lock — the allow-list comparison", () => {
       " — a column change outside the numbered list runs on every boot and is not counted in the schema version: append a numbered entry",
     );
     expect(one("containerCallOutsideSeam")).toContain(" — the seam picks the sandbox backend and applies its guards: start containers through spawnSandbox()");
+    expect(one("plainTextToolResult")).toContain(
+      " — a tool failure is returned as JSON, not as plain text: return JSON.stringify({ error: <words> }) with error as the first key;",
+    );
   });
 
   it("an entry that matches nothing is STALE", () => {
@@ -1099,10 +1456,11 @@ describe("conventions lock — the production tree equals the allow-list", () =>
     expect(asOtherFile).toBeGreaterThan(inList);
   });
 
-  it("the allow-list is well-formed: the four rules, sorted entries, a reason each, existing production files", () => {
+  it("the allow-list is well-formed: the five rules, sorted entries, a reason each, existing production files", () => {
     const l = lock();
     expect(Object.keys(l)).toEqual([...RULES]);
     const files = new Set(tree.files);
+    expect(l.plainTextToolResult.filter((e) => !e.file.startsWith(TOOLS_DIR))).toEqual([]);
     for (const rule of RULES) {
       const order = l[rule].map((e) => `${e.file}\u0000${e.text}`);
       expect(order, rule).toEqual([...order].sort());

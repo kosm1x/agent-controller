@@ -230,5 +230,342 @@
       "text": "execFileAsync(\"docker\", [\"ps\", \"--format\", \"{{.Names}}\\t{{.Status}}\", \"--no-trunc\"])",
       "reason": "read-only container listing for the operator status report; it starts none"
     }
+  ],
+  "plainTextToolResult": [
+    {
+      "file": "src/tools/builtin/alpha.ts",
+      "text": "alpha_explain alpha_explain: no completed runs found. Invoke alpha_run fir",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/alpha.ts",
+      "text": "alpha_latest alpha_latest: no completed runs found. Invoke alpha_run to p",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/alpha.ts",
+      "text": "alpha_run ${…} persisted: ${…} weight rows, ${…} isq rows",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/backtest.ts",
+      "text": "backtest_explain backtest_explain: run not found (no runs exist yet).",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/backtest.ts",
+      "text": "backtest_latest backtest_latest: no runs found${…}.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/code-search.ts",
+      "text": "code_search No symbols indexed for \"${…}\".",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/code-search.ts",
+      "text": "code_search 🔍 No matches for \"${…}\"${…}.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/diagram-generate.ts",
+      "text": "diagram_generate diagram_generate (graphviz source): ${…}",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/diagram-generate.ts",
+      "text": "diagram_generate diagram_generate (svg_html source): ${…}",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/diagram-generate.ts",
+      "text": "diagram_generate diagram_generate: ${…} via graphviz output: ${…} bytes: ${…}",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/diagram-generate.ts",
+      "text": "diagram_generate diagram_generate: ${…} via svg_html output: ${…} bytes: ${…}",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/file-convert.ts",
+      "text": "file_convert file_convert: ${…} → ${…} output: ${…} bytes: ${…} dur_ms: $",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/git.ts",
+      "text": "gh_repo_create ${…} Remote 'origin' configured in ${…}. Next: git_push with",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/git.ts",
+      "text": "gh_repo_create ${…} The repository was created ${…}.",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/git.ts",
+      "text": "git_commit Nothing staged to commit. Did you specify the right files?",
+      "reason": "stays plain text until the failure readers treat it alike"
+    },
+    {
+      "file": "src/tools/builtin/git.ts",
+      "text": "git_diff No changes.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/git.ts",
+      "text": "git_push Already up-to-date — no new commits to push.",
+      "reason": "nothing to do is a result, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/git.ts",
+      "text": "git_push Pushed ${…} to origin.",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/git.ts",
+      "text": "git_push WARNING: Nothing was pushed — there are uncommitted changes",
+      "reason": "stays plain text until the failure readers treat it alike"
+    },
+    {
+      "file": "src/tools/builtin/git.ts",
+      "text": "git_status Branch: ${…} ${…}",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/git.ts",
+      "text": "git_status On branch ${…}. Working tree clean.",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/google-docs.ts",
+      "text": "gsheets_read 📊 Sheet: ${…} No data found.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/google-gmail.ts",
+      "text": "gmail_search 📧 \"${…}\" — 0 results",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/infographic-generate.ts",
+      "text": "infographic_generate infographic_generate (dsl source, mode=${…}): ${…}",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/infographic-generate.ts",
+      "text": "infographic_generate infographic_generate (options source, mode=${…}): ${…}",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/infographic-generate.ts",
+      "text": "infographic_generate infographic_generate: ${…}-mode, format=${…} output: ${…} by",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/intel-alert-history.ts",
+      "text": "intel_alert_history No ${…} alerts in the last ${…}h.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/intel-baseline.ts",
+      "text": "intel_baseline No baselines available for ${…}/${…}. Baselines require at l",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/intel-query.ts",
+      "text": "intel_query No signals found in the last ${…}h${…}${…}.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/jarvis-directives.ts",
+      "text": "jarvis_apply_proposal ✅ **Propuesta aplicada:** ${…} Target: ${…} (${…}) Decision",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/jarvis-directives.ts",
+      "text": "jarvis_propose_directive ⏳ Cooldown active. Last proposal was ${…}h ago. Next allowed",
+      "reason": "stays plain text until the failure readers treat it alike"
+    },
+    {
+      "file": "src/tools/builtin/jarvis-directives.ts",
+      "text": "jarvis_propose_directive ❌ Could not verify the proposal cooldown — proposal not crea",
+      "reason": "stays plain text until the failure readers treat it alike"
+    },
+    {
+      "file": "src/tools/builtin/jarvis-directives.ts",
+      "text": "jarvis_propose_directive ❌ Could not verify the proposal cooldown — proposal not crea",
+      "reason": "stays plain text until the failure readers treat it alike"
+    },
+    {
+      "file": "src/tools/builtin/jarvis-directives.ts",
+      "text": "jarvis_propose_directive 📝 **Propuesta creada:** ${…} Archivo: ${…} Target: ${…} (${…",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/jarvis-files.ts",
+      "text": "jarvis_file_list 📂 No files found.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/jarvis-files.ts",
+      "text": "jarvis_file_search No files found matching \"${…}\" in the Knowledge Base.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/market-ritual.ts",
+      "text": "alert_budget_status alert_budget_status: date=${…} ritual=${…} consumed=${…}/${…",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/market-ritual.ts",
+      "text": "alert_budget_status alert_budget_status: date=${…} ritual=${…} consumed=0/${…} r",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/market.ts",
+      "text": "market_indicators ${…}: no data available for ${…}.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/market.ts",
+      "text": "market_scan market_scan: no watchlist symbols match tags ${…}.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/market.ts",
+      "text": "market_scan market_scan: watchlist is empty. Add symbols with market_wat",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/market.ts",
+      "text": "market_signals market_signals: no symbol provided and watchlist is empty.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/market.ts",
+      "text": "market_signals market_signals: no watchlist entries match tags ${…}.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/market.ts",
+      "text": "market_watchlist_add ${…} seed: ${…} (bars ${…} → ${…}). Retry with market_watchl",
+      "reason": "a result that reports its own partial outcome"
+    },
+    {
+      "file": "src/tools/builtin/market.ts",
+      "text": "market_watchlist_add ${…} seed: ${…} weekly bars already present — skipped",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/market.ts",
+      "text": "market_watchlist_add ${…} seed: +${…} weekly bars, +${…} signals",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/market.ts",
+      "text": "market_watchlist_add OK: added ${…} (${…})${…}${…}",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/market.ts",
+      "text": "market_watchlist_list Watchlist vacía.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/market.ts",
+      "text": "market_watchlist_remove ${…} was not active in the watchlist.",
+      "reason": "nothing to do is a result, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/market.ts",
+      "text": "market_watchlist_remove OK: removed ${…} from watchlist",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/market.ts",
+      "text": "market_watchlist_reseed market_watchlist_reseed: ${…}",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/memory.ts",
+      "text": "memory_kg_query Knowledge graph for \"${…}\" (${…} facts): ${…}",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/memory.ts",
+      "text": "memory_kg_query No knowledge graph entries found for \"${…}\".",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/memory.ts",
+      "text": "memory_reflect No memories available for reflection on this topic.",
+      "reason": "an empty result, and the same text when the backend cannot answer"
+    },
+    {
+      "file": "src/tools/builtin/memory.ts",
+      "text": "memory_search No relevant memories found.",
+      "reason": "an empty result, and the same text when the backend cannot answer"
+    },
+    {
+      "file": "src/tools/builtin/memory.ts",
+      "text": "memory_store Memory stored in ${…} bank.",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/paper-trading.ts",
+      "text": "paper_rebalance paper_rebalance: alpha run ${…} has no active weights (all s",
+      "reason": "nothing to do is a result, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/pm-alpha.ts",
+      "text": "pm_alpha_latest pm_alpha_latest: no runs found. Invoke `pm_alpha_run` first.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/pm-paper-trading.ts",
+      "text": "pm_paper_rebalance pm_paper_rebalance: pm_alpha run ${…} has no active weights.",
+      "reason": "nothing to do is a result, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/projects.ts",
+      "text": "project_list 📁 No projects found.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/user-facts.ts",
+      "text": "user_fact_delete Fact deleted: [${…}] ${…}",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/user-facts.ts",
+      "text": "user_fact_delete No fact found: [${…}] ${…}",
+      "reason": "nothing to do is a result, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/user-facts.ts",
+      "text": "user_fact_list No facts stored in category \"${…}\".",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/user-facts.ts",
+      "text": "user_fact_list No user facts stored yet.",
+      "reason": "a read that found nothing is a result"
+    },
+    {
+      "file": "src/tools/builtin/user-facts.ts",
+      "text": "user_fact_set Fact stored: [${…}] ${…} = ${…}. This will be included in al",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/vps-management.ts",
+      "text": "vps_logs 📋 **${…}** (${…} lines${…}) ${…}",
+      "reason": "a success text, not a failure"
+    },
+    {
+      "file": "src/tools/builtin/vps-management.ts",
+      "text": "vps_logs 📋 No log entries found for ${…}${…}.",
+      "reason": "a read that found nothing is a result"
+    }
   ]
 }
