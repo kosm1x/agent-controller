@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-24 18:31 UTC — the batch's paid evaluation run PASSED (2026-11-24: 76.68 against 78.63, tolerance 2); one more piece COMMITTED `718db01a` (queue 4it; NOT deployed), ordered by the operator before the deploy: a turn from a messaging group or from a mailbox that is not owner-only neither reads nor feeds the owner's memory. Review: two rounds, pass with warnings, no critical finding. Next: the operator's deploy; then the two ruled batch-3 leftover pieces (error texts; the write record).**
+
 **Status 2026-11-24 06:15 UTC — batch 10 piece 19 COMMITTED `54eda1cc` (queue 4is; tests only, nothing to deploy): the conventions lock gains a fifth rule, a reviewed list of the 67 static plain-text results of tool handlers, each with a reason; 13 new cases. Review: pass with warnings, no critical finding; a fold of reasons and comment texts. The batch's build pieces are done; next: the other session's slot on the operator's word, then the operator's one evaluation run.**
 
 **Status 2026-11-24 05:38 UTC — batch 10 piece 18 COMMITTED `4d29b169` (queue 4ir; not deployed, ships with the batch): one line of the system prompt's site section says what the settings tool updates (title and tagline; it reads the timezone too); the whole section pinned exactly by one new case. Review: pass with warnings, none about the code. Next: the conventions lock, the last build piece of the batch.**
