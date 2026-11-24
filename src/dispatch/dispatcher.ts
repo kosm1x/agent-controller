@@ -126,9 +126,10 @@ export interface TaskSubmission {
    *  wall-clock; the "loop" tag exempts the stuck-task kill. */
   unlimited?: boolean;
   /**
-   * Request from an external agent (jarvis-pull). Full KB injection even with
-   * an all-read-only toolset; NO JME recall, NO operator user-facts/essentials;
-   * tool rounds capped at maxRounds.
+   * Request from an external agent (jarvis-pull) or a router non-owner chat
+   * turn. The fast runner filters its KB rows through the external KB
+   * policy; NO JME recall, NO operator user-facts/essentials; tool rounds
+   * capped at maxRounds.
    */
   external?: { maxRounds: number };
   /** @internal Set by dispatcher on auto-retry to prevent infinite retry loops. */

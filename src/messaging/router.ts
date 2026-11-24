@@ -8,11 +8,15 @@
 
 import { randomBytes } from "crypto";
 import { submitTask, cancelTask } from "../dispatch/dispatcher.js";
+import type { TaskSubmission } from "../dispatch/dispatcher.js";
 import { recordCommunityGateVerdict } from "../observability/prometheus.js";
 import { toolRegistry } from "../tools/registry.js";
 import { executeGatedCapability } from "../lib/v8-3/trigger.js";
 import { withAttributedTask } from "../projects/capabilities.js";
-import { INBOUND_STAGE_DEADLINE_MS } from "../config/constants.js";
+import {
+  INBOUND_STAGE_DEADLINE_MS,
+  MAX_ROUNDS_DEFAULT,
+} from "../config/constants.js";
 import { withTimeout } from "../lib/with-timeout.js";
 import { getDatabase } from "../db/index.js";
 import {
@@ -460,7 +464,8 @@ interface ScopeRerunSpec {
   /** This turn's own classification — what the sticky prior is built from. */
   baseGroups: string[];
   isCodingTask: boolean;
-  /** The channel's restricted tool list applied: a re-run never widens it. */
+  /** The restricted tool list applied (a restricted channel or a non-owner
+   *  turn): a re-run never widens it. */
   restricted: boolean;
 }
 
@@ -603,13 +608,13 @@ function isEmailChannel(channel: string): boolean {
 }
 
 /**
- * Whether a channel is a trusted OWNER channel (operator-only), as opposed to
- * a public-facing community-manager mailbox. Gate for operator-private prompt
- * content (the self-defining cohort — see `cohortSection`).
+ * Whether a CHANNEL is an owner channel, as opposed to a mailbox that is not
+ * owner-only. A channel-level test: a group message on an owner channel is
+ * still a non-owner turn (`isNonOwnerTurn`).
  *
- * Fail-safe by construction — owner status must be POSITIVELY established:
- *   - non-email channels (WhatsApp, Telegram) → owner (operator-only by design)
- *   - email with `mode === "owner-only"`      → owner
+ * Owner status must be POSITIVELY established:
+ *   - non-email channels (WhatsApp, Telegram) → owner channel
+ *   - email with `mode === "owner-only"`      → owner channel
  *   - email with `mode === "community-manager"` → NOT owner (public)
  *   - email with `mode` undefined/ambiguous   → NOT owner (default-deny)
  *
@@ -621,6 +626,42 @@ export function isOwnerChannel(
   mode: EmailChannelMode | undefined,
 ): boolean {
   return !isEmailChannel(channel) || mode === "owner-only";
+}
+
+/**
+ * A non-owner turn: a group message (its flag or its address form), or any
+ * turn on a channel that is not an owner channel. No sender test: a group
+ * message counts whoever wrote it. The router uses it to decide what such a
+ * turn is given and what it writes.
+ */
+function isNonOwnerTurn(
+  msg: IncomingMessage,
+  mode: EmailChannelMode | undefined,
+): boolean {
+  return (
+    !!msg.metadata?.isGroup ||
+    msg.from.endsWith("@g.us") ||
+    !isOwnerChannel(msg.channel, mode)
+  );
+}
+
+/**
+ * Runner fields of a chat submit. A non-owner turn is pinned to the fast
+ * runner with the external flag, never unlimited; its round cap stays the
+ * fast runner's default (the restricted list holds no browser or coding tool).
+ */
+function submitRunnerFields(
+  nonOwner: boolean,
+  loop: boolean,
+): Pick<TaskSubmission, "agentType" | "unlimited" | "external"> {
+  if (nonOwner) {
+    return {
+      agentType: "fast",
+      unlimited: false,
+      external: { maxRounds: MAX_ROUNDS_DEFAULT },
+    };
+  }
+  return { agentType: loop ? "fast" : "auto", unlimited: loop };
 }
 
 function pushToThread(
@@ -905,15 +946,19 @@ export const THREAD_HYDRATION_SQL = `SELECT content,
          LIMIT ?`;
 
 /**
- * On first access per channel, hydrate the thread buffer from SQLite conversations.
- * This ensures conversation continuity survives process restarts.
+ * On first access per thread key, hydrate the thread buffer from SQLite
+ * conversations, so continuity survives process restarts. A group key is
+ * marked and never loaded.
  */
 function hydrateThreadIfNeeded(tk: string): void {
   if (hydratedChannels.has(tk)) return;
   hydratedChannels.add(tk);
+  if (tk.includes("@g.us")) {
+    conversationThreads.set(tk, []);
+    return;
+  }
 
   // Extract the channel tag used to tag conversations for this thread.
-  // Compound keys: "whatsapp:group@g.us:sender@s.whatsapp.net" → "whatsapp"
   // Simple keys: "telegram" → "telegram"
   // Email is the exception: each mailbox is its own `email:<id>` channel and
   // conversations are tagged with that full name, so the hydration query must
@@ -1218,7 +1263,7 @@ export class MessageRouter {
     msg: IncomingMessage,
     tk: string,
   ): Promise<boolean> {
-    if (!isOwnerChannel(msg.channel, this.channels.get(msg.channel)?.mode)) {
+    if (isNonOwnerTurn(msg, this.channels.get(msg.channel)?.mode)) {
       return false;
     }
     const deps = isV82ProducerEnabled() ? { reRunJudgment } : {};
@@ -1310,16 +1355,16 @@ export class MessageRouter {
 
   /**
    * Background-agent spawn (BACKGROUND_AGENT_RE). Returns true whenever the
-   * trigger matched on an owner channel (spawned, capped, empty task, or
-   * errored — all handled).
+   * trigger matched on a turn that is not a non-owner turn (spawned, capped,
+   * empty task, or errored — all handled).
    */
   private async interceptBackgroundAgentSpawn(
     msg: IncomingMessage,
     tk: string,
   ): Promise<boolean> {
-    // A restricted channel does not start a background agent: the message
-    // continues as a normal turn with the channel's restricted tool list.
-    if (!isOwnerChannel(msg.channel, this.channels.get(msg.channel)?.mode)) {
+    // A non-owner turn does not start a background agent: the message
+    // continues as a normal turn with the restricted tool list.
+    if (isNonOwnerTurn(msg, this.channels.get(msg.channel)?.mode)) {
       return false;
     }
     // Background agents: "lanza un agente", "investiga en background"
@@ -1464,6 +1509,7 @@ export class MessageRouter {
 
   /** Background-agent list ("mis agentes"/"agentes"/"agents"). Returns true when handled (stop). */
   private interceptAgentList(msg: IncomingMessage): boolean {
+    if (isNonOwnerTurn(msg, this.channels.get(msg.channel)?.mode)) return false;
     // Background agent management commands
     const agentMgmtText = msg.text.trim().toLowerCase();
     if (
@@ -1517,6 +1563,7 @@ export class MessageRouter {
 
   /** Background-agent cancel (/^cancela\s+agente/). Returns true when handled (stop). */
   private interceptAgentCancel(msg: IncomingMessage): boolean {
+    if (isNonOwnerTurn(msg, this.channels.get(msg.channel)?.mode)) return false;
     const agentMgmtText = msg.text.trim().toLowerCase();
     if (/^cancela\s+agente/i.test(agentMgmtText)) {
       try {
@@ -1563,6 +1610,7 @@ export class MessageRouter {
     const text = msg.text.replace(/^\[Grupo:.*\]\s*\n?/i, "").trim();
     if (!RITUALES_RE.test(text)) return false;
     if (this.operatorThreadKey(msg, tk) === undefined) return false;
+    if (isNonOwnerTurn(msg, this.channels.get(msg.channel)?.mode)) return false;
     let reply: string;
     try {
       reply = handleRitualesCommand(text) ?? "";
@@ -1642,19 +1690,21 @@ export class MessageRouter {
       // R3 audit C2: persist the stop exchange — pushToThread is in-memory
       // only, so without this retain the `stops_honoured` metric (and any
       // later review of stop behaviour) reads 0 forever. Mirrors the
-      // fast-path retain above.
-      try {
-        getMemoryService()
-          .retain(`User: ${msg.text}\nJarvis: ${reply}`, {
-            bank: "mc-jarvis",
-            tags: [msg.channel, "conversation", "hard-stop"],
-            async: true,
-            trustTier: 2,
-            source: "router",
-          })
-          .catch(() => {});
-      } catch {
-        /* non-fatal */
+      // fast-path retain above. A non-owner turn's stop exchange is not stored.
+      if (!isNonOwnerTurn(msg, this.channels.get(msg.channel)?.mode)) {
+        try {
+          getMemoryService()
+            .retain(`User: ${msg.text}\nJarvis: ${reply}`, {
+              bank: "mc-jarvis",
+              tags: [msg.channel, "conversation", "hard-stop"],
+              async: true,
+              trustTier: 2,
+              source: "router",
+            })
+            .catch(() => {});
+        } catch {
+          /* non-fatal */
+        }
       }
       console.log(
         `[hard-stop] channel=${msg.channel} cancelled=${cancelled} text="${text.slice(0, 60)}"`,
@@ -2006,13 +2056,14 @@ export class MessageRouter {
    * only (always falls through). Returns the destructively-consumed
    * feedbackTaskId for submitInboundTask's implicit-feedback block, and
    * `praiseAttributed` (an "excelente" was recorded on some task) for the
-   * pure-feedback ack. With no open window, an operator's "excelente" rates
-   * the task whose reply was the last thing shown in its chat (lastTaskReply)
-   * when that is also the latest outcome on its thread — that id is NOT returned
-   * as feedbackTaskId, so the implicit block can never overwrite it. Same for
-   * a window task that just received an explicit non-neutral signal: a
-   * "No, haz X" that falls through to a task must stay "negative", not be
-   * re-rated implicit_positive by the scope comparison.
+   * pure-feedback ack. With no open window, an operator's "excelente" on an
+   * owner turn rates the task whose reply was the last thing shown in its chat
+   * (lastTaskReply) when that is also the latest outcome on its thread — that
+   * id is NOT returned as feedbackTaskId, so the implicit block can never
+   * overwrite it. Same for a window task that just received an explicit
+   * non-neutral signal: a "No, haz X" that falls through to a task must stay
+   * "negative", not be re-rated implicit_positive by the scope comparison.
+   * A non-owner turn returns the three empty values and records nothing.
    */
   private recordFeedbackWindowSignal(
     msg: IncomingMessage,
@@ -2022,6 +2073,14 @@ export class MessageRouter {
     praiseAttributed: boolean;
     broadcastTaskId: string | null;
   } {
+    // A non-owner turn rates no task and closes no feedback window.
+    if (isNonOwnerTurn(msg, this.channels.get(msg.channel)?.mode)) {
+      return {
+        feedbackTaskId: null,
+        praiseAttributed: false,
+        broadcastTaskId: null,
+      };
+    }
     // V8.1 gate: a schedule/ritual broadcast shown last wins over an open chat
     // window for "excelente" / its negated form. The window is NOT consumed.
     const broadcastSignal = detectFeedbackSignal(
@@ -2109,7 +2168,7 @@ export class MessageRouter {
     console.log(`[router] ${signal} attributed to broadcast task ${taskId}`);
   }
 
-  /** Pure feedback ("excelente", "gracias", "no") — ack without spawning a task. Returns true when intercepted (stop). */
+  /** Pure feedback (praise with "excelente", or an exclusively negative "no") — ack without spawning a task. Returns true when intercepted (stop). */
   private interceptPureFeedback(
     msg: IncomingMessage,
     tk: string,
@@ -2118,21 +2177,25 @@ export class MessageRouter {
   ): boolean {
     // The ack of a broadcast rating keeps that broadcast the rateable one.
     const ackOwnTaskId = broadcastTaskId ?? undefined;
-    // Pure feedback ("excelente", "gracias", "perfecto", "no") → ack and skip task creation.
-    // Runs UNCONDITIONALLY — even without a feedback window, these messages
-    // should never spawn a 21K-token task. Record the signal so Jarvis knows.
+    // Pure feedback (praise with "excelente", or an exclusively negative "no")
+    // → ack and skip task creation. Runs with or without an open feedback window.
     if (isFeedbackMessage(msg.text)) {
       const signal = detectFeedbackSignal(msg.text, previousMessages.get(tk));
       // Note: recordTaskFeedback already called in feedbackWindow block above
       // when feedbackTaskId is available — no duplicate recording needed here.
       // Persist positive feedback to memory so Jarvis learns what works
       if (signal === "positive") {
+        // A non-owner turn writes no trace; with an operator thread key its
+        // ack says that ratings are not recorded in groups.
+        const nonOwner = isNonOwnerTurn(
+          msg,
+          this.channels.get(msg.channel)?.mode,
+        );
         // Queue 4bt P4: read the marker BEFORE the ack — the ack's send
         // (noteSend) clears it, so a later read always reports no marker.
         const threadId = this.operatorThreadKey(msg, tk);
-        if (!praiseAttributed && threadId !== undefined) {
-          // Only a marker for THIS thread counts (a group's last reply may
-          // belong to another sender's thread).
+        if (!praiseAttributed && threadId !== undefined && !nonOwner) {
+          // Only a marker for THIS thread counts.
           const raw = this.lastTaskReply.get(`${msg.channel}\u0000${msg.from}`);
           const marker = raw !== undefined && raw.tk === threadId ? raw : undefined;
           const uptimeS = Math.round(process.uptime());
@@ -2150,26 +2213,34 @@ export class MessageRouter {
           msg.from,
           praiseAttributed || this.operatorThreadKey(msg, tk) === undefined
             ? "👍"
-            : "👍 (no encontré una respuesta reciente a la cual asignarlo)",
+            : nonOwner
+              ? "👍 (las calificaciones no se registran en grupos)"
+              : "👍 (no encontré una respuesta reciente a la cual asignarlo)",
           ackOwnTaskId,
         );
-        getMemoryService()
-          .retain(
-            `User: ${msg.text}\nJarvis: [positive feedback acknowledged]`,
-            {
-              bank: "mc-jarvis",
-              tags: [msg.channel, "feedback", "positive"],
-              async: true,
-              trustTier: 2,
-              source: "router",
-            },
-          )
-          .catch(() => {});
+        // A non-owner turn's feedback is not stored.
+        if (!nonOwner) {
+          getMemoryService()
+            .retain(
+              `User: ${msg.text}\nJarvis: [positive feedback acknowledged]`,
+              {
+                bank: "mc-jarvis",
+                tags: [msg.channel, "feedback", "positive"],
+                async: true,
+                trustTier: 2,
+                source: "router",
+              },
+            )
+            .catch(() => {});
+        }
       } else if (signal === "negative") {
+        // A non-owner turn's word is not kept, so its ack does not say it is.
         this.sendToChannel(
           msg.channel,
           msg.from,
-          "Entendido, lo tendré en cuenta. ¿Puedes darme más detalle?",
+          isNonOwnerTurn(msg, this.channels.get(msg.channel)?.mode)
+            ? "Entendido. ¿Puedes darme más detalle?"
+            : "Entendido, lo tendré en cuenta. ¿Puedes darme más detalle?",
           ackOwnTaskId,
         );
       }
@@ -2210,9 +2281,14 @@ export class MessageRouter {
         // No tools ran here: a mailbox password can only come from the
         // thread, so the user's message is the only proof (password-gate.ts).
         const out = this.withholdFastPathPasswords(filtered.text, msg.text);
+        // A non-owner turn's exchange is neither day-logged nor retained.
+        const nonOwner = isNonOwnerTurn(
+          msg,
+          this.channels.get(msg.channel)?.mode,
+        );
 
         this.sendToChannel(msg.channel, msg.from, out);
-        appendDayLog("JARVIS", out);
+        if (!nonOwner) appendDayLog("JARVIS", out);
 
         // Store rule before the cut (store-withhold.ts): no fragment survives.
         const cappedResponse = capThreadReply(
@@ -2221,19 +2297,21 @@ export class MessageRouter {
         );
         pushToThread(tk, `User: ${msg.text}\nJarvis: ${cappedResponse}`);
 
-        try {
-          const exchange = `User: ${msg.text}\nJarvis: ${out}`;
-          getMemoryService()
-            .retain(exchange, {
-              bank: "mc-jarvis",
-              tags: [msg.channel, "conversation", "fast-path"],
-              async: true,
-              trustTier: 2,
-              source: "router",
-            })
-            .catch(() => {});
-        } catch {
-          /* non-fatal */
+        if (!nonOwner) {
+          try {
+            const exchange = `User: ${msg.text}\nJarvis: ${out}`;
+            getMemoryService()
+              .retain(exchange, {
+                bank: "mc-jarvis",
+                tags: [msg.channel, "conversation", "fast-path"],
+                async: true,
+                trustTier: 2,
+                source: "router",
+              })
+              .catch(() => {});
+          } catch {
+            /* non-fatal */
+          }
         }
 
         return true;
@@ -2258,6 +2336,9 @@ export class MessageRouter {
     // Phase 4.1/Phase 3 hoists: the channel adapter and the env-flag reads
     // were each fetched/built multiple times across this tail — resolve once.
     const chan = this.channels.get(msg.channel);
+    const nonOwner = isNonOwnerTurn(msg, chan?.mode);
+    // A non-owner turn on an owner channel is a group message.
+    const groupTurn = nonOwner && isOwnerChannel(msg.channel, chan?.mode);
     const envFlags = {
       hasGoogle: !!process.env.GOOGLE_CLIENT_ID,
       hasWordpress: !!process.env.WP_SITES,
@@ -2329,17 +2410,21 @@ export class MessageRouter {
     // timeout) on top of enrichment on EVERY non-fast-path message.
     // Each is bounded (INBOUND_STAGE_DEADLINE_MS) so a hang cannot block task
     // creation: null = the regex fallback, as on a classifier failure.
+    // A non-owner turn makes no enrichment call: its result is the empty one.
+    const noEnrichment: Awaited<ReturnType<typeof enrichContext>> = {
+      contextBlock: "",
+      toolHints: [],
+      matchedSkillIds: [],
+      confidence: "low",
+    };
     const [enrichment, semanticGroups] = await Promise.all([
-      boundedInboundStage(
-        "enrichment",
-        enrichContext(msg.text, msg.channel),
-        {
-          contextBlock: "",
-          toolHints: [],
-          matchedSkillIds: [],
-          confidence: "low",
-        },
-      ),
+      nonOwner
+        ? Promise.resolve(noEnrichment)
+        : boundedInboundStage(
+            "enrichment",
+            enrichContext(msg.text, msg.channel),
+            noEnrichment,
+          ),
       boundedInboundStage(
         "scope classifier",
         classifyScopeGroups(
@@ -2351,18 +2436,22 @@ export class MessageRouter {
       ),
     ]);
 
-    // User profile facts + projects — always injected so the LLM never forgets
-    // context. Profile + projects never read the message (stable, cached
-    // half); only the relevance-scored facts depend on it (variable half).
+    // User profile facts + projects — injected on every turn that is not a
+    // non-owner turn. Profile + projects never read the message (stable,
+    // cached half); only the relevance-scored facts depend on it (variable
+    // half).
     let stableProfileBlock = "";
     let userFactsBlock = "";
     // Built before the task exists: the drop is traced after submitTask.
     let droppedProfileBlock: PromptBlock | null = null;
     let profileBuilt = false;
     try {
-      stableProfileBlock = formatStableUserFactsBlock() + formatProjectsBlock();
-      profileBuilt = true;
-      userFactsBlock = formatRelevantUserFactsBlock(msg.text);
+      if (!nonOwner) {
+        stableProfileBlock =
+          formatStableUserFactsBlock() + formatProjectsBlock();
+        profileBuilt = true;
+        userFactsBlock = formatRelevantUserFactsBlock(msg.text);
+      }
     } catch (err) {
       // Non-fatal — DB may not have the tables yet
       droppedProfileBlock = profileBuilt ? "relevant_facts" : "profile";
@@ -2383,13 +2472,13 @@ export class MessageRouter {
       priorWithinTtl ? previousScopeGroups.get(tk) : undefined,
     );
 
-    // Channel-policy override (FAIL-SAFE). A public-facing email channel must
-    // not let stranger-controlled text decide which tools Jarvis can touch.
-    // Pure helper in scope.ts so the contract is testable end-to-end. Default-
-    // deny: any email channel whose adapter is NOT explicitly owner-only
-    // (undefined adapter, undefined mode, or community-manager) gets the
-    // restricted allowlist. Owner-only mailboxes and non-email channels pass
-    // through unchanged.
+    // Channel-policy override (FAIL-SAFE). A public-facing email channel or a
+    // group must not let other people's text decide which tools Jarvis can
+    // touch. Pure helper in scope.ts so the contract is testable end-to-end.
+    // Default-deny: any email channel whose adapter is NOT explicitly
+    // owner-only (undefined adapter, undefined mode, or community-manager)
+    // and any non-owner turn get the restricted allowlist. Every other turn
+    // passes through unchanged.
     const adapter = chan;
     const override = applyCommunityChannelScopeOverride({
       isEmail: isEmailChannel(msg.channel),
@@ -2397,14 +2486,23 @@ export class MessageRouter {
       baseTools: tools,
       baseActiveGroups: activeGroups,
       envFlags,
+      nonOwner,
     });
     tools = override.tools;
     activeGroups = override.activeGroups;
-    if (override.restricted) {
+    const restricted = override.restricted || nonOwner;
+    if (restricted) {
       const modeLabel = adapter?.mode ?? "<undefined>";
       console.log(
-        `[router] Channel ${msg.channel} (mode=${modeLabel}) → restricted community scope (${tools.length} tools)`,
+        `[router] Channel ${msg.channel} (mode=${modeLabel}) → restricted scope (${tools.length} tools)`,
       );
+    }
+    // An empty list means "every tool" at the registry: never submitted.
+    if (nonOwner && tools.length === 0) {
+      console.warn(
+        `[router] Channel ${msg.channel}: non-owner turn has an empty restricted tool list — not submitted`,
+      );
+      return;
     }
 
     // Implicit feedback: compare current scope groups with previous message's.
@@ -2476,13 +2574,17 @@ export class MessageRouter {
       // is configured; null elsewhere. The function adds an org-context section
       // to the stable half only when this is non-null.
       spChannel?.personaContent ?? null,
-      // Operator-private cohort grounding is gated on owner-channel trust.
-      isOwnerChannel(msg.channel, spChannel?.mode),
+      // Operator-private cohort grounding: owner turns only.
+      !nonOwner,
+      // A group turn gets the identity without operator addressing.
+      groupTurn,
     );
 
     // Execution pattern memory: inject relevant past lessons. Patterns vary
     // by message + active scope — they belong in the VARIABLE half.
-    const patternBlock = findRelevantPatterns(msg.text, [...activeGroups]);
+    const patternBlock = nonOwner
+      ? ""
+      : findRelevantPatterns(msg.text, [...activeGroups]);
 
     // Task continuity: check for a recent checkpoint ONLY on continuation
     // messages. Checkpoint blocks are per-call by definition — VARIABLE half.
@@ -2494,6 +2596,7 @@ export class MessageRouter {
     // operator feature.
     let checkpointBlock = "";
     if (
+      !nonOwner &&
       CONTINUATION_RE.test(msg.text.trim()) &&
       // R5 audit W2: isOwnerChannel means "not a public email channel" —
       // a WA group member still passed it. operatorThreadKey is the real
@@ -2537,9 +2640,7 @@ export class MessageRouter {
     // first in the next turns"). Owner threads only (R1 audit R3): the
     // FIJADO header is an instruction block, and a community/external
     // sender must not get their pasted URLs elevated into it.
-    const pinsBlock = isOwnerChannel(msg.channel, spChannel?.mode)
-      ? pinnedThreadSection(tk)
-      : "";
+    const pinsBlock = !nonOwner ? pinnedThreadSection(tk) : "";
 
     // Session tail notes (open-work.ts, `MEMORY_OPEN_WORK`): first turn
     // after an idle gap, operator threads only (same predicate as the
@@ -2547,6 +2648,7 @@ export class MessageRouter {
     // inside the idle threshold reads nothing and traces nothing.
     let openWork: OpenWorkTurn | null = null;
     if (
+      !nonOwner &&
       openWorkMode() !== "off" &&
       this.operatorThreadKey(msg, tk) !== undefined
     ) {
@@ -2596,8 +2698,8 @@ export class MessageRouter {
       detectionText: msg.text,
       // `/loop`: pinned to the host fast runner (the only runner with the
       // unlimited path) and flagged; the "loop" tag exempts the stuck kill.
-      agentType: msg.loop ? "fast" : "auto",
-      unlimited: msg.loop === true,
+      // A non-owner turn: fast runner, external flag (submitRunnerFields).
+      ...submitRunnerFields(nonOwner, msg.loop === true),
       tools,
       conversationHistory: historyForRunner,
       tags: [
@@ -2701,7 +2803,8 @@ export class MessageRouter {
             userFactsBlock,
             enrichment.contextBlock,
             spChannel?.personaContent ?? null,
-            isOwnerChannel(msg.channel, spChannel?.mode),
+            !nonOwner,
+            groupTurn,
           );
           return scrubSecrets(
             sp.stable + CACHE_BREAK_MARKER + sp.variable + variableTail,
@@ -2720,7 +2823,7 @@ export class MessageRouter {
         activeGroups: [...activeGroups],
         baseGroups: [...baseGroups],
         isCodingTask,
-        restricted: override.restricted,
+        restricted,
       },
     });
 
@@ -2744,16 +2847,38 @@ export class MessageRouter {
       senderJid,
       this.channels.get(msg.channel)?.mode,
     );
+    const nonOwner = isNonOwnerTurn(msg, this.channels.get(msg.channel)?.mode);
+    // A non-owner turn keyed by the bare name of an owner channel would share
+    // the owner's thread key: it is not submitted.
+    if (
+      nonOwner &&
+      tk === msg.channel &&
+      isOwnerChannel(msg.channel, this.channels.get(msg.channel)?.mode)
+    ) {
+      console.warn(
+        `[router] Channel ${msg.channel}: non-owner turn on the channel's own thread key — not submitted`,
+      );
+      return;
+    }
+    // The first time a non-owner thread key is seen it is marked as loaded,
+    // with an empty thread, so the stored-exchange load skips it.
+    if (nonOwner && !hydratedChannels.has(tk)) {
+      hydratedChannels.add(tk);
+      conversationThreads.set(tk, []);
+    }
 
-    // `/loop <tarea>` (operator only, Telegram/WhatsApp — never email): strip
-    // the prefix and flag the message; submitInboundTask lifts every cap for
-    // this one task. A WhatsApp group message carries a `[Grupo: …]` header —
-    // match past it and keep it (the model reads the sender from it). An
-    // inline `/loop` mid-sentence flags the message without touching the text.
+    // `/loop <tarea>` (operator only, Telegram/WhatsApp — never email, never
+    // a non-owner turn): strip the prefix and flag the message;
+    // submitInboundTask lifts every cap for this one task. An inline `/loop`
+    // mid-sentence flags the message without touching the text.
     if (msg.channel === "telegram" || msg.channel === "whatsapp") {
       const grupo = msg.text.match(LOOP_GROUP_HEADER_RE)?.[0] ?? "";
       const body = msg.text.slice(grupo.length);
-      if (LOOP_RE.test(body) && this.operatorThreadKey(msg, tk) !== undefined) {
+      if (
+        LOOP_RE.test(body) &&
+        this.operatorThreadKey(msg, tk) !== undefined &&
+        !nonOwner
+      ) {
         const rest = body.replace(LOOP_RE, "").trim();
         if (!rest) {
           this.sendToChannel(msg.channel, msg.from, LOOP_USAGE);
@@ -2770,7 +2895,8 @@ export class MessageRouter {
           .split(LOOP_AUDIO_HEADER_RE)[0];
         if (
           LOOP_INLINE_RE.test(typed) &&
-          this.operatorThreadKey(msg, tk) !== undefined
+          this.operatorThreadKey(msg, tk) !== undefined &&
+          !nonOwner
         ) {
           msg.loop = true;
           this.sendToChannel(msg.channel, msg.from, LOOP_INLINE_NOTICE);
@@ -2783,7 +2909,8 @@ export class MessageRouter {
 
     // Day log: record user message (mechanical, no LLM) — after the /loop
     // strip so the work-truth surface never stores the prefix.
-    appendDayLog("USER", msg.text);
+    // A non-owner turn's text is not logged.
+    if (!nonOwner) appendDayLog("USER", msg.text);
 
     if (this.interceptContextClear(msg, tk)) return;
     if (await this.interceptBackgroundAgentSpawn(msg, tk)) return;
@@ -2801,7 +2928,7 @@ export class MessageRouter {
     // Only a turn that reaches the full pipeline counts as channel activity:
     // an intercepted one (a greeting on the fast path) must not use up the gap.
     const lastChannelActivityMs = this.channelActivityMs.get(msg.channel);
-    this.channelActivityMs.set(msg.channel, Date.now());
+    if (!nonOwner) this.channelActivityMs.set(msg.channel, Date.now());
     await this.submitInboundTask(msg, tk, feedbackTaskId, lastChannelActivityMs);
   }
 
@@ -3035,13 +3162,14 @@ export class MessageRouter {
     // fresh status from DB and short-circuit if cancelled — prevents
     // duplicate user-visible messages.
     //
-    // Round-2 sweep audit C1 fix: still call trackTaskOutcome on the
-    // short-circuit path so telemetry doesn't go missing when status was
+    // Still call trackTaskOutcome on the short-circuit path (not for a
+    // non-owner turn, which records no outcome) so telemetry doesn't go
+    // missing when status was
     // flipped to 'cancelled' by a path that didn't emit task.cancelled
     // (e.g. direct DB UPDATE, or a future code path). Idempotency caveat:
     // if BOTH task.cancelled AND task.completed fire for the same task,
     // we'll track twice — same as pre-fix behavior. Skip retain to avoid
-    // double-writing (handleTaskCancelled already retains).
+    // double-writing (handleTaskCancelled retains an owner turn's exchange).
     try {
       const row = getDatabase()
         .prepare("SELECT status FROM tasks WHERE task_id = ?")
@@ -3057,7 +3185,9 @@ export class MessageRouter {
           clearTimeout(stale.finalTimer);
           clearTimeout(stale.abandonTimer);
           this.pendingReplies.delete(taskId);
-          trackTaskOutcome(taskId, 0, false, stale.channel);
+          // A non-owner turn records no outcome.
+          if (stale.rerunSpec?.restricted !== true)
+            trackTaskOutcome(taskId, 0, false, stale.channel);
         }
         emitTraceEvent({
           taskId,
@@ -3174,6 +3304,8 @@ export class MessageRouter {
     // Check if it's a chat reply
     const pending = this.pendingReplies.get(taskId);
     if (!pending) return;
+    // A non-owner turn's pending reply carries a restricted spec.
+    const restricted = pending.rerunSpec?.restricted === true;
 
     clearTimeout(pending.interimTimer);
     clearTimeout(pending.finalTimer);
@@ -3314,7 +3446,8 @@ export class MessageRouter {
       // the memory retain and the JME write below, so a credential it saves is
       // already in the store when their write-side scrub runs.
       try {
-        ensureCriticalDataPersisted(pending.originalText, taskId);
+        if (!restricted)
+          ensureCriticalDataPersisted(pending.originalText, taskId);
       } catch {
         // Non-fatal
       }
@@ -3395,7 +3528,7 @@ export class MessageRouter {
           ).slice(0, 200)}`,
         );
       } else {
-        appendDayLog("JARVIS", resultText);
+        if (!restricted) appendDayLog("JARVIS", resultText);
 
         // Finalize streaming message or send fresh
         if (pending.streamController) {
@@ -3435,25 +3568,27 @@ export class MessageRouter {
       );
 
       // Retain the exchange in conversation memory (works with any backend)
-      this.channelActivityMs.set(pending.channel, Date.now());
-      try {
-        const exchange = `User: ${pending.originalText}\nJarvis: ${resultText}`;
-        getMemoryService()
-          .retain(exchange, {
-            bank: "mc-jarvis",
-            tags: [
-              pending.channel,
-              "conversation",
-              getOutcomeTag(taskId),
-              ...(verified ? [THREAD_VERIFIED_TAG] : []),
-            ],
-            async: true,
-            trustTier: 2, // inferred — conversation exchange
-            source: "router",
-          })
-          .catch(() => {});
-      } catch {
-        // Non-fatal
+      if (!restricted) {
+        this.channelActivityMs.set(pending.channel, Date.now());
+        try {
+          const exchange = `User: ${pending.originalText}\nJarvis: ${resultText}`;
+          getMemoryService()
+            .retain(exchange, {
+              bank: "mc-jarvis",
+              tags: [
+                pending.channel,
+                "conversation",
+                getOutcomeTag(taskId),
+                ...(verified ? [THREAD_VERIFIED_TAG] : []),
+              ],
+              async: true,
+              trustTier: 2, // inferred — conversation exchange
+              source: "router",
+            })
+            .catch(() => {});
+        } catch {
+          // Non-fatal
+        }
       }
 
       // JME episodic store — write user + jarvis turns for operator telegram convos.
@@ -3534,6 +3669,12 @@ export class MessageRouter {
         } else {
           this.confirmationResumes.delete(pending.tk);
         }
+      }
+
+      // A non-owner turn stops here: nothing below runs for it.
+      if (restricted) {
+        this.markTaskReply(pending, taskId);
+        return;
       }
 
       // Execution pattern extraction (async, fire-and-forget)
@@ -3695,7 +3836,8 @@ export class MessageRouter {
         `User: ${pending.originalText}\nJarvis: ${fallback}`,
         pending.imageUrl,
       );
-      trackTaskOutcome(taskId, data.duration_ms, true, pending.channel);
+      if (!restricted)
+        trackTaskOutcome(taskId, data.duration_ms, true, pending.channel);
       this.markTaskReply(pending, taskId);
     }
   }
@@ -3722,7 +3864,9 @@ export class MessageRouter {
           clearTimeout(stale.finalTimer);
           clearTimeout(stale.abandonTimer);
           this.pendingReplies.delete(taskId);
-          trackTaskOutcome(taskId, 0, false, stale.channel);
+          // A non-owner turn records no outcome.
+          if (stale.rerunSpec?.restricted !== true)
+            trackTaskOutcome(taskId, 0, false, stale.channel);
         }
         emitTraceEvent({
           taskId,
@@ -3768,6 +3912,8 @@ export class MessageRouter {
 
     const pending = this.pendingReplies.get(taskId);
     if (!pending) return;
+    // A non-owner turn's pending reply carries a restricted spec.
+    const restricted = pending.rerunSpec?.restricted === true;
 
     clearTimeout(pending.interimTimer);
     clearTimeout(pending.finalTimer);
@@ -3907,35 +4053,40 @@ export class MessageRouter {
     // Outcome-aware retain (queue item #7 part 1, 2026-05-07): close the
     // failed-task gap so outcome:failed rows actually populate in
     // conversations. Recall-side bias against negative precedents lands in
-    // Part 2 of the same queue item.
-    try {
-      // Store rule (store-withhold.ts) on each piece before its cut.
-      const errorText = withholdForStore(data.error ?? "Unknown error").slice(
-        0,
-        500,
-      );
-      // W8 audit fix: cap user text at 2000 to prevent oversized rows.
-      const userText = safeSlice(withholdForStore(pending.originalText), 2000);
-      // Retain what the operator actually saw: the runner's delivered
-      // question, or the failure marker otherwise.
-      const exchange = deliveredRunnerText
-        ? `User: ${userText}\nJarvis: ${safeSlice(withholdForStore(failMsg), 2000)}`
-        : `User: ${userText}\nJarvis: [Task failed] ${errorText}`;
-      getMemoryService()
-        .retain(exchange, {
-          bank: "mc-jarvis",
-          tags: [pending.channel, "conversation", getOutcomeTag(taskId)],
-          async: true,
-          trustTier: 2,
-          source: "router",
-        })
-        .catch(() => {});
-    } catch {
-      // Non-fatal — instrumentation must never break the failure-notification path
+    // Part 2 of the same queue item. A non-owner turn's exchange and outcome
+    // are not stored.
+    if (!restricted) {
+      try {
+        // Store rule (store-withhold.ts) on each piece before its cut.
+        const errorText = withholdForStore(
+          data.error ?? "Unknown error",
+        ).slice(0, 500);
+        // W8 audit fix: cap user text at 2000 to prevent oversized rows.
+        const userText = safeSlice(
+          withholdForStore(pending.originalText),
+          2000,
+        );
+        // Retain what the operator actually saw: the runner's delivered
+        // question, or the failure marker otherwise.
+        const exchange = deliveredRunnerText
+          ? `User: ${userText}\nJarvis: ${safeSlice(withholdForStore(failMsg), 2000)}`
+          : `User: ${userText}\nJarvis: [Task failed] ${errorText}`;
+        getMemoryService()
+          .retain(exchange, {
+            bank: "mc-jarvis",
+            tags: [pending.channel, "conversation", getOutcomeTag(taskId)],
+            async: true,
+            trustTier: 2,
+            source: "router",
+          })
+          .catch(() => {});
+      } catch {
+        // Non-fatal — instrumentation must never break the failure-notification path
+      }
     }
 
     // Track failed outcome
-    trackTaskOutcome(taskId, 0, false, pending.channel);
+    if (!restricted) trackTaskOutcome(taskId, 0, false, pending.channel);
   }
 
   private handleTaskCancelled(data: TaskCancelledPayload): void {
@@ -3963,6 +4114,8 @@ export class MessageRouter {
 
     const pending = this.pendingReplies.get(taskId);
     if (!pending) return;
+    // A non-owner turn's pending reply carries a restricted spec.
+    const restricted = pending.rerunSpec?.restricted === true;
 
     clearTimeout(pending.interimTimer);
     clearTimeout(pending.finalTimer);
@@ -3982,25 +4135,34 @@ export class MessageRouter {
     // Outcome-aware retain (queue item #7 part 1, 2026-05-07): cancelled tasks
     // map to outcome:failed via statusToOutcomeTag. We retain the user prompt
     // so a future similar query can be ranked against this negative precedent.
-    try {
-      // Store rule (store-withhold.ts) on each piece before its cut.
-      const reason = withholdForStore(data.reason ?? "cancelled").slice(0, 500);
-      const userText = safeSlice(withholdForStore(pending.originalText), 2000); // W8 audit fix
-      const exchange = `User: ${userText}\nJarvis: [Task cancelled by ${data.cancelled_by}] ${reason}`;
-      getMemoryService()
-        .retain(exchange, {
-          bank: "mc-jarvis",
-          tags: [pending.channel, "conversation", getOutcomeTag(taskId)],
-          async: true,
-          trustTier: 2,
-          source: "router",
-        })
-        .catch(() => {});
-    } catch {
-      // Non-fatal
+    // A non-owner turn's exchange and outcome are not stored.
+    if (!restricted) {
+      try {
+        // Store rule (store-withhold.ts) on each piece before its cut.
+        const reason = withholdForStore(data.reason ?? "cancelled").slice(
+          0,
+          500,
+        );
+        const userText = safeSlice(
+          withholdForStore(pending.originalText),
+          2000,
+        ); // W8 audit fix
+        const exchange = `User: ${userText}\nJarvis: [Task cancelled by ${data.cancelled_by}] ${reason}`;
+        getMemoryService()
+          .retain(exchange, {
+            bank: "mc-jarvis",
+            tags: [pending.channel, "conversation", getOutcomeTag(taskId)],
+            async: true,
+            trustTier: 2,
+            source: "router",
+          })
+          .catch(() => {});
+      } catch {
+        // Non-fatal
+      }
     }
 
-    trackTaskOutcome(taskId, 0, false, pending.channel);
+    if (!restricted) trackTaskOutcome(taskId, 0, false, pending.channel);
   }
 
   /** The interim / final / abandon timers every pending chat reply carries. */
@@ -4237,8 +4399,7 @@ export class MessageRouter {
       title: spec.title,
       description: spec.description,
       detectionText: spec.detectionText,
-      agentType: loop ? "fast" : "auto",
-      unlimited: loop,
+      ...submitRunnerFields(spec.restricted, loop),
       tools: spec.tools,
       conversationHistory: runHistory,
       tags: [...spec.tags, "confirm-continuation"],
@@ -4430,8 +4591,7 @@ export class MessageRouter {
       description: rerunDescription + correction,
       detectionText: spec.detectionText,
       // A `/loop` task keeps its unlimited semantics across the scope re-run.
-      agentType: spec.tags.includes("loop") ? "fast" : "auto",
-      unlimited: spec.tags.includes("loop"),
+      ...submitRunnerFields(spec.restricted, spec.tags.includes("loop")),
       tools: widened,
       conversationHistory: history,
       tags: [...spec.tags, "scope-rerun"],

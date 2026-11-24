@@ -471,10 +471,11 @@ export const XPOZ_TOOLS = [
  * of this tool be passed back to an attacker via a different allowed tool?" —
  * if yes, reject the pair.
  *
- * Activated by the router for any inbound on an email channel that is NOT
- * explicitly in owner-only mode (fail-safe default — undefined mode on an
- * email channel restricts by default). Bypasses the semantic scope classifier
- * so this set is identical across messages and across senders.
+ * Applied by the router to any inbound on an email channel that is NOT
+ * explicitly in owner-only mode (an undefined mode restricts) and to every
+ * turn the router marks `nonOwner` (see applyCommunityChannelScopeOverride).
+ * Bypasses the semantic scope classifier so this set is identical across
+ * messages and across senders.
  */
 export const COMMUNITY_EMAIL_TOOLS = [
   // Public web research. web_search returns snippets to the runner; the LLM
@@ -492,8 +493,8 @@ export const COMMUNITY_EMAIL_TOOLS = [
  * Compute the channel-policy scope override for one inbound. Fail-safe by
  * default: any email channel whose adapter is NOT explicitly `owner-only`
  * (undefined adapter, undefined mode, or `community-manager`) gets the
- * COMMUNITY_EMAIL_TOOLS allowlist. Owner-only mailboxes and non-email
- * channels pass through unchanged.
+ * COMMUNITY_EMAIL_TOOLS allowlist, and so does any turn with `nonOwner` set.
+ * Every other turn passes through unchanged.
  *
  * Extracted as a pure function so router-level tests can pin the contract
  * "community-manager email channel → restricted scope" without standing up
@@ -513,8 +514,11 @@ export function applyCommunityChannelScopeOverride(args: {
   baseActiveGroups: string[];
   /** Env flags needed by getAllAvailableTools to determine the universe. */
   envFlags: ScopeOptions;
+  /** The router's non-owner turn (a group message, or a mailbox that is not
+   *  owner-only): restricted whatever the channel. */
+  nonOwner?: boolean;
 }): { tools: string[]; activeGroups: string[]; restricted: boolean } {
-  if (!args.isEmail || args.mode === "owner-only") {
+  if (!args.nonOwner && (!args.isEmail || args.mode === "owner-only")) {
     return {
       tools: args.baseTools,
       activeGroups: args.baseActiveGroups,

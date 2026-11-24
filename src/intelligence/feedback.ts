@@ -171,9 +171,9 @@ export function isExclusivelyNegative(text: string): boolean {
  *
  * Positive branch: exclusively-praise messages only (see contract above) —
  * an embedded instruction alongside "excelente" falls through to normal
- * processing while the feedback window still records the positive signal.
+ * processing.
  * Negative branch: same rule via isExclusivelyNegative — "No, hazlo con B"
- * runs; the feedback window still records the negative signal upstream.
+ * runs.
  */
 export function isFeedbackMessage(text: string): boolean {
   const trimmed = stripGroupPrefix(text);

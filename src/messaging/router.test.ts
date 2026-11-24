@@ -129,12 +129,37 @@ vi.mock("../briefing/promote.js", async (importOriginal) => {
 
 const mockWriteEpisodic = vi.fn().mockResolvedValue(undefined);
 // Feedback window: closed (the real default) unless a test opens it.
-vi.mock("../intelligence/outcome-tracker.js", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("../intelligence/outcome-tracker.js")
-  >()),
-  checkFeedbackWindow: vi.fn(() => null),
-}));
+// trackTaskOutcome calls through to the real one; the spy makes the call
+// observable.
+vi.mock("../intelligence/outcome-tracker.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../intelligence/outcome-tracker.js")>();
+  return {
+    ...actual,
+    checkFeedbackWindow: vi.fn(() => null),
+    trackTaskOutcome: vi.fn(actual.trackTaskOutcome),
+  };
+});
+// Prompt builder: real module; buildJarvisSystemPrompt calls through to the
+// real one and its arguments are observable.
+vi.mock("./system-prompt.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./system-prompt.js")>();
+  return {
+    ...actual,
+    buildJarvisSystemPrompt: vi.fn(actual.buildJarvisSystemPrompt),
+  };
+});
+// Background extractor: real module; the two pure predicates call through to
+// the real ones and are observable.
+vi.mock("../memory/background-extractor.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../memory/background-extractor.js")>();
+  return {
+    ...actual,
+    shouldExtract: vi.fn(actual.shouldExtract),
+    shouldCrystallize: vi.fn(actual.shouldCrystallize),
+  };
+});
 // Execution patterns: real module, extractPattern observable (the status gate
 // test pins the call site); defaults to the real implementation.
 const patternSpy = vi.hoisted(() => vi.fn());
@@ -150,6 +175,21 @@ vi.mock("../intelligence/execution-patterns.js", async (importOriginal) => {
 });
 // Jev shadow: log-only side channel; the wiring test pins the call site.
 vi.mock("../jev/shadow.js", () => ({ shadowFeedback: vi.fn() }));
+// Correction writer: real module, extractAndPersistCorrection observable;
+// defaults to the real implementation.
+const correctionSpy = vi.hoisted(() => vi.fn());
+const correctionActual = vi.hoisted(() => ({
+  fn: (async () => {}) as (...a: unknown[]) => Promise<void>,
+}));
+vi.mock("../intelligence/correction-loop.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../intelligence/correction-loop.js")>();
+  correctionActual.fn = actual.extractAndPersistCorrection as (
+    ...a: unknown[]
+  ) => Promise<void>;
+  correctionSpy.mockImplementation(correctionActual.fn);
+  return { ...actual, extractAndPersistCorrection: correctionSpy };
+});
 // "excelente" with no window: thread lookup (no outcome unless a test sets
 // one) + the eval-case bridge, both observable.
 const praiseMocks = vi.hoisted(() => ({
@@ -175,6 +215,16 @@ vi.mock("./scope-classifier.js", async (importOriginal) => {
 vi.mock("./scope-miss.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./scope-miss.js")>();
   return { ...actual, groupsForTool: vi.fn(actual.groupsForTool) };
+});
+// The real channel-policy override, wrapped so a test can return an empty list.
+vi.mock("./scope.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./scope.js")>();
+  return {
+    ...actual,
+    applyCommunityChannelScopeOverride: vi.fn(
+      actual.applyCommunityChannelScopeOverride,
+    ),
+  };
 });
 // The real enrichment, wrapped so a test can make it hang (stage deadline).
 vi.mock("../intelligence/enrichment.js", async (importOriginal) => {
@@ -433,7 +483,9 @@ import {
   registerProjectScopeGroups,
   _resetProjectScopeGroups,
   COMMUNITY_EMAIL_TOOLS,
+  applyCommunityChannelScopeOverride,
 } from "./scope.js";
+import { MAX_ROUNDS_DEFAULT } from "../config/constants.js";
 import { currentExecutionContext } from "../inference/execution-context.js";
 import { currentRunTaskId } from "../tools/rule-of-two.js";
 import { listXAccounts } from "../lib/x-poster/config.js";
@@ -1581,8 +1633,11 @@ describe("MessageRouter", () => {
             groupTurn("@jarvis excelente", "owner@s.whatsapp.net"),
           );
           expect(feedbackTraces()).toEqual([]);
+          expect(unattributedTraces()).toEqual([]);
           expect(scopeOrOutcomeWrites()).toEqual([]);
-          expect(sent()).toEqual([HONEST]);
+          expect(sent()).toEqual([
+            "👍 (las calificaciones no se registran en grupos)",
+          ]);
 
           ritualBroadcast("task-bc2");
           await router.handleInbound(turn("excelente"));
@@ -1912,8 +1967,7 @@ describe("MessageRouter", () => {
         expect(sent()).toEqual(["👍"]);
       });
 
-      it("operator in a group: own reply → rated; a member's reply after it → not rated", async () => {
-        const ownerTk = "whatsapp:grp@g.us:owner@s.whatsapp.net";
+      it("in a group neither the operator's nor a member's rating word rates: the operator gets the groups line, the member a plain 👍", async () => {
         await deliverReply(
           "task-owner",
           groupTurn("@jarvis agenda algo", "owner@s.whatsapp.net"),
@@ -1922,25 +1976,23 @@ describe("MessageRouter", () => {
         await router.handleInbound(
           groupTurn("@jarvis excelente", "owner@s.whatsapp.net"),
         );
-        expect(
-          praiseMocks.findLatestOutcomeTaskForThread,
-        ).toHaveBeenCalledWith(ownerTk);
-        expect(feedbackWrites()).toEqual([["positive", "task-owner"]]);
+        expect(praiseMocks.findLatestOutcomeTaskForThread).not.toHaveBeenCalled();
+        expect(feedbackWrites()).toEqual([]);
+        expect(sent()).toEqual([
+          "👍 (las calificaciones no se registran en grupos)",
+        ]);
 
-        await deliverReply("task-owner-2", groupTurn("@jarvis resume algo", "owner@s.whatsapp.net"));
         await deliverReply(
           "task-member",
           groupTurn("@jarvis agenda otra cosa", "member@s.whatsapp.net"),
         );
-        praiseMocks.findLatestOutcomeTaskForThread.mockClear();
-        // Even a lookup naming the member's task must not rate it: the last
-        // reply in this chat belongs to another thread (marker tk ≠ praiser).
         praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-member");
         await router.handleInbound(
-          groupTurn("@jarvis excelente", "owner@s.whatsapp.net"),
+          groupTurn("@jarvis excelente", "member@s.whatsapp.net"),
         );
+        expect(praiseMocks.findLatestOutcomeTaskForThread).not.toHaveBeenCalled();
         expect(feedbackWrites()).toEqual([]);
-        expect(sent()).toEqual([HONEST]);
+        expect(sent()).toEqual(["👍"]);
       });
 
       it("feedback.unattributed: NOT emitted for a non-operator sender (plain 👍)", async () => {
@@ -1956,7 +2008,7 @@ describe("MessageRouter", () => {
         expect(sent()).toEqual(["👍"]);
       });
 
-      it("feedback.unattributed: a marker for ANOTHER thread does not count → 'unattributed', hadMarker false", async () => {
+      it("the operator's rating word in a group after a member's reply: no unattributed trace, the groups line", async () => {
         await deliverReply(
           "task-member",
           groupTurn("@jarvis agenda algo", "member@s.whatsapp.net"),
@@ -1965,11 +2017,10 @@ describe("MessageRouter", () => {
         await router.handleInbound(
           groupTurn("@jarvis excelente", "owner@s.whatsapp.net"),
         );
-        const events = unattributedTraces();
-        expect(events).toHaveLength(1);
-        expect(events[0].taskId).toBe("unattributed");
-        expect(events[0].attrs.hadMarker).toBe(false);
-        expect(sent()).toEqual([HONEST]);
+        expect(unattributedTraces()).toEqual([]);
+        expect(sent()).toEqual([
+          "👍 (las calificaciones no se registran en grupos)",
+        ]);
       });
 
       it("Telegram: the next task's ⏳ placeholder blocks attribution to the previous reply", async () => {
@@ -8643,11 +8694,12 @@ describe("/loop — surfaces, gating and the abort registry (qa-audit R1 folds)"
     );
   });
 
-  it("WhatsApp group from the owner: the `[Grupo:]` header is kept, the prefix behind it is stripped", async () => {
+  it("WhatsApp group from the owner: `loop …` behind the `[Grupo:]` header is not unlimited, text unchanged", async () => {
+    const text = "[Grupo: group@g.us, De: owner]\nloop Cierra los PRs abiertos";
     await router.handleInbound({
       channel: "whatsapp",
       from: "group@g.us",
-      text: "[Grupo: group@g.us, De: owner]\nloop Cierra los PRs abiertos",
+      text,
       timestamp: new Date(),
       metadata: {
         isGroup: true,
@@ -8657,10 +8709,10 @@ describe("/loop — surfaces, gating and the abort registry (qa-audit R1 folds)"
     });
     expect(submitTask).toHaveBeenCalledTimes(1);
     const sub = vi.mocked(submitTask).mock.calls[0][0];
-    expect(sub.unlimited).toBe(true);
-    expect(sub.detectionText).toMatch(
-      /^\[Grupo: group@g\.us, De: owner\]\s*Cierra los PRs abiertos$/,
-    );
+    expect(sub.unlimited).toBe(false);
+    expect(sub.agentType).toBe("fast");
+    expect(sub.tags).not.toContain("loop");
+    expect(sub.detectionText).toBe(text);
   });
 
   it("a group MEMBER's `loop …` never becomes an unlimited task", async () => {
@@ -8721,7 +8773,7 @@ describe("/loop — surfaces, gating and the abort registry (qa-audit R1 folds)"
     );
   });
 
-  it("inline `/loop` behind a WhatsApp `[Grupo:]` header from the owner → unlimited, text unchanged", async () => {
+  it("inline `/loop` behind a WhatsApp `[Grupo:]` header from the owner → not unlimited, text unchanged", async () => {
     const text =
       "[Grupo: group@g.us, De: owner]\nOrdena la carpeta, usa un /loop por favor";
     await router.handleInbound({
@@ -8737,8 +8789,12 @@ describe("/loop — surfaces, gating and the abort registry (qa-audit R1 folds)"
     });
     expect(submitTask).toHaveBeenCalledTimes(1);
     const sub = vi.mocked(submitTask).mock.calls[0][0];
-    expect(sub.unlimited).toBe(true);
+    expect(sub.unlimited).toBe(false);
+    expect(sub.agentType).toBe("fast");
     expect(sub.detectionText).toBe(text);
+    expect(waAdapter.sentMessages.map((m) => m.text)).not.toContain(
+      "Modo /loop activado — sin límite de turnos ni de tiempo. «Para» lo detiene.",
+    );
   });
 
   it("a bare word `loop` mid-sentence (no slash) never triggers", async () => {
@@ -11289,6 +11345,917 @@ describe("a restricted channel keeps its restricted tool list", () => {
       const line = scopeMissFallbackLine("no_rerun");
       expect(noModeSent.map((m) => m.text)).toEqual([line]);
     });
+  });
+});
+
+describe("non-owner turns", () => {
+  let router: MessageRouter;
+  let wa: ReturnType<typeof createMockAdapter>;
+  const OWNER = "owner@s.whatsapp.net";
+  const CM = "email:nocm";
+  const OWN = "email:noown";
+  const PERSONA = "Persona sintética del buzón de prueba";
+  const AGENT_SQL = "spawn_type='user-background'";
+  const ASK_IN_SCOPE =
+    '`web_search` no está en el scope activo. Necesito que me lo actives con "usa web_search" para buscar.';
+  let n = 0;
+  /** Synthetic ids that never repeat, so no case meets another's thread key. */
+  const ids = () => {
+    n += 1;
+    return {
+      group: `g${n}@g.us`,
+      member: `m${n}@s.whatsapp.net`,
+      mail: `s${n}@site.example`,
+      chan: `chat${n}`,
+      mailbox: `email:nob${n}`,
+    };
+  };
+  const queueTask = (taskId: string) =>
+    vi.mocked(submitTask).mockResolvedValueOnce({
+      taskId,
+      agentType: "fast",
+      classification: { score: 1, reason: "t", explicit: false },
+    });
+  const calls = () => vi.mocked(submitTask).mock.calls.map(([s]) => s);
+  const complete = (taskId: string, result: string) =>
+    findHandler("task.completed")!({
+      data: { task_id: taskId, agent_id: "fast", result, duration_ms: 1 },
+    });
+  const settle = async () => {
+    await vi.advanceTimersByTimeAsync(0);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await Promise.allSettled([...(router as any).gateInflight]);
+  };
+  const enrichSpy = async () =>
+    vi.mocked((await import("../intelligence/enrichment.js")).enrichContext);
+  const hydrationQueries = () =>
+    dbAll.mock.calls.filter(([sql]) => sql === THREAD_HYDRATION_SQL).length;
+  const agentSqlPrepared = () =>
+    [...dbAll.mock.calls, ...dbGetBySql.mock.calls].some(([sql]) =>
+      String(sql).includes(AGENT_SQL),
+    );
+  /** A group message with no `[Grupo: …]` header in its text. */
+  const inGroup = (
+    text: string,
+    o: { group: string; sender: string; flag?: boolean },
+  ) =>
+    router.handleInbound({
+      channel: "whatsapp",
+      from: o.group,
+      text,
+      timestamp: new Date(),
+      ...(o.flag !== false && {
+        metadata: { isGroup: true, groupJid: o.group, senderJid: o.sender },
+      }),
+    });
+  const mailbox = (name: string, mode?: "owner-only" | "community-manager") =>
+    router.registerChannel({
+      name,
+      ...(mode && { mode }),
+      personaContent: PERSONA,
+      start: vi.fn().mockResolvedValue(undefined),
+      send: vi.fn().mockResolvedValue("id"),
+      onMessage: vi.fn(),
+      stop: vi.fn().mockResolvedValue(undefined),
+      isConnected: () => true,
+    } as never);
+  const mail = (channel: string, from: string, text: string) =>
+    router.handleInbound({
+      channel: channel as never,
+      from,
+      text,
+      timestamp: new Date(),
+    });
+  /** The submit of a non-owner turn: restricted, fast, external, no owner memory. */
+  const expectNonOwnerSubmit = (
+    sub: Parameters<typeof submitTask>[0] | undefined,
+  ) => {
+    expect(sub).toBeDefined();
+    expect(sub!.agentType).toBe("fast");
+    expect(sub!.unlimited).toBe(false);
+    expect(sub!.external).toEqual({ maxRounds: MAX_ROUNDS_DEFAULT });
+    expect(sub!.tools?.length).toBeGreaterThan(0);
+    for (const t of sub!.tools!) expect(COMMUNITY_EMAIL_TOOLS).toContain(t);
+    expect(sub!.description).not.toContain(PROFILE_FIXTURE.PROFILE);
+    expect(sub!.description).not.toContain(PROFILE_FIXTURE.PROJECTS);
+    expect(sub!.description).not.toContain(PROFILE_FIXTURE.RELEVANT);
+  };
+  const ASKED = "¿qué opinan del modelo de negocio de una cooperativa de café?";
+  /** A turn with the group flag on an address not in group form. */
+  const flagged = (text: string, sender: string) =>
+    router.handleInbound({
+      channel: "whatsapp",
+      from: sender,
+      text,
+      timestamp: new Date(),
+      metadata: { isGroup: true },
+    });
+  const dayLogWrites = () =>
+    dbRun.mock.calls
+      .map((c) => JSON.stringify(c))
+      .filter((c) => c.includes("day-logs"));
+  const retainTags = () =>
+    memoryRetainSpy.mock.calls.map(([, o]) => (o as { tags: string[] }).tags);
+  const activity = () =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (router as any).channelActivityMs as Map<string, number>;
+  const outcomeSpy = async () =>
+    vi.mocked(
+      (await import("../intelligence/outcome-tracker.js")).trackTaskOutcome,
+    );
+  /** A group member's task, delivered with `result`. */
+  const groupTask = async (taskId: string, text: string, result: string) => {
+    const id = ids();
+    queueTask(taskId);
+    await inGroup(text, { group: id.group, sender: id.member });
+    complete(taskId, result);
+    await settle();
+    return id;
+  };
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    vi.mocked(submitTask).mockReset();
+    gatedExec.executeGatedCapability
+      .mockReset()
+      .mockResolvedValue(JSON.stringify({ ok: true }));
+    dbStatusGet.mockReset().mockReturnValue(undefined);
+    _resetPendingConfirmationsForTests();
+    subscribers.length = 0;
+    process.env.WHATSAPP_OWNER_JID = OWNER;
+    loadProfileFixture();
+    router = new MessageRouter();
+    wa = createMockAdapter("whatsapp");
+    router.registerChannel(wa);
+    mailbox(CM, "community-manager");
+    mailbox(OWN, "owner-only");
+    router.startEventListeners();
+  });
+
+  afterEach(() => {
+    dbAll.mockReset().mockImplementation(() => []);
+    dbStatusGet.mockReset().mockReturnValue(undefined);
+    _resetPendingConfirmationsForTests();
+    fastPathStub.reply = null;
+    delete process.env.WHATSAPP_OWNER_JID;
+    vi.useRealTimers();
+  });
+
+  it("a group member's turn: one restricted submit on the fast runner with the external flag, no profile or facts, no enrichment call", async () => {
+    const id = ids();
+    queueTask("g-1");
+    await inGroup(ASKED, { group: id.group, sender: id.member });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expectNonOwnerSubmit(calls()[0]);
+    expect(await enrichSpy()).not.toHaveBeenCalled();
+  });
+
+  it("a group address without the group flag is a non-owner turn", async () => {
+    const id = ids();
+    queueTask("g-2");
+    await inGroup(ASKED, { group: id.group, sender: id.member, flag: false });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expectNonOwnerSubmit(calls()[0]);
+    expect(await enrichSpy()).not.toHaveBeenCalled();
+  });
+
+  it("the group flag on an address not in group form, on an owner channel: not submitted, the owner's running task not stopped", async () => {
+    const id = ids();
+    queueTask("f-1");
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: OWNER,
+      text: ASKED,
+      timestamp: new Date(),
+    });
+    const buffer = _testThreadEntries("whatsapp");
+    const loads = hydrationQueries();
+    const logs = dayLogWrites().length;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await flagged("Para ya", id.member);
+      expect(submitTask).toHaveBeenCalledTimes(1);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((router as any).pendingReplies.has("f-1")).toBe(true);
+      expect(wa.sentMessages.some((m) => m.text.startsWith("Detenido"))).toBe(
+        false,
+      );
+      expect(_testThreadEntries("whatsapp")).toEqual(buffer);
+      expect(hydrationQueries()).toBe(loads);
+      expect(dayLogWrites()).toHaveLength(logs);
+      const lines = warn.mock.calls.map((c) => String(c[0]));
+      expect(lines).toContain(
+        "[router] Channel whatsapp: non-owner turn on the channel's own thread key — not submitted",
+      );
+      expect(lines.some((l) => l.includes("Para ya"))).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("the group flag on an address not in group form, on an owner channel: the owner's pending card is not answered", async () => {
+    const id = ids();
+    queueTask("f-2");
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: OWNER,
+      text: ASKED,
+      timestamp: new Date(),
+    });
+    dbStatusGet.mockReturnValue({
+      status: "completed",
+      output: JSON.stringify({
+        text: "x",
+        toolCalls: [],
+        pendingConfirmation: { toolName: "wp_delete", args: { id: 7 } },
+      }),
+    });
+    complete("f-2", "Voy a borrar el post 7. ¿Procedo?");
+    dbStatusGet.mockReturnValue(undefined);
+    await settle();
+    const buffer = _testThreadEntries("whatsapp");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await flagged("sí", id.member);
+      await settle();
+    } finally {
+      warn.mockRestore();
+    }
+    expect(gatedExec.executeGatedCapability).not.toHaveBeenCalled();
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expect(_testThreadEntries("whatsapp")).toEqual(buffer);
+    // The card is still the owner's: the owner's own answer runs it.
+    queueTask("f-3");
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: OWNER,
+      text: "sí",
+      timestamp: new Date(),
+    });
+    await settle();
+    expect(gatedExec.executeGatedCapability).toHaveBeenCalledTimes(1);
+  });
+
+  it("the group flag on an address not in group form, on an owner channel: the owner's thread is not cleared", async () => {
+    const id = ids();
+    const seeded = [{ text: "User: hola\nJarvis: hola, ¿qué necesitas?" }];
+    _testSeedThread("whatsapp", seeded);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await flagged("limpia tu contexto", id.member);
+    } finally {
+      warn.mockRestore();
+    }
+    expect(_testThreadEntries("whatsapp")).toEqual(seeded);
+    expect(submitTask).not.toHaveBeenCalled();
+    expect(hydrationQueries()).toBe(0);
+  });
+
+  it("the group flag on an owner-only mailbox's bare key: not submitted", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await router.handleInbound({
+        channel: OWN as never,
+        from: "owner@site.example",
+        text: ASKED,
+        timestamp: new Date(),
+        metadata: { isGroup: true },
+      });
+      expect(submitTask).not.toHaveBeenCalled();
+      expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+        `[router] Channel ${OWN}: non-owner turn on the channel's own thread key — not submitted`,
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("the owner writing in a group is a non-owner turn", async () => {
+    const id = ids();
+    queueTask("g-4");
+    await inGroup(ASKED, { group: id.group, sender: OWNER });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expectNonOwnerSubmit(calls()[0]);
+    expect(await enrichSpy()).not.toHaveBeenCalled();
+  });
+
+  it("a community mailbox turn keeps the mailbox persona and gets none of the three blocks, no enrichment call, the fast runner", async () => {
+    const id = ids();
+    queueTask("c-1");
+    await mail(CM, id.mail, ASKED);
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const [sub] = calls();
+    expectNonOwnerSubmit(sub);
+    expect(sub.description).toContain(PERSONA);
+    expect(await enrichSpy()).not.toHaveBeenCalled();
+  });
+
+  it("an owner direct-chat turn is unchanged: no external flag, auto routing, enrichment called once, the profile in the prompt", async () => {
+    queueTask("o-1");
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: OWNER,
+      text: ASKED,
+      timestamp: new Date(),
+    });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const [sub] = calls();
+    expect(sub.external).toBeUndefined();
+    expect(sub.agentType).toBe("auto");
+    expect(sub.unlimited).toBe(false);
+    expect(await enrichSpy()).toHaveBeenCalledTimes(1);
+    expect(sub.description).toContain(PROFILE_FIXTURE.PROFILE);
+  });
+
+  it("an owner-only mailbox turn is unchanged: no external flag, auto routing, enrichment called once, the profile in the prompt", async () => {
+    queueTask("o-2");
+    await mail(OWN, "owner@site.example", ASKED);
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const [sub] = calls();
+    expect(sub.external).toBeUndefined();
+    expect(sub.agentType).toBe("auto");
+    expect(sub.unlimited).toBe(false);
+    expect(await enrichSpy()).toHaveBeenCalledTimes(1);
+    expect(sub.description).toContain(PROFILE_FIXTURE.PROFILE);
+  });
+
+  it("a group's first turn reads no stored exchange: its history is the one turn", async () => {
+    const id = ids();
+    queueTask("h-1");
+    await inGroup(ASKED, { group: id.group, sender: id.member });
+    expect(hydrationQueries()).toBe(0);
+    expect(calls()[0].conversationHistory).toHaveLength(1);
+  });
+
+  it("a group thread key read outside an inbound loads no stored exchange", () => {
+    const id = ids();
+    expect(_testThreadTurns(`whatsapp:${id.group}:${id.member}`)).toEqual([]);
+    expect(_testThreadTurns(`whatsapp:${id.group}`)).toEqual([]);
+    expect(hydrationQueries()).toBe(0);
+  });
+
+  it("the completion path of a group turn reads no stored exchange", async () => {
+    const id = ids();
+    queueTask("h-2");
+    await inGroup(ASKED, { group: id.group, sender: id.member });
+    complete("h-2", "Una respuesta sintética sobre cooperativas.");
+    await settle();
+    expect(wa.sentMessages.map((m) => m.text)).toContain(
+      "Una respuesta sintética sobre cooperativas.",
+    );
+    expect(hydrationQueries()).toBe(0);
+  });
+
+  it("a mailbox mail on the bare key (no usable sender) reads no stored exchange", async () => {
+    const id = ids();
+    mailbox(id.mailbox, "community-manager");
+    queueTask("h-3");
+    await mail(id.mailbox, "", ASKED);
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expectNonOwnerSubmit(calls()[0]);
+    expect(hydrationQueries()).toBe(0);
+  });
+
+  it("a mailbox mail with an undefined mode reads no stored exchange", async () => {
+    const id = ids();
+    queueTask("h-4");
+    await mail(id.mailbox, id.mail, ASKED);
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expectNonOwnerSubmit(calls()[0]);
+    expect(hydrationQueries()).toBe(0);
+  });
+
+  it("a group greeting on the fast path reads no stored exchange", async () => {
+    const id = ids();
+    fastPathStub.reply = "¡Hola! ¿En qué te ayudo?";
+    await inGroup("hola", { group: id.group, sender: id.member });
+    expect(submitTask).not.toHaveBeenCalled();
+    expect(wa.sentMessages.map((m) => m.text)).toContain(
+      "¡Hola! ¿En qué te ayudo?",
+    );
+    expect(hydrationQueries()).toBe(0);
+  });
+
+  it("a group turn's scope re-run stays restricted: fast runner, external flag", async () => {
+    const id = ids();
+    queueTask("r-1");
+    queueTask("r-2");
+    await inGroup(ASKED, { group: id.group, sender: id.member });
+    complete("r-1", ASK_IN_SCOPE);
+    await settle();
+    expect(submitTask).toHaveBeenCalledTimes(2);
+    const rerun = calls()[1];
+    expect(rerun.tags).toContain("scope-rerun");
+    expectNonOwnerSubmit(rerun);
+    expect(rerun.tools).toEqual(calls()[0].tools);
+  });
+
+  it("a group turn's confirmation continuation stays restricted: fast runner, external flag", async () => {
+    const id = ids();
+    queueTask("k-1");
+    await inGroup(ASKED, { group: id.group, sender: id.member });
+    dbStatusGet.mockReturnValue({
+      status: "completed",
+      output: JSON.stringify({
+        text: "x",
+        toolCalls: [],
+        pendingConfirmation: { toolName: "wp_delete", args: { id: 7 } },
+      }),
+    });
+    complete("k-1", "Voy a borrar el post 7. ¿Procedo?");
+    dbStatusGet.mockReturnValue(undefined);
+    await settle();
+    queueTask("k-2");
+    await inGroup("sí", { group: id.group, sender: id.member });
+    await settle();
+    expect(gatedExec.executeGatedCapability).toHaveBeenCalledTimes(1);
+    expect(submitTask).toHaveBeenCalledTimes(2);
+    const cont = calls()[1];
+    expect(cont.tags).toContain("confirm-continuation");
+    expectNonOwnerSubmit(cont);
+  });
+
+  it("a group message asking for a background agent is one restricted turn, no agent", async () => {
+    const id = ids();
+    dbStatusGet.mockReturnValue({ cnt: 0 }); // running background agents
+    queueTask("b-1");
+    await inGroup("lanza un agente e investiga el tráfico del sitio del evento", {
+      group: id.group,
+      sender: OWNER,
+    });
+    dbStatusGet.mockReturnValue(undefined);
+    await settle();
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const [sub] = calls();
+    expect(sub.spawnType).toBeUndefined();
+    expect(sub.tags).not.toContain("background-agent");
+    expectNonOwnerSubmit(sub);
+    expect(agentSqlPrepared()).toBe(false);
+  });
+
+  it("a group message «agentes» is not the agent list", async () => {
+    const id = ids();
+    queueTask("l-1");
+    await inGroup("agentes", { group: id.group, sender: OWNER });
+    await settle();
+    expect(agentSqlPrepared()).toBe(false);
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expectNonOwnerSubmit(calls()[0]);
+  });
+
+  it("a group message «cancela agente» is not the agent cancel", async () => {
+    const id = ids();
+    queueTask("l-2");
+    await inGroup("cancela agente", { group: id.group, sender: OWNER });
+    await settle();
+    expect(agentSqlPrepared()).toBe(false);
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expectNonOwnerSubmit(calls()[0]);
+  });
+
+  it("the owner's rituals command in a group is not a command", async () => {
+    const id = ids();
+    queueTask("q-1");
+    await inGroup("/rituales", { group: id.group, sender: OWNER });
+    await settle();
+    expect(ritualesMocks.handleRitualesCommand).not.toHaveBeenCalled();
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expectNonOwnerSubmit(calls()[0]);
+  });
+
+  it("a group message does not reach the briefing verdict", async () => {
+    const id = ids();
+    queueTask("v-1");
+    await inGroup(ASKED, { group: id.group, sender: OWNER });
+    await settle();
+    expect(briefingMocks.resolveBriefingOnOperatorReply).not.toHaveBeenCalled();
+  });
+
+  it("the owner's `/loop` in a group is not unlimited", async () => {
+    const id = ids();
+    queueTask("p-1");
+    await inGroup("/loop Cierra los PRs abiertos", {
+      group: id.group,
+      sender: OWNER,
+    });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const [sub] = calls();
+    expectNonOwnerSubmit(sub);
+    expect(sub.tags).not.toContain("loop");
+  });
+
+  it("the owner's inline `/loop` in a group is not unlimited", async () => {
+    const id = ids();
+    queueTask("p-2");
+    await inGroup("Ordena la carpeta, usa un /loop por favor", {
+      group: id.group,
+      sender: OWNER,
+    });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const [sub] = calls();
+    expectNonOwnerSubmit(sub);
+    expect(sub.tags).not.toContain("loop");
+  });
+
+  it("a non-owner turn whose restricted list is empty is not submitted", async () => {
+    const id = ids();
+    vi.mocked(applyCommunityChannelScopeOverride).mockReturnValueOnce({
+      tools: [],
+      activeGroups: ["email-community"],
+      restricted: true,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await inGroup(ASKED, { group: id.group, sender: id.member });
+      expect(submitTask).not.toHaveBeenCalled();
+      const lines = warn.mock.calls.map((c) => String(c[0]));
+      expect(lines.some((l) => l.includes("empty restricted tool list"))).toBe(
+        true,
+      );
+      expect(lines.some((l) => l.includes(ASKED))).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("a group turn writes no day-log line and does not move the channel's activity clock", async () => {
+    const id = ids();
+    queueTask("d-1");
+    await inGroup(ASKED, { group: id.group, sender: id.member });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expect(dayLogWrites()).toEqual([]);
+    expect(activity().has("whatsapp")).toBe(false);
+  });
+
+  it("a group stop word: the stop line is sent, the exchange is not stored", async () => {
+    const id = ids();
+    await inGroup("Para ya", { group: id.group, sender: id.member });
+    expect(wa.sentMessages.map((m) => m.text)).toContain(
+      "Detenido: no había tareas activas.",
+    );
+    expect(retainTags().some((t) => t.includes("hard-stop"))).toBe(false);
+  });
+
+  it("a group rating word: the ack is sent, the feedback is not stored", async () => {
+    const id = ids();
+    await inGroup("excelente", { group: id.group, sender: id.member });
+    expect(wa.sentMessages.map((m) => m.text)).toEqual(["👍"]);
+    expect(retainTags().some((t) => t.includes("feedback"))).toBe(false);
+    expect(submitTask).not.toHaveBeenCalled();
+  });
+
+  it("a group greeting on the fast path: the reply is sent, neither logged nor stored", async () => {
+    const id = ids();
+    fastPathStub.reply = "¡Hola! ¿En qué te ayudo?";
+    await inGroup("hola", { group: id.group, sender: id.member });
+    expect(wa.sentMessages.map((m) => m.text)).toContain(
+      "¡Hola! ¿En qué te ayudo?",
+    );
+    expect(dayLogWrites()).toEqual([]);
+    expect(retainTags().some((t) => t.includes("fast-path"))).toBe(false);
+  });
+
+  it("a group task's completion: the reply is sent, not logged, not stored, the activity clock not moved", async () => {
+    await groupTask("d-2", ASKED, "Una respuesta sintética sobre cooperativas.");
+    expect(wa.sentMessages.map((m) => m.text)).toContain(
+      "Una respuesta sintética sobre cooperativas.",
+    );
+    expect(dayLogWrites()).toEqual([]);
+    expect(retainTags().some((t) => t.includes("conversation"))).toBe(false);
+    expect(activity().has("whatsapp")).toBe(false);
+  });
+
+  it("a group task's completion saves no credential-shaped value from its message", async () => {
+    const PASTED = ["Wr", "5".repeat(4), "Jy".repeat(4)].join("");
+    userFactsMock.setUserFact.mockImplementation(() => true);
+    try {
+      await groupTask("d-3", `guarda esto: password: ${PASTED}`, "Listo.");
+      expect(userFactsMock.setUserFact).not.toHaveBeenCalled();
+    } finally {
+      userFactsMock.setUserFact.mockReset();
+    }
+  });
+
+  it("a group task's completion with tools feeds no pattern, recall mark, extraction or outcome; its reply stays the rateable one", async () => {
+    const outcome = await outcomeSpy();
+    const extractor = await import("../memory/background-extractor.js");
+    dbStatusGet.mockReturnValue({
+      output: JSON.stringify({ toolCalls: ["web_search", "web_search"] }),
+    });
+    dbGetBySql.mockImplementation((sql: string) =>
+      sql === "SELECT title, spawn_type, status FROM tasks WHERE task_id = ?"
+        ? { title: "Chat: cooperativa", spawn_type: "chat", status: "completed" }
+        : undefined,
+    );
+    patternSpy.mockClear().mockImplementation(async () => {});
+    try {
+      const id = await groupTask("d-4", ASKED, "Una respuesta sintética.");
+      await vi.dynamicImportSettled();
+      await settle();
+      expect(wa.sentMessages.map((m) => m.text)).toContain(
+        "Una respuesta sintética.",
+      );
+      expect(patternSpy).not.toHaveBeenCalled();
+      expect(vi.mocked(extractor.shouldExtract)).not.toHaveBeenCalled();
+      expect(vi.mocked(extractor.shouldCrystallize)).not.toHaveBeenCalled();
+      expect(
+        dbAll.mock.calls.some(([sql]) => String(sql).includes("recall_audit")),
+      ).toBe(false);
+      expect(outcome).not.toHaveBeenCalled();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const marks = (router as any).lastTaskReply as Map<string, { taskId: string }>;
+      expect(marks.get(`whatsapp\u0000${id.group}`)?.taskId).toBe("d-4");
+    } finally {
+      dbStatusGet.mockReturnValue(undefined);
+      dbGetBySql.mockReset().mockImplementation(() => undefined);
+      patternSpy.mockReset().mockImplementation(patternActual.fn);
+    }
+  });
+
+  it("a group task's empty completion: the fallback ack is sent, no outcome", async () => {
+    const outcome = await outcomeSpy();
+    await groupTask("d-5", ASKED, "");
+    expect(wa.sentMessages.map((m) => m.text)).toContain("✓");
+    expect(outcome).not.toHaveBeenCalled();
+  });
+
+  it("a group task already cancelled: neither its completion nor its failure records an outcome", async () => {
+    const outcome = await outcomeSpy();
+    const id = ids();
+    queueTask("d-6");
+    await inGroup(ASKED, { group: id.group, sender: id.member });
+    queueTask("d-7");
+    await inGroup("¿y en otra región?", { group: id.group, sender: id.member });
+    dbGetBySql.mockImplementation((sql: string) =>
+      sql === "SELECT status FROM tasks WHERE task_id = ?"
+        ? { status: "cancelled" }
+        : undefined,
+    );
+    try {
+      complete("d-6", "tarde");
+      findHandler("task.failed")!({
+        data: { task_id: "d-7", agent_id: "fast", error: "tarde", recoverable: false, attempts: 1 },
+      });
+      await settle();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pending = (router as any).pendingReplies as Map<string, unknown>;
+      expect(pending.has("d-6")).toBe(false);
+      expect(pending.has("d-7")).toBe(false);
+      expect(outcome).not.toHaveBeenCalled();
+    } finally {
+      dbGetBySql.mockReset().mockImplementation(() => undefined);
+    }
+  });
+
+  it("a group task's failure: the exchange is not stored, no outcome", async () => {
+    const outcome = await outcomeSpy();
+    const id = ids();
+    queueTask("d-8");
+    await inGroup(ASKED, { group: id.group, sender: id.member });
+    findHandler("task.failed")!({
+      data: { task_id: "d-8", agent_id: "fast", error: "falla sintética", recoverable: false, attempts: 1 },
+    });
+    await settle();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((router as any).pendingReplies.has("d-8")).toBe(false);
+    expect(retainTags().some((t) => t.includes("conversation"))).toBe(false);
+    expect(outcome).not.toHaveBeenCalled();
+  });
+
+  it("a group task's cancellation: the exchange is not stored, no outcome", async () => {
+    const outcome = await outcomeSpy();
+    const id = ids();
+    queueTask("d-9");
+    await inGroup(ASKED, { group: id.group, sender: id.member });
+    findHandler("task.cancelled")!({
+      data: { task_id: "d-9", cancelled_by: "operator", reason: "sintético" },
+    });
+    await settle();
+    expect(wa.sentMessages.map((m) => m.text)).toContain(
+      "Tarea cancelada (sintético).",
+    );
+    expect(retainTags().some((t) => t.includes("conversation"))).toBe(false);
+    expect(outcome).not.toHaveBeenCalled();
+  });
+
+  it("a group member's next turn keeps the member's earlier exchange", async () => {
+    const id = ids();
+    queueTask("t-1");
+    await inGroup(ASKED, { group: id.group, sender: id.member });
+    complete("t-1", "Primera respuesta sintética.");
+    await settle();
+    queueTask("t-2");
+    await inGroup("¿y en otra región?", { group: id.group, sender: id.member });
+    expect(submitTask).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(calls()[1].conversationHistory)).toContain(
+      "Primera respuesta sintética.",
+    );
+    expect(hydrationQueries()).toBe(0);
+  });
+
+  it("a group turn's prompt and its re-run prompt are built without the cohort and with the group identity", async () => {
+    const id = ids();
+    queueTask("r-3");
+    queueTask("r-4");
+    await inGroup(ASKED, { group: id.group, sender: id.member });
+    complete("r-3", ASK_IN_SCOPE);
+    await settle();
+    expect(submitTask).toHaveBeenCalledTimes(2);
+    expect(
+      vi.mocked(buildJarvisSystemPrompt).mock.calls.map((c) => [c[5], c[6]]),
+    ).toEqual([
+      [false, true],
+      [false, true],
+    ]);
+  });
+
+  it("a community mailbox turn's prompt is built without the cohort and without the group identity", async () => {
+    const id = ids();
+    queueTask("r-5");
+    await mail(CM, id.mail, ASKED);
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expect(
+      vi.mocked(buildJarvisSystemPrompt).mock.calls.map((c) => [c[5], c[6]]),
+    ).toEqual([[false, false]]);
+  });
+
+  const GROUPS_LINE = "👍 (las calificaciones no se registran en grupos)";
+  const feedbackWrites = () =>
+    dbRun.mock.calls.filter(([sql]) =>
+      String(sql).includes("UPDATE task_outcomes SET feedback_signal"),
+    );
+
+  it("a group rating word inside an open feedback window: the window is not checked, no shadow call, no feedback write", async () => {
+    const { checkFeedbackWindow } =
+      await import("../intelligence/outcome-tracker.js");
+    const { shadowFeedback } = await import("../jev/shadow.js");
+    const id = ids();
+    vi.mocked(checkFeedbackWindow).mockReturnValue("w-owner");
+    try {
+      await inGroup("excelente", { group: id.group, sender: id.member });
+    } finally {
+      vi.mocked(checkFeedbackWindow).mockImplementation(() => null);
+    }
+    expect(checkFeedbackWindow).not.toHaveBeenCalled();
+    expect(shadowFeedback).not.toHaveBeenCalled();
+    expect(feedbackWrites()).toEqual([]);
+    expect(wa.sentMessages.map((m) => m.text)).toEqual(["👍"]);
+  });
+
+  it("a group rephrase inside an open feedback window calls no correction writer", async () => {
+    const { checkFeedbackWindow } =
+      await import("../intelligence/outcome-tracker.js");
+    const id = ids();
+    queueTask("w-1");
+    await inGroup(ASKED, { group: id.group, sender: id.member });
+    queueTask("w-2");
+    correctionSpy.mockImplementation(async () => {});
+    vi.mocked(checkFeedbackWindow).mockReturnValue("w-owner");
+    try {
+      await inGroup(
+        "¿qué opinan del modelo de negocio de una cooperativa de cacao?",
+        { group: id.group, sender: id.member },
+      );
+      expect(correctionSpy).not.toHaveBeenCalled();
+      expect(feedbackWrites()).toEqual([]);
+    } finally {
+      vi.mocked(checkFeedbackWindow).mockImplementation(() => null);
+      correctionSpy.mockImplementation(correctionActual.fn);
+    }
+  });
+
+  it("the owner's rating word in a group after the owner's own group reply: no praise lookup, no feedback write, the groups line", async () => {
+    const id = ids();
+    queueTask("w-3");
+    await inGroup(ASKED, { group: id.group, sender: OWNER });
+    complete("w-3", "Una respuesta sintética.");
+    await settle();
+    wa.sentMessages.length = 0;
+    dbRun.mockClear();
+    praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("w-3");
+    try {
+      await inGroup("excelente", { group: id.group, sender: OWNER });
+      expect(
+        praiseMocks.findLatestOutcomeTaskForThread,
+      ).not.toHaveBeenCalled();
+      expect(feedbackWrites()).toEqual([]);
+      expect(wa.sentMessages.map((m) => m.text)).toEqual([GROUPS_LINE]);
+    } finally {
+      praiseMocks.findLatestOutcomeTaskForThread
+        .mockReset()
+        .mockReturnValue(null);
+    }
+  });
+
+  it("the owner's rating word in a group writes no unattributed trace and no journal line", async () => {
+    const id = ids();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await inGroup("excelente", { group: id.group, sender: OWNER });
+      expect(
+        traceMock.emitTraceEvent.mock.calls.map(([ev]) => ev.name),
+      ).not.toContain("feedback.unattributed");
+      expect(
+        logSpy.mock.calls.some(([l]) =>
+          String(l).includes("positive feedback NOT attributed"),
+        ),
+      ).toBe(false);
+      expect(wa.sentMessages.map((m) => m.text)).toEqual([GROUPS_LINE]);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("a group member's 'no' gets the short negative ack", async () => {
+    const id = ids();
+    await inGroup("no", { group: id.group, sender: id.member });
+    expect(wa.sentMessages).toHaveLength(1);
+    expect(wa.sentMessages[0].text).toBe(
+      "Entendido. ¿Puedes darme más detalle?",
+    );
+  });
+
+  it("owner control: an owner direct-chat task's completion with tools feeds the pattern, recall mark, extraction check, the credential save and the outcome", async () => {
+    const outcome = await outcomeSpy();
+    const extractor = await import("../memory/background-extractor.js");
+    const PASTED = ["Wr", "5".repeat(4), "Jy".repeat(4)].join("");
+    dbStatusGet.mockReturnValue({
+      output: JSON.stringify({ toolCalls: ["web_search", "web_search"] }),
+    });
+    dbGetBySql.mockImplementation((sql: string) =>
+      sql === "SELECT title, spawn_type, status FROM tasks WHERE task_id = ?"
+        ? { title: "Chat: cooperativa", spawn_type: "chat", status: "completed" }
+        : undefined,
+    );
+    patternSpy.mockClear().mockImplementation(async () => {});
+    userFactsMock.setUserFact.mockImplementation(() => true);
+    try {
+      queueTask("o-3");
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: OWNER,
+        text: `guarda esto: password: ${PASTED}`,
+        timestamp: new Date(),
+      });
+      complete("o-3", "Una respuesta sintética.");
+      await settle();
+      await vi.dynamicImportSettled();
+      await settle();
+      expect(patternSpy).toHaveBeenCalled();
+      expect(vi.mocked(extractor.shouldExtract)).toHaveBeenCalled();
+      expect(
+        dbAll.mock.calls.some(([sql]) => String(sql).includes("recall_audit")),
+      ).toBe(true);
+      expect(outcome).toHaveBeenCalled();
+      expect(userFactsMock.setUserFact).toHaveBeenCalled();
+    } finally {
+      dbStatusGet.mockReturnValue(undefined);
+      dbGetBySql.mockReset().mockImplementation(() => undefined);
+      patternSpy.mockReset().mockImplementation(patternActual.fn);
+      userFactsMock.setUserFact.mockReset();
+    }
+  });
+
+  it("owner control: the owner's rating word in a direct chat stores the feedback exchange", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: OWNER,
+      text: "excelente",
+      timestamp: new Date(),
+    });
+    expect(retainTags()).toContainEqual(["whatsapp", "feedback", "positive"]);
+  });
+
+  it("the group flag on an owner-only mailbox's bare key before that key was loaded: the key stays unloaded, nothing submitted", async () => {
+    const id = ids();
+    mailbox(id.mailbox, "owner-only");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await router.handleInbound({
+        channel: id.mailbox as never,
+        from: "owner@site.example",
+        text: ASKED,
+        timestamp: new Date(),
+        metadata: { isGroup: true },
+      });
+    } finally {
+      warn.mockRestore();
+    }
+    expect(submitTask).not.toHaveBeenCalled();
+    expect(_testThreadEntries(id.mailbox)).toEqual([]);
+    expect(hydrationQueries()).toBe(0);
+    // Not marked as loaded: the owner's stored exchange still loads.
+    dbAll.mockImplementation((sql: string) =>
+      sql === THREAD_HYDRATION_SQL
+        ? [{ content: "User: hola\nJarvis: hola" }]
+        : [],
+    );
+    _testThreadTurns(id.mailbox);
+    expect(hydrationQueries()).toBe(1);
+    expect(_testThreadEntries(id.mailbox)).toEqual([
+      { text: "User: hola\nJarvis: hola" },
+    ]);
   });
 });
 

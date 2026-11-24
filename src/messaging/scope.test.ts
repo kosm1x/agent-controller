@@ -3592,6 +3592,47 @@ describe("applyCommunityChannelScopeOverride", () => {
     // Sanity: web_search is always available, so should always appear.
     expect(out.tools).toContain("web_search");
   });
+
+  it("a non-owner turn on a non-email channel gets the five-tool restricted list", () => {
+    const out = applyCommunityChannelScopeOverride({
+      isEmail: false,
+      mode: undefined,
+      baseTools,
+      baseActiveGroups: baseGroups,
+      envFlags: ENV,
+      nonOwner: true,
+    });
+    expect(out.restricted).toBe(true);
+    expect(out.tools).toEqual(COMMUNITY_EMAIL_TOOLS);
+    expect(out.activeGroups).toEqual(["email-community"]);
+  });
+
+  it("a non-owner turn on an owner-only mailbox is restricted too", () => {
+    const out = applyCommunityChannelScopeOverride({
+      isEmail: true,
+      mode: "owner-only",
+      baseTools,
+      baseActiveGroups: baseGroups,
+      envFlags: ENV,
+      nonOwner: true,
+    });
+    expect(out.restricted).toBe(true);
+    expect(out.tools).toEqual(COMMUNITY_EMAIL_TOOLS);
+  });
+
+  it("nonOwner false leaves a non-email channel unchanged", () => {
+    const out = applyCommunityChannelScopeOverride({
+      isEmail: false,
+      mode: undefined,
+      baseTools,
+      baseActiveGroups: baseGroups,
+      envFlags: ENV,
+      nonOwner: false,
+    });
+    expect(out.restricted).toBe(false);
+    expect(out.tools).toBe(baseTools);
+    expect(out.activeGroups).toBe(baseGroups);
+  });
 });
 
 // ---------------------------------------------------------------------------
