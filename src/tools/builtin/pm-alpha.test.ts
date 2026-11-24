@@ -199,3 +199,28 @@ describe("pmAlphaLatestTool", () => {
     expect(out).toMatch(/nMarkets=2/);
   });
 });
+
+// Description pins: each tool's whole description text as registered.
+describe("tool description texts", () => {
+  it("pins the whole pm_alpha_latest description", () => {
+    expect(pmAlphaLatestTool.definition.function.description).toBe(`Returns the most-recent \`pm_alpha_run\` summary: run_id, run date, N markets, N active, total exposure, top 5 tokens by |weight|. No side effects. \`pm_paper_rebalance\` reads the same latest stored run for its target weights.
+
+DO NOT USE WHEN:
+- You want fresh weights: it reads the last stored run and computes nothing — use pm_alpha_run when it is among your tools.
+- You want every token or the exclusion reasons: it prints only the top 5 active tokens by |weight|.
+- You want equity alpha weights: it reads only prediction-market runs — use alpha_latest when it is among your tools.`);
+  });
+  it("pins the whole pm_alpha_run description", () => {
+    expect(pmAlphaRunTool.definition.function.description).toBe(`Runs the F8.1a Prediction-Market Alpha pipeline — combines Polymarket midpoint + sentiment tilt + (optional) whale flow into per-token Kelly-fraction weights. Filters out extreme-price, low-liquidity, near-resolution, and far-resolution markets. Persists to \`pm_signal_weights\`.
+
+USE WHEN operator asks to "run pm alpha", "polymarket alpha weights", "compute prediction-market signals", "mercados predicción", "pondera los mercados de predicción".
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+NOT WHEN equity alpha (use \`alpha_run\`) or paper trading.
+
+Output: run_id, nMarkets, nActive, totalExposure (Σ|weight|), top 5 by |weight|. Does NOT auto-trade. No F7.5 ship_gate at v1 (deferred to F8.1c).
+
+Prerequisite: \`prediction_markets\` + \`sentiment_snapshot\` tools must have populated \`prediction_markets\` and \`sentiment_readings\` tables. Errors clearly when inputs are empty.`);
+  });
+});

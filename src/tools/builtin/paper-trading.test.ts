@@ -327,3 +327,50 @@ describe("integration: rebalance → portfolio → history chain", () => {
     expect(bal.cash).toBeGreaterThan(0); // didn't overspend
   });
 });
+
+// Description pins: each tool's whole description text as registered.
+describe("tool description texts", () => {
+  it("pins the whole paper_history description", () => {
+    expect(paperHistoryTool.definition.function.description).toBe(`Return recent paper-trading fills. Filter by symbol or since-date.
+
+USE WHEN operator asks "qué he tradeado", "last trades", "historial de fills",
+"paper trade history".
+
+Places no trade and changes no fill or position.
+
+DO NOT USE WHEN:
+- You want positions, cash or P&L: it lists fills only (time, side, symbol, quantity, price, notional) — use paper_portfolio when it is among your tools.
+- You want prediction-market paper trades: it reads only the equity paper account's fills — use pm_paper_history when it is among your tools.
+- You want more than 1000 fills: a limit outside 1 to 1000 falls back to 20.`);
+  });
+  it("pins the whole paper_rebalance description", () => {
+    expect(paperRebalanceTool.definition.function.description).toBe(`Run a paper-trading rebalance on the default $100K simulated account.
+
+Pipeline:
+  alpha_latest → backtest_latest → ship_gate check → fetch weekly prices
+  → diff vs current positions → execute MARKET fills at close × 5 bps slippage
+  → persist fills + PORTFOLIO thesis row.
+
+Ship-gate: refuses to trade when F7.5 flags \`ship_blocked=1\` unless
+\`override_ship_gate=true\` (the override is logged in the thesis row).
+
+USE WHEN operator asks to paper-trade, execute the strategy, rebalance,
+"ejecuta el paper trade", "rebalancear la cartera", "pon el portafolio",
+"rotar posiciones".
+NOT WHEN asking for current positions (use \`paper_portfolio\` when it is among your tools) or last fills
+(use \`paper_history\` when it is among your tools). Do NOT use for Polymarket / prediction-market trading.
+
+Starts with $100,000 cash on first run. No leverage,
+no shorts, no options. MARKET orders only. Weekly cadence.`);
+  });
+  it("pins the whole paper_portfolio description", () => {
+    expect(paperPortfolioTool.definition.function.description).toBe(`Return the current paper-trading portfolio: positions (symbol + shares + avg_cost + market_value + unrealized P&L), cash, total equity, cumulative return since account open.
+
+USE WHEN operator asks "what's in the paper account", "ver el portafolio",
+"current positions", "cartera actual".
+NOT WHEN asking for the trade history (use \`paper_history\` when it is among your tools) or to place
+orders.
+
+Marks to market using latest weekly close per symbol.`);
+  });
+});

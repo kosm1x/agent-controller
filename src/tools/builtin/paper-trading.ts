@@ -79,11 +79,10 @@ Ship-gate: refuses to trade when F7.5 flags \`ship_blocked=1\` unless
 USE WHEN operator asks to paper-trade, execute the strategy, rebalance,
 "ejecuta el paper trade", "rebalancear la cartera", "pon el portafolio",
 "rotar posiciones".
-NOT WHEN asking for current positions (use \`paper_portfolio\`) or last fills
-(use \`paper_history\`). Do NOT use for Polymarket / prediction-market trading
-— that's F8.1 (not implemented).
+NOT WHEN asking for current positions (use \`paper_portfolio\` when it is among your tools) or last fills
+(use \`paper_history\` when it is among your tools). Do NOT use for Polymarket / prediction-market trading.
 
-Takes ~0.5-2 seconds. Starts with $100,000 cash on first run. No leverage,
+Starts with $100,000 cash on first run. No leverage,
 no shorts, no options. MARKET orders only. Weekly cadence.`,
       parameters: {
         type: "object",
@@ -242,10 +241,10 @@ export const paperPortfolioTool: Tool = {
 
 USE WHEN operator asks "what's in the paper account", "ver el portafolio",
 "current positions", "cartera actual".
-NOT WHEN asking for the trade history (use \`paper_history\`) or to place
-orders (use \`paper_rebalance\`).
+NOT WHEN asking for the trade history (use \`paper_history\` when it is among your tools) or to place
+orders.
 
-Read-only, ~100ms. Marks to market using latest weekly close per symbol.`,
+Marks to market using latest weekly close per symbol.`,
       parameters: {
         type: "object",
         properties: {},
@@ -308,7 +307,12 @@ export const paperHistoryTool: Tool = {
 USE WHEN operator asks "qué he tradeado", "last trades", "historial de fills",
 "paper trade history".
 
-Read-only, no side effects.`,
+Places no trade and changes no fill or position.
+
+DO NOT USE WHEN:
+- You want positions, cash or P&L: it lists fills only (time, side, symbol, quantity, price, notional) — use paper_portfolio when it is among your tools.
+- You want prediction-market paper trades: it reads only the equity paper account's fills — use pm_paper_history when it is among your tools.
+- You want more than 1000 fills: a limit outside 1 to 1000 falls back to 20.`,
       parameters: {
         type: "object",
         properties: {

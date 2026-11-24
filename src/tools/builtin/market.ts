@@ -83,6 +83,8 @@ USE WHEN:
 - User asks "how is SPY?", "cotiza AAPL", "precio actual de NVDA"
 - Need a one-shot quote, not a time series (for history use market_history)
 
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
 NOT WHEN:
 - User wants historical bars (use market_history)
 - User wants indicators/signals (use market_indicators / market_signals)
@@ -170,24 +172,30 @@ Default: daily, 60 bars. Override interval for intraday (1/5/15/60 min) or lookb
 
 Source: Polygon primary, Alpha Vantage fallback. Stored in NY market time.
 
-Output: header + table of ≤lookback rows (date/time, O, H, L, C, V). If cached result is stale because both data providers were unreachable, includes a "STALE" notice.`,
+DO NOT USE WHEN:
+- You want the current price or the day's change: this tool returns bars with no change or previous-close figure — use market_quote when it is among your tools.
+- You want indicators computed: it computes none — use market_indicators when it is among your tools.
+- You want weekly bars or more than 500 bars: the interval is daily or intraday only, and lookback stops at 500.
+- You want a chart image: it returns text only.
+
+Output: header + table of ≤lookback rows (date/time, O, H, L, C, V). A "STALE" notice in the header means the rows are stored rows returned because no data provider returned bars (daily interval only).`,
       parameters: {
         type: "object",
         properties: {
           symbol: {
             type: "string",
-            description: "Ticker. Equity/ETF: SPY. FX: EURUSD (6-letter).",
+            description: "Ticker. Equity/ETF: SPY.",
           },
           interval: {
             type: "string",
             enum: ["daily", "1min", "5min", "15min", "60min"],
             description:
-              "Bar interval. Default 'daily'. Use intraday only for recent-day analysis — they cost more API budget.",
+              "Bar interval. Default 'daily'. Use intraday only for recent-day analysis.",
           },
           lookback: {
             type: "number",
             description:
-              "Number of bars. Default 60. Max 500. Intraday lookback is limited by AV's 2-week intraday window.",
+              "Number of bars requested. Default 60; a number is rounded and kept between 1 and 500. Fewer rows can come back.",
           },
         },
         required: ["symbol"],
@@ -269,7 +277,7 @@ USE WHEN:
 - New symbol is being introduced into rotation
 
 NOT WHEN:
-- User wants a one-shot quote (use market_quote)
+- User wants a one-shot quote (use market_quote when it is among your tools)
 - User wants to rename/retag existing symbol (use add again — upserts)
 
 Validation: symbol normalized to UPPERCASE; FX forced to 6-letter form (EURUSD);
@@ -381,8 +389,8 @@ USE WHEN:
 - After a long gap where the daily quote seed is stale
 
 NOT WHEN:
-- User wants the current price (use market_quote)
-- User wants indicators (use market_indicators)
+- User wants the current price (use market_quote when it is among your tools)
+- User wants indicators (use market_indicators when it is among your tools)
 
 Output: one line with bars inserted + signals inserted, or skip reason.`,
       parameters: {
@@ -438,7 +446,11 @@ export const marketWatchlistRemoveTool: Tool = {
       description: `Remove (deactivate) a ticker from the watchlist.
 
 USE WHEN: "quita TSLA", "remove AAPL", "drop NVDA from watchlist".
-Soft delete — row kept with active=0, can be re-added.`,
+Soft delete — row kept with active=0, can be re-added.
+
+DO NOT USE WHEN:
+- You want the ticker's stored prices or signals erased: it only marks the watchlist row inactive; stored bars and signals stay.
+- You want to close a paper position in that ticker: it changes no paper position or trade.`,
       parameters: {
         type: "object",
         properties: {
@@ -473,6 +485,11 @@ export const marketWatchlistListTool: Tool = {
       description: `Show active watchlist grouped by asset_class.
 
 USE WHEN: "muestra mi watchlist", "list watchlist", "what am I tracking".
+DO NOT USE WHEN:
+- You want prices or recent moves of the tickers: it reads the watchlist table only and fetches no market data.
+- You want removed tickers: it lists active rows only; a removed ticker is not shown.
+- You want how much price history is stored per ticker: it lists asset class, symbol, name, tags and notes, and nothing about stored price history.
+
 Output: compact text table, no API calls.`,
       parameters: { type: "object", properties: {} },
     },
@@ -520,7 +537,12 @@ export const marketBudgetStatsTool: Tool = {
 
 USE WHEN: user asks about API usage, rate limits, budget status.
 Output: last-60s window usage vs ceilings + daily quota usage (Alpha Vantage
-free tier: 25 req/day) + last-hour summary.`,
+free tier: 25 req/day) + last-hour summary.
+
+DO NOT USE WHEN:
+- You want the token budget of the market scan rituals: this tool counts market-data provider calls only — use alert_budget_status when it is among your tools.
+- You want model token use or task cost: it reads no model or task figures.
+- You want a limit raised or a counter reset: it raises no limit and resets no counter.`,
       parameters: { type: "object", properties: {} },
     },
   },
@@ -613,8 +635,8 @@ USE WHEN:
 - Need quick overbought/oversold / trend / momentum read on a ticker
 
 NOT WHEN:
-- User wants to scan the watchlist for symbols matching a condition (use market_scan)
-- User wants raw historical bars (use market_history)
+- User wants to scan the watchlist for symbols matching a condition (use market_scan when it is among your tools)
+- User wants raw historical bars (use market_history when it is among your tools)
 
 Output: pre-formatted summary of latest indicator values. Default interval=daily, lookback=100 bars, all 9 indicators.
 
@@ -836,8 +858,8 @@ USE WHEN:
 - User asks to find symbols meeting a condition (e.g., "what's oversold today?", "find symbols with RSI < 30", "which are above their 50-day SMA?")
 
 NOT WHEN:
-- User wants indicators on one specific symbol (use market_indicators)
-- User wants to add/remove symbols from the watchlist (use market_watchlist_{add,remove,list})
+- User wants indicators on one specific symbol (use market_indicators when it is among your tools)
+- User wants to add/remove symbols from the watchlist (use market_watchlist_{add,remove,list} when the one you need is among your tools)
 
 The scan iterates the active watchlist, computes one indicator per symbol over recent bars, and filters by the operator+threshold. Cache-friendly: warm scans (after a morning data pull) cost zero API calls.
 
@@ -1062,6 +1084,11 @@ Regimes: expansion / tightening / recession_risk / recovery / mixed
 Each classification includes: yield curve (10Y-2Y), fed funds, VIX, unemployment,
 CPI YoY, M2 YoY, initial jobless claims, plus a reasons[] list and confidence (0..1).
 
+DO NOT USE WHEN:
+- You want the regime of a past date or of another country: it takes no arguments and classifies only the current US regime from its eight fixed series.
+- You want an indicator's history (CPI over a year): it prints one current figure per indicator, not a time series.
+- You want crowd or crypto sentiment: it reads macro series only — use sentiment_snapshot when it is among your tools.
+
 Cost: one call pulls 8 macro series (FEDFUNDS + CPI + UNEMPLOYMENT + TREASURY_YIELD x2
 via AV, VIXCLS + ICSA + M2SL via FRED). Cache-friendly on repeat queries via the
 DataLayer macro cache (6-hour TTL).`,
@@ -1194,6 +1221,12 @@ volume_spike (z-score > 2σ), price_threshold (explicit user thresholds).
 
 If 'symbol' is omitted, scans the active watchlist. Persists detected signals
 to the market_signals DB table for F7 alpha-combination consumption.
+
+DO NOT USE WHEN:
+- You want current indicator values (an RSI level, a moving average): this tool lists detector firings, not an indicator table — use market_indicators when it is among your tools.
+- You want firings stored by earlier scans: its reply shows what it detects in the bars this call gets, not rows read from the stored firings.
+- You want weekly or minute bars: the interval is daily or 60min only, and a symbol with fewer than 40 bars is skipped.
+- You need every firing in the window: the reply shows at most the last 10 per symbol.
 
 Output: after the header, a "Newest bar:" line gives each scanned symbol's newest bar date, marked "(fallback)" when no provider answered and the bars are the stored fallback (the date tells their age), or "none" when no bars were at hand.`,
       parameters: {
@@ -1431,7 +1464,7 @@ USE WHEN:
 
 NOT WHEN:
 - User wants to place a trade (Phase δ F11 territory — not in v7.0)
-- User wants whale-trade activity (use whale_trades)
+- User wants whale-trade activity (use whale_trades when it is among your tools)
 
 Source: Polymarket Gamma API (public, no auth). Results include multi-outcome
 event grouping (negRisk flag) and outcome prices (0..1 probability).
@@ -1558,8 +1591,12 @@ USE WHEN:
 - Assessing conviction behind a specific market (use market_id filter)
 
 Reads from the whale_trades table (F6 populates via Polymarket trade history).
-If table is empty or stale, call prediction_markets first then fetch-trades
-for a specific market.
+Only a call with fetch_live=true and a market_id asks Polymarket for that market's recent trades and stores the whale trades found; without both, the call reads stored rows only.
+
+DO NOT USE WHEN:
+- You want the largest trades of the whole window: the limit keeps the most recent rows first, and only those are sorted by size.
+- You want trades outside prediction markets (stocks, crypto transfers): it reads only the prediction-market trades its own live fetch stored.
+- You want to place or copy a trade: it buys and sells nothing.
 
 Default: last 24h, ≥$5,000 USD, 20 results. Output sorted by size descending.`,
       parameters: {
@@ -1585,7 +1622,7 @@ Default: last 24h, ≥$5,000 USD, 20 results. Output sorted by size descending.`
           fetch_live: {
             type: "boolean",
             description:
-              "If true AND market_id provided, hit Polymarket CLOB live and persist new whales before querying. Default false (DB-only).",
+              "If true AND market_id provided, hit Polymarket CLOB live and persist the whale trades found before querying. Default false (DB-only).",
           },
         },
       },
@@ -1686,15 +1723,20 @@ export const sentimentSnapshotTool: Tool = {
       description: `Current crypto sentiment composite: Fear & Greed (2 sources) + funding rates.
 
 USE WHEN:
-- User asks about market mood, crowd sentiment, fear/greed
+- User asks about crypto market mood, crowd sentiment, fear/greed
 - Morning briefing needs sentiment layer
 - Checking crowd extremes before a trading decision (contrarian context)
 
 Sources: alternative.me + CoinMarketCap (Fear & Greed 0-100), Binance premium
-index (8h funding rate on BTC/ETH/SOL USDT perps). All public/free endpoints.
+index (8h funding rate on BTC/ETH/SOL USDT perps).
 Composite interpretation highlights contrarian signals at extremes.
 
-No args — returns current snapshot with interpretation.`,
+No args — returns current snapshot with interpretation.
+
+DO NOT USE WHEN:
+- You want stock-market or single-stock sentiment: it reads only the crypto Fear & Greed indexes and the funding rates of three fixed perps (BTC, ETH, SOL); it takes no symbol.
+- You want past readings or a trend: it shows one set of readings and no history.
+- You want the odds of an event: it reads no prediction market — use prediction_markets when it is among your tools.`,
       parameters: { type: "object", properties: {} },
     },
   },

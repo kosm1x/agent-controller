@@ -154,11 +154,10 @@ producing weighted signal combination with per-signal ISQ dimensions.
 USE WHEN:
 - User asks for combined signal / megaalpha / alpha weights for today
 - F8 paper-trade loop needs fresh weights before sizing
-- F9 scan ritual invokes this nightly
 
 NOT WHEN:
-- User just wants to see last run's weights (use alpha_latest — cheaper)
-- User wants per-signal diagnostic for an existing run (use alpha_explain)
+- User just wants to see last run's weights (use alpha_latest when it is among your tools)
+- User wants per-signal diagnostic for an existing run (use alpha_explain when it is among your tools)
 
 Pipeline:
   IC filter → build return matrix → Steps 1-11 FLAM → ISQ → persist.
@@ -167,7 +166,7 @@ Returns run summary: run_id, N, N_effective, regime, top 3 signals by
 |weight|, exclusion breakdown. Persists to signal_weights + signal_isq
 (append-only, one row per signal per run).
 
-Typical latency: 50-500ms. Safe to retry (new run_id each time).
+Safe to retry (new run_id each time).
 Probability mode is reserved for F6.5.x; returns mode is the only v1 path.`,
       parameters: {
         type: "object",
@@ -353,11 +352,11 @@ side effects. Use this for F8 / F9 / user queries asking "what does the
 system think right now."
 
 NOT WHEN:
-- You want to force a fresh run (use alpha_run)
-- You want per-signal ISQ diagnostic (use alpha_explain with run_id)
+- You want to force a fresh run (use alpha_run when it is among your tools)
+- You want per-signal ISQ diagnostic (use alpha_explain with run_id when it is among your tools)
 
 Returns a pre-formatted summary with run_id, timestamp, regime,
-N / N_excluded / N_effective, ranked active weights. Latency <50ms.`,
+N / N_excluded / N_effective, ranked active weights.`,
       parameters: {
         type: "object",
         properties: {},
@@ -407,8 +406,7 @@ export const alphaExplainTool: Tool = {
     function: {
       name: "alpha_explain",
       description: `Given a run_id (or default: latest), return the full per-signal
-breakdown: weight, ε (residual), σ (volatility), E_norm (forward return
-normalized), IC, and ISQ dimensions (efficiency/timeliness/coverage/
+breakdown: weight, ε (residual), σ (volatility), IC, and ISQ dimensions (efficiency/timeliness/coverage/
 stability/forward_ic). Excluded signals include the exclude_reason.
 
 USE WHEN:
@@ -416,7 +414,9 @@ USE WHEN:
 - Audit a specific past run
 - Debugging unexpected weight distribution
 
-Latency <50ms.`,
+DO NOT USE WHEN:
+- You want a fresh weighting: it reads a stored run and computes nothing — use alpha_run when it is among your tools.
+- You want backtest or prediction-market results: it reads only the runs alpha_run stored.`,
       parameters: {
         type: "object",
         properties: {

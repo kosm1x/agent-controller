@@ -102,11 +102,16 @@ export const alertBudgetStatusTool: Tool = {
     type: "function",
     function: {
       name: "alert_budget_status",
-      description: `Return the daily token budget remaining for a ritual (or all rituals). Used by the morning/EOD scan rituals to degrade gracefully when the day's cap is exhausted.
+      description: `Return the daily token budget remaining for a market scan ritual (or both). Used by the morning/EOD scan rituals to degrade gracefully when the day's cap is exhausted.
 
 USE WHEN: a ritual is deciding whether to fire the expensive LLM path, or the operator asks "cuánto budget queda hoy", "alert budget left".
 
-Read-only, <1ms. Budget resets at midnight America/New_York.`,
+Read-only. Budget resets at midnight America/New_York.
+
+DO NOT USE WHEN:
+- You want market-data provider call counts or rate limits: this tool reads only the token budget of the two market scan rituals — use market_budget_stats when it is among your tools.
+- You want the token use of another ritual, a chat or a task: only the two ritual_id values are ever counted.
+- You want the budget raised, reset or spent: it only reads.`,
       parameters: {
         type: "object",
         properties: {

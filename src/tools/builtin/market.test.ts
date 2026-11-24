@@ -115,6 +115,9 @@ import {
   sentimentSnapshotTool,
   marketWatchlistAddTool,
   marketWatchlistReseedTool,
+  marketWatchlistListTool,
+  marketWatchlistRemoveTool,
+  marketBudgetStatsTool,
 } from "./market.js";
 import type { MarketBar, MacroPoint } from "../../finance/types.js";
 import { RateLimitedError } from "../../finance/types.js";
@@ -276,6 +279,17 @@ describe("marketHistoryTool", () => {
     expect(errorWords(out)).toBe(
       "No pude obtener historial de SPY (daily): both providers down",
     );
+  });
+
+  it("pins the stale-rows header label", async () => {
+    const bars = makeBars("SPY", 1);
+    mockLayer.getDaily.mockResolvedValue({
+      bars,
+      provider: bars[0].provider,
+      stale: true,
+    });
+    const out = (await marketHistoryTool.execute({ symbol: "SPY" })) as string;
+    expect(out).toContain(" · STALE (providers unreachable)");
   });
 });
 
@@ -1244,5 +1258,252 @@ describe("marketWatchlistReseedTool", () => {
       symbol: "QQQ",
     })) as string;
     expect(out).toBe("market_watchlist_reseed:\n  QQQ: skipped");
+  });
+});
+
+// Description pins: each tool's whole description text as registered.
+describe("tool description texts", () => {
+  const prop = (tool: typeof marketHistoryTool, name: string): string =>
+    (tool.definition.function.parameters as { properties: Record<string, { description: string }> })
+      .properties[name].description;
+  it("pins the whole market_history description", () => {
+    expect(marketHistoryTool.definition.function.description).toBe(`Historical OHLCV bars for a ticker. Pre-formatted as a compact table.
+
+USE WHEN:
+- User asks for price history, chart, trend analysis
+- Need data for follow-up reasoning (recent highs/lows, moving averages by eye)
+
+Default: daily, 60 bars. Override interval for intraday (1/5/15/60 min) or lookback for longer history.
+
+Source: Polygon primary, Alpha Vantage fallback. Stored in NY market time.
+
+DO NOT USE WHEN:
+- You want the current price or the day's change: this tool returns bars with no change or previous-close figure — use market_quote when it is among your tools.
+- You want indicators computed: it computes none — use market_indicators when it is among your tools.
+- You want weekly bars or more than 500 bars: the interval is daily or intraday only, and lookback stops at 500.
+- You want a chart image: it returns text only.
+
+Output: header + table of ≤lookback rows (date/time, O, H, L, C, V). A "STALE" notice in the header means the rows are stored rows returned because no data provider returned bars (daily interval only).`);
+  });
+  it("pins the whole market_signals description", () => {
+    expect(marketSignalsTool.definition.function.description).toBe(`Detect recent technical signals on one symbol or the whole watchlist.
+
+USE WHEN:
+- User asks "any signals firing?", "what's triggering?", "show me crossovers/breakouts"
+- Morning/EOD scan wants the recent signal list
+
+Detectors (6): ma_crossover (golden/death cross), rsi_extreme (overbought/oversold),
+macd_crossover (histogram sign change), bollinger_breakout (close outside bands),
+volume_spike (z-score > 2σ), price_threshold (explicit user thresholds).
+
+If 'symbol' is omitted, scans the active watchlist. Persists detected signals
+to the market_signals DB table for F7 alpha-combination consumption.
+
+DO NOT USE WHEN:
+- You want current indicator values (an RSI level, a moving average): this tool lists detector firings, not an indicator table — use market_indicators when it is among your tools.
+- You want firings stored by earlier scans: its reply shows what it detects in the bars this call gets, not rows read from the stored firings.
+- You want weekly or minute bars: the interval is daily or 60min only, and a symbol with fewer than 40 bars is skipped.
+- You need every firing in the window: the reply shows at most the last 10 per symbol.
+
+Output: after the header, a "Newest bar:" line gives each scanned symbol's newest bar date, marked "(fallback)" when no provider answered and the bars are the stored fallback (the date tells their age), or "none" when no bars were at hand.`);
+  });
+  it("pins the whole market_watchlist_list description", () => {
+    expect(marketWatchlistListTool.definition.function.description).toBe(`Show active watchlist grouped by asset_class.
+
+USE WHEN: "muestra mi watchlist", "list watchlist", "what am I tracking".
+DO NOT USE WHEN:
+- You want prices or recent moves of the tickers: it reads the watchlist table only and fetches no market data.
+- You want removed tickers: it lists active rows only; a removed ticker is not shown.
+- You want how much price history is stored per ticker: it lists asset class, symbol, name, tags and notes, and nothing about stored price history.
+
+Output: compact text table, no API calls.`);
+  });
+  it("pins the whole market_watchlist_remove description", () => {
+    expect(marketWatchlistRemoveTool.definition.function.description).toBe(`Remove (deactivate) a ticker from the watchlist.
+
+USE WHEN: "quita TSLA", "remove AAPL", "drop NVDA from watchlist".
+Soft delete — row kept with active=0, can be re-added.
+
+DO NOT USE WHEN:
+- You want the ticker's stored prices or signals erased: it only marks the watchlist row inactive; stored bars and signals stay.
+- You want to close a paper position in that ticker: it changes no paper position or trade.`);
+  });
+  it("pins the whole market_budget_stats description", () => {
+    expect(marketBudgetStatsTool.definition.function.description).toBe(`API consumption stats for Alpha Vantage / Polygon / FRED.
+
+USE WHEN: user asks about API usage, rate limits, budget status.
+Output: last-60s window usage vs ceilings + daily quota usage (Alpha Vantage
+free tier: 25 req/day) + last-hour summary.
+
+DO NOT USE WHEN:
+- You want the token budget of the market scan rituals: this tool counts market-data provider calls only — use alert_budget_status when it is among your tools.
+- You want model token use or task cost: it reads no model or task figures.
+- You want a limit raised or a counter reset: it raises no limit and resets no counter.`);
+  });
+  it("pins the whole macro_regime description", () => {
+    expect(macroRegimeTool.definition.function.description).toBe(`Classify the current US macro regime from FRED + Alpha Vantage series.
+
+USE WHEN:
+- User asks about economic regime, recession risk, yield curve, inflation, fed policy
+- Need macro context before interpreting market signals
+- Morning briefing wants a regime snapshot
+
+Regimes: expansion / tightening / recession_risk / recovery / mixed
+Each classification includes: yield curve (10Y-2Y), fed funds, VIX, unemployment,
+CPI YoY, M2 YoY, initial jobless claims, plus a reasons[] list and confidence (0..1).
+
+DO NOT USE WHEN:
+- You want the regime of a past date or of another country: it takes no arguments and classifies only the current US regime from its eight fixed series.
+- You want an indicator's history (CPI over a year): it prints one current figure per indicator, not a time series.
+- You want crowd or crypto sentiment: it reads macro series only — use sentiment_snapshot when it is among your tools.
+
+Cost: one call pulls 8 macro series (FEDFUNDS + CPI + UNEMPLOYMENT + TREASURY_YIELD x2
+via AV, VIXCLS + ICSA + M2SL via FRED). Cache-friendly on repeat queries via the
+DataLayer macro cache (6-hour TTL).`);
+  });
+  it("pins the whole sentiment_snapshot description", () => {
+    expect(sentimentSnapshotTool.definition.function.description).toBe(`Current crypto sentiment composite: Fear & Greed (2 sources) + funding rates.
+
+USE WHEN:
+- User asks about crypto market mood, crowd sentiment, fear/greed
+- Morning briefing needs sentiment layer
+- Checking crowd extremes before a trading decision (contrarian context)
+
+Sources: alternative.me + CoinMarketCap (Fear & Greed 0-100), Binance premium
+index (8h funding rate on BTC/ETH/SOL USDT perps).
+Composite interpretation highlights contrarian signals at extremes.
+
+No args — returns current snapshot with interpretation.
+
+DO NOT USE WHEN:
+- You want stock-market or single-stock sentiment: it reads only the crypto Fear & Greed indexes and the funding rates of three fixed perps (BTC, ETH, SOL); it takes no symbol.
+- You want past readings or a trend: it shows one set of readings and no history.
+- You want the odds of an event: it reads no prediction market — use prediction_markets when it is among your tools.`);
+  });
+  it("pins the whole whale_trades description", () => {
+    expect(whaleTradesTool.definition.function.description).toBe(`Recent whale activity (≥$5k default) on Polymarket markets.
+
+USE WHEN:
+- User asks about smart-money flow, whale trades, large positions
+- Need a smart-money signal alongside technical + macro layers
+- Assessing conviction behind a specific market (use market_id filter)
+
+Reads from the whale_trades table (F6 populates via Polymarket trade history).
+Only a call with fetch_live=true and a market_id asks Polymarket for that market's recent trades and stores the whale trades found; without both, the call reads stored rows only.
+
+DO NOT USE WHEN:
+- You want the largest trades of the whole window: the limit keeps the most recent rows first, and only those are sorted by size.
+- You want trades outside prediction markets (stocks, crypto transfers): it reads only the prediction-market trades its own live fetch stored.
+- You want to place or copy a trade: it buys and sells nothing.
+
+Default: last 24h, ≥$5,000 USD, 20 results. Output sorted by size descending.`);
+  });
+  it("pins the whole market_quote description", () => {
+    expect(marketQuoteTool.definition.function.description).toBe(`Current price snapshot for a single ticker (last close, intraday high/low, volume).
+
+USE WHEN:
+- User asks "how is SPY?", "cotiza AAPL", "precio actual de NVDA"
+- Need a one-shot quote, not a time series (for history use market_history)
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+NOT WHEN:
+- User wants historical bars (use market_history)
+- User wants indicators/signals (use market_indicators / market_signals)
+
+Source: Alpha Vantage GLOBAL_QUOTE. ~15-min delayed during US market hours.
+
+Input: symbol (ticker). Examples: SPY, AAPL, TSLA, BRK.B.
+Output: formatted single-line summary (symbol, price, change % and previous close when the source gives them, OHLC with its trading day, volume, source).`);
+  });
+  it("pins the whole market_watchlist_add description", () => {
+    expect(marketWatchlistAddTool.definition.function.description).toBe(`Add a ticker to the operator's watchlist.
+
+USE WHEN:
+- User says "agrega TSLA a mi watchlist", "add AAPL", "trackea NVDA"
+- New symbol is being introduced into rotation
+
+NOT WHEN:
+- User wants a one-shot quote (use market_quote when it is among your tools)
+- User wants to rename/retag existing symbol (use add again — upserts)
+
+Validation: symbol normalized to UPPERCASE; FX forced to 6-letter form (EURUSD);
+rejects if projected daily API usage would exceed the Alpha Vantage tier ceiling.`);
+  });
+  it("pins the whole market_watchlist_reseed description", () => {
+    expect(marketWatchlistReseedTool.definition.function.description).toBe(`Refresh a symbol's weekly history + signals. Idempotent —
+skips if the symbol already has ≥300 weekly bars. Otherwise fetches via
+DataLayer.getWeekly, persists bars, re-runs detectAllSignals, persists firings.
+
+USE WHEN:
+- A prior market_watchlist_add returned a seed error (provider down, rate limit)
+- User explicitly asks to "refresh" or "re-seed" a symbol's history
+- After a long gap where the daily quote seed is stale
+
+NOT WHEN:
+- User wants the current price (use market_quote when it is among your tools)
+- User wants indicators (use market_indicators when it is among your tools)
+
+Output: one line with bars inserted + signals inserted, or skip reason.`);
+  });
+  it("pins the whole market_indicators description", () => {
+    expect(marketIndicatorsTool.definition.function.description).toBe(`Compute technical indicators over a symbol's recent price history.
+
+USE WHEN:
+- User asks for RSI, MACD, moving averages, Bollinger bands, or similar quant signals
+- Need quick overbought/oversold / trend / momentum read on a ticker
+
+NOT WHEN:
+- User wants to scan the watchlist for symbols matching a condition (use market_scan when it is among your tools)
+- User wants raw historical bars (use market_history when it is among your tools)
+
+Output: pre-formatted summary of latest indicator values. Default interval=daily, lookback=100 bars, all 9 indicators.
+
+VWAP is meaningful on intraday intervals (1min/5min/15min/60min); on daily bars it returns a cumulative value that is not the intraday-VWAP convention.`);
+  });
+  it("pins the whole market_scan description", () => {
+    expect(marketScanTool.definition.function.description).toBe(`Scan the active watchlist for symbols matching an indicator threshold.
+
+USE WHEN:
+- User asks to find symbols meeting a condition (e.g., "what's oversold today?", "find symbols with RSI < 30", "which are above their 50-day SMA?")
+
+NOT WHEN:
+- User wants indicators on one specific symbol (use market_indicators when it is among your tools)
+- User wants to add/remove symbols from the watchlist (use market_watchlist_{add,remove,list} when the one you need is among your tools)
+
+The scan iterates the active watchlist, computes one indicator per symbol over recent bars, and filters by the operator+threshold. Cache-friendly: warm scans (after a morning data pull) cost zero API calls.
+
+Output: pre-formatted match list with cache-hit summary.`);
+  });
+  it("pins the whole prediction_markets description", () => {
+    expect(predictionMarketsTool.definition.function.description).toBe(`List / search active Polymarket prediction markets.
+
+USE WHEN:
+- User asks about Polymarket odds, binary markets, election markets,
+  sports betting markets, crowd-pricing on an outcome
+- Morning briefing includes crowd signal layer
+- Event grouping needed (e.g. "US election markets" across candidates)
+
+NOT WHEN:
+- User wants to place a trade (Phase δ F11 territory — not in v7.0)
+- User wants whale-trade activity (use whale_trades when it is among your tools)
+
+Source: Polymarket Gamma API (public, no auth). Results include multi-outcome
+event grouping (negRisk flag) and outcome prices (0..1 probability).
+
+Cost: 1 Polymarket call per invocation (cached). Auto-persists metadata to
+prediction_markets table for F7 alpha-combination consumption.`);
+  });
+  it("pins the market_history symbol parameter text", () => {
+    expect(prop(marketHistoryTool, "symbol")).toBe(`Ticker. Equity/ETF: SPY.`);
+  });
+  it("pins the market_history lookback parameter text", () => {
+    expect(prop(marketHistoryTool, "lookback")).toBe(`Number of bars requested. Default 60; a number is rounded and kept between 1 and 500. Fewer rows can come back.`);
+  });
+  it("pins the market_history interval parameter text", () => {
+    expect(prop(marketHistoryTool, "interval")).toBe(`Bar interval. Default 'daily'. Use intraday only for recent-day analysis.`);
+  });
+  it("pins the whale_trades fetch_live parameter text", () => {
+    expect(prop(whaleTradesTool, "fetch_live")).toBe(`If true AND market_id provided, hit Polymarket CLOB live and persist the whale trades found before querying. Default false (DB-only).`);
   });
 });

@@ -42,17 +42,12 @@ export const NOT_FOR_RE =
 
 /** Tools that predate the rule and still lack a not-for section. Shrink only. */
 const LEGACY_WITHOUT_NOT_FOR = new Set([
-  "alert_budget_status", "alpha_explain",
   "evolution_deactivate_skill",
   "learner_model_status",
   "learning_plan_advance", "learning_plan_explain_back", "learning_plan_quiz",
-  "learning_plan_summarize", "macro_regime", "market_budget_stats",
-  "market_history",
-  "market_signals", "market_watchlist_list",
-  "market_watchlist_remove", "memory_kg_query",
-  "paper_history", "pm_alpha_latest",
-  "sentiment_snapshot", "submit_report",
-  "whale_trades",
+  "learning_plan_summarize",
+  "memory_kg_query",
+  "submit_report",
 ]);
 
 type Road = (registry: ToolRegistry) => Promise<unknown>;

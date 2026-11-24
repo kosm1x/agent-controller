@@ -395,3 +395,56 @@ describe("alphaExplainTool", () => {
     expect(out).toContain(runRow.run_id);
   });
 });
+
+// Description pins: each tool's whole description text as registered.
+describe("tool description texts", () => {
+  it("pins the whole alpha_explain description", () => {
+    expect(alphaExplainTool.definition.function.description).toBe(`Given a run_id (or default: latest), return the full per-signal
+breakdown: weight, ε (residual), σ (volatility), IC, and ISQ dimensions (efficiency/timeliness/coverage/
+stability/forward_ic). Excluded signals include the exclude_reason.
+
+USE WHEN:
+- "Why is signal X weighted at 0?"
+- Audit a specific past run
+- Debugging unexpected weight distribution
+
+DO NOT USE WHEN:
+- You want a fresh weighting: it reads a stored run and computes nothing — use alpha_run when it is among your tools.
+- You want backtest or prediction-market results: it reads only the runs alpha_run stored.`);
+  });
+  it("pins the whole alpha_run description", () => {
+    expect(alphaRunTool.definition.function.description).toBe(`Run the F7 alpha combination engine — 11-step FLAM pipeline over
+the last 104 weekly bars (2 years) of market_signals + market_data,
+producing weighted signal combination with per-signal ISQ dimensions.
+
+USE WHEN:
+- User asks for combined signal / megaalpha / alpha weights for today
+- F8 paper-trade loop needs fresh weights before sizing
+
+NOT WHEN:
+- User just wants to see last run's weights (use alpha_latest when it is among your tools)
+- User wants per-signal diagnostic for an existing run (use alpha_explain when it is among your tools)
+
+Pipeline:
+  IC filter → build return matrix → Steps 1-11 FLAM → ISQ → persist.
+
+Returns run summary: run_id, N, N_effective, regime, top 3 signals by
+|weight|, exclusion breakdown. Persists to signal_weights + signal_isq
+(append-only, one row per signal per run).
+
+Safe to retry (new run_id each time).
+Probability mode is reserved for F6.5.x; returns mode is the only v1 path.`);
+  });
+  it("pins the whole alpha_latest description", () => {
+    expect(alphaLatestTool.definition.function.description).toBe(`Return the most recent completed alpha run's weights — read-only, no
+side effects. Use this for F8 / F9 / user queries asking "what does the
+system think right now."
+
+NOT WHEN:
+- You want to force a fresh run (use alpha_run when it is among your tools)
+- You want per-signal ISQ diagnostic (use alpha_explain with run_id when it is among your tools)
+
+Returns a pre-formatted summary with run_id, timestamp, regime,
+N / N_excluded / N_effective, ranked active weights.`);
+  });
+});
