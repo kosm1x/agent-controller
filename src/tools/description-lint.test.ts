@@ -43,8 +43,7 @@ export const NOT_FOR_RE =
 /** Tools that predate the rule and still lack a not-for section. Shrink only. */
 const LEGACY_WITHOUT_NOT_FOR = new Set([
   "alert_budget_status", "alpha_explain",
-  "evolution_deactivate_skill", "file_delete", "file_read",
-  "gh_create_pr", "gh_repo_create", "git_diff", "git_push", "git_status",
+  "evolution_deactivate_skill",
   "learner_model_status",
   "learning_plan_advance", "learning_plan_explain_back", "learning_plan_quiz",
   "learning_plan_summarize", "macro_regime", "market_budget_stats",

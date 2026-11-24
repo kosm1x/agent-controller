@@ -88,7 +88,12 @@ WORKFLOW for large files:
   3. file_read(path="...", lines="200-350")  → exact slice you need
 
 For small files (≤${LARGE_FILE_THRESHOLD} chars), the full content is returned as before;
-\`total_chars\` is included so you always know the file size.`,
+\`total_chars\` is included so you always know the file size.
+
+DO NOT USE WHEN:
+- The path is a knowledge-base path: this tool looks the path up on disk, not in the knowledge base — use jarvis_file_read when it is among your tools.
+- The file is a PDF: this tool reads a .docx as text and any other file as UTF-8 text — use pdf_read when it is among your tools.
+- You want a folder's contents: this tool reads one file and returns an error for a folder.`,
       parameters: {
         type: "object",
         properties: {
@@ -230,10 +235,10 @@ export const fileWriteTool: Tool = {
       description: `Write content to a VPS file. Creates parent directories if needed. Overwrites existing files.
 
 USE WHEN:
-- Writing source code to project directories (/root/claude/cuatro-flor/, etc.)
+- Writing source code to project directories (under /root/claude/, etc.)
 - Creating temp files for tool pipelines (/tmp/wp_content/, etc.)
 
-DO NOT USE for your Knowledge Base — use jarvis_file_write instead.
+DO NOT USE for your Knowledge Base — use jarvis_file_write when it is among your tools.
 DO NOT USE for /root/claude/mission-control/ — that is your own source code and is blocked.
 
 For large content salvaged from a truncated tool call, pass content_file=<salvage path>.
@@ -352,16 +357,22 @@ export const fileDeleteTool: Tool = {
     type: "function",
     function: {
       name: "file_delete",
-      description: `Delete a file or directory. Requires confirmation before execution.
+      description: `Delete a file or directory.
 
 USE WHEN:
 - You need to remove a file or folder that is no longer needed
 - Cleaning up temporary files or outdated outputs
 
 RESTRICTIONS:
-- Only paths under /root/claude/, /tmp/, or /workspace/ can be deleted
+- Only paths under /root/claude/, /tmp/, /workspace/ or the knowledge-base folder can be deleted
 - System paths are blocked for safety
 - Directories are removed recursively (like rm -rf)
+
+DO NOT USE WHEN:
+- The file belongs to your knowledge base: this tool removes only the copy on disk and leaves the knowledge-base entry in place — use jarvis_file_delete when it is among your tools.
+- You want to delete several files by a pattern: this tool takes one exact path and refuses wildcards and glob characters.
+- The target is /root/claude/, /tmp/ or /workspace/ itself, or a project folder directly under /root/claude/: this tool refuses it and deletes nothing.
+- You expect the operator to be asked before the deletion: in a run marked non-interactive, such as a scheduled task or a ritual, this tool does not ask.
 
 CAUTION: This is irreversible. Verify the path is correct before calling.`,
       parameters: {

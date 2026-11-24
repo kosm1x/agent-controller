@@ -253,6 +253,11 @@ USE WHEN:
 - To check if there are uncommitted changes
 - After making code changes, to verify what was modified
 
+DO NOT USE WHEN:
+- You want the changed lines themselves: this tool shows the branch and which files changed, not their lines — use git_diff when it is among your tools (it leaves out untracked files).
+- You want the commit history, or whether the branch is behind its remote: this tool runs no log and no fetch.
+- The folder is outside /root/claude/ and /tmp/, or is the primary mission-control checkout: this tool refuses it; in the agent's own mission-control worktree it runs only on a jarvis/feat/..., jarvis/fix/... or jarvis/refactor/... branch.
+
 Returns short-format status (M=modified, A=added, D=deleted, ??=untracked).`,
       parameters: {
         type: "object",
@@ -260,7 +265,7 @@ Returns short-format status (M=modified, A=added, D=deleted, ??=untracked).`,
           cwd: {
             type: "string",
             description:
-              "Project directory (default: /root/claude/cuatro-flor). Set to the repo you're working on.",
+              "Project directory (default: the agent's default project folder). Set to the repo you're working on.",
           },
         },
       },
@@ -296,6 +301,11 @@ USE WHEN:
 - To review what changed before committing
 - To understand the scope of modifications
 
+DO NOT USE WHEN:
+- You want to compare two commits or branches: this tool takes no commit or branch; it compares the working tree with the index, or with staged=true the index with the last commit.
+- You want files that were never added: an untracked file does not appear in this diff.
+- You want a large change in one piece: the output stops at 5000 characters — pass file to see one path at a time.
+
 Returns unified diff. Use staged=true to see staged changes.`,
       parameters: {
         type: "object",
@@ -312,7 +322,7 @@ Returns unified diff. Use staged=true to see staged changes.`,
           cwd: {
             type: "string",
             description:
-              "Project directory (default: /root/claude/cuatro-flor)",
+              "Project directory (default: the agent's default project folder)",
           },
         },
       },
@@ -377,7 +387,7 @@ AFTER COMMIT: Report the commit hash, branch, files committed, and commit messag
           cwd: {
             type: "string",
             description:
-              "Project directory (default: /root/claude/cuatro-flor). MUST match the repo you wrote files to.",
+              "Project directory (default: the agent's default project folder). MUST match the repo you wrote files to.",
           },
         },
         required: ["files", "message", "cwd"],
@@ -451,16 +461,24 @@ USE WHEN:
 Verifies GitHub auth before pushing. Pushes current branch to origin.
 If the repo has NO \`origin\` yet: for a NEW project run gh_repo_create with \`cwd\` first
 (it creates the GitHub repo AND wires origin); for a repo that already exists on GitHub
-pass \`remote\`. shell_exec cannot add or change git remotes.
+pass \`remote\`.
 
-AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+DO NOT USE WHEN:
+- Your changes are not committed yet: this tool does not commit them and pushes only commits — use git_commit first.
+- You want another branch, another remote or a forced push: this tool pushes the checked-out branch to origin, without force; it renames a local master branch to main and may first rebase onto origin's copy of the branch.
+- The branch is main of mission-control, or a mission-control branch changes protected files: where the guard recognises the repository, this tool refuses and pushes nothing.
+- You want a pull request: this tool opens none — use gh_create_pr.
+
+AFTER PUSH: Report the branch name and the tool's result.`,
       parameters: {
         type: "object",
         properties: {
           cwd: {
             type: "string",
             description:
-              "Project directory (default: /root/claude/cuatro-flor). MUST match the repo you committed to.",
+              "Project directory (default: the agent's default project folder). MUST match the repo you committed to.",
           },
           remote: {
             type: "string",
@@ -493,11 +511,9 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
         return JSON.stringify({ error: authCheckFailure(authErr) });
       }
 
-      // Verify remote exists — or wire it from `remote`. shell_exec denies
-      // `git remote add`, so this is the only sanctioned path for a repo that
-      // already exists on GitHub but was never linked locally. Without it the
-      // two tools pointed at each other and a new project was un-pushable
-      // (task 8953, 2026-09-01).
+      // Read origin. When that fails, `remote` must be given and be a plain GitHub
+      // HTTPS URL (else the call is refused); it is kept as the pending origin, and
+      // the `git remote add` for it comes further below, after the repository check.
       let remote: string;
       let pendingRemote: string | undefined;
       try {
@@ -695,7 +711,7 @@ export const ghRepoCreateTool: Tool = {
     type: "function",
     function: {
       name: "gh_repo_create",
-      description: `Create a new GitHub repository under the agent's own GitHub account.
+      description: `Create a new GitHub repository, by default under the agent's own GitHub account.
 MUST be called before git_push if the remote repo doesn't exist yet.
 
 USE WHEN:
@@ -704,18 +720,24 @@ USE WHEN:
 - User asks to "create a repo" or "push to a new repo"
 
 ALWAYS pass \`cwd\` (the local project directory, after git init): the tool then
-creates the repo AND configures it as remote \`origin\` there, so git_push works
-next. Without \`cwd\` only the GitHub repo is created and the local repo has no
-remote — wire it afterwards with git_push(remote=<url>). shell_exec cannot modify
-git remotes.
-A bare name creates the repo under the agent's own GitHub account; owner/name creates it under that owner only if the agent's account has access there; when GitHub refuses that access, the tool says so and names the remedy. Does NOT push code — use git_push after.`,
+creates the repo AND configures it as remote \`origin\` there.
+Without \`cwd\` only the GitHub repo is created and the local repo has no
+remote — wire it afterwards with git_push(remote=<url>).
+A bare name creates the repo under the agent's own GitHub account; owner/name creates it under that owner only if the agent's account has access there. Does NOT push code — use git_push after.
+
+Any other tool named in this description or its parameters is usable only when it is among your tools.
+
+DO NOT USE WHEN:
+- The repository already exists on GitHub: this tool only creates new repositories — to link a local repo that has no origin to it, use git_push with remote set to that repository's GitHub HTTPS URL.
+- cwd names a local repo that already has an origin: this tool refuses it and creates nothing.
+- The repository must stay private: this tool creates a public repository unless private is true.`,
       parameters: {
         type: "object",
         properties: {
           name: {
             type: "string",
             description:
-              "Repository name (e.g. 'my-project'), created under the agent's own GitHub account. 'owner/name' creates it under that owner only if the agent's account has access there; when GitHub refuses that access, the tool says so and names the remedy.",
+              "Repository name (e.g. 'my-project'), created under the agent's own GitHub account. 'owner/name' creates it under that owner only if the agent's account has access there.",
           },
           description: {
             type: "string",
@@ -757,9 +779,8 @@ A bare name creates the repo under the agent's own GitHub account; owner/name cr
       if (args.description)
         ghArgs.push("--description", args.description as string);
       ghArgs.push("--confirm");
-      // Wire the local repo as `origin` in the same gh call (--source/--remote):
-      // shell_exec denies `git remote add` and git_push needs origin to exist,
-      // so without this a NEW project could never be pushed (2026-09-01).
+      // With cwd, when reading origin there gives nothing (none, or the read failed),
+      // the gh call also gets --source/--remote, asking gh to link that folder as `origin`.
       const cwd = args.cwd as string | undefined;
       const sourceDir = cwd ? resolveWorkDir(cwd) : undefined;
       if (sourceDir) {
@@ -828,8 +849,12 @@ USE WHEN:
 - To request review of changes before merging to main
 
 ALWAYS pass \`cwd\` — the repo (or worktree) where you committed. Without it
-the tool looks at an unrelated default directory and the PR fails or targets
-the wrong repo. The head branch is read from \`cwd\` automatically.
+the tool uses a fixed default directory, which may be another repo. The head branch is read from \`cwd\` automatically.
+
+DO NOT USE WHEN:
+- The branch is not on GitHub yet: this tool pushes nothing — push it first; use git_push when it is among your tools.
+- You want to merge, update, list or comment on a pull request: this tool only opens a new one.
+- The checked-out branch is the base branch: this tool refuses and opens nothing.
 
 Returns the PR URL on success.`,
       parameters: {
