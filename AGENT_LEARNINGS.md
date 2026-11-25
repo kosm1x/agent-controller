@@ -141,3 +141,4 @@
 - **Better:** a change to the operator's live tool is made on a copy, reviewed as a copy and put in place by one rename; green and red are shown by pointing the test's path constant at copies, never by editing or running the tool.
 - **Mistake:** my count of one table was handed over as the count of a whole database; a second table with a content column was found only afterwards → before counting a store, list from its catalog every table that can hold the text.
 - **Better:** two "not established" items of a builder's reading (a unique key; what a search function filters) were settled in one minute from the database catalog with the read-only role; ask the catalog before designing around an unknown.
+- **Better:** a write sent to a database as statement text is also a write into that server's log; read the logging settings from the catalog before the script is designed, and switch them off inside the one transaction.
