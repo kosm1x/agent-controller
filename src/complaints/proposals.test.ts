@@ -193,13 +193,27 @@ describe("packets", () => {
     expect(p.text).toContain("== earlier predictions on this type\nnone\n");
   });
 
+  const sched = Array.from({ length: 7 }, (_, i) =>
+    row({ task_id: `s-${i}`, ritual_id: null, schedule_id: "s-one", schedule_name: "one", status: "completed_with_concerns", created_at: `2026-11-1${i} 12:00:00`, completed_at: `2026-11-1${i} 12:01:00` }),
+  );
+
   it("names a stored task text as such", () => {
-    const sched = Array.from({ length: 7 }, (_, i) =>
-      row({ task_id: `s-${i}`, ritual_id: null, schedule_id: "s-one", schedule_name: "one", status: "completed_with_concerns", created_at: `2026-11-1${i} 12:00:00`, completed_at: `2026-11-1${i} 12:01:00` }),
-    );
     const [p] = renderPackets(sched, [], "", { "schedule:s-one": { description: "Stored text.", tools: [], stored: true } }, NOW);
-    expect(p.text).toContain("\n== stored instruction text of the task\nStored text.\n\n== tools the task is given\nnone\n");
+    expect(p.text).toContain("\n== stored instruction text of the task (the current text; older runs in the digest may have had a different one)\nStored text.\n\n== tools the task is given\nnone\n");
     expect(p.text).not.toContain("newest run");
+  });
+
+  it("cuts a stored text at its first fence line and at the cap, as a run's", () => {
+    const fenced = "Stored step.\n\n⟦BEGIN DATA x — p — 1 chars, complete⟧\nz\n⟦END DATA x⟧";
+    const long = "y".repeat(6_001);
+    for (const [description, want] of [
+      [fenced, "Stored step."],
+      [long, `${"y".repeat(6_000)}\n[cut at 6,000 characters: the rest of the instruction text is not shown]`],
+    ]) {
+      const [p] = renderPackets(sched, [], "", { "schedule:s-one": { description, tools: [], stored: true } }, NOW);
+      expect(p.text).toContain(`(the current text; older runs in the digest may have had a different one)\n${want}\n\n== tools the task is given`);
+      expect(p.text).not.toContain("⟦");
+    }
   });
 
   it("is byte-identical under shuffled rows", () => {

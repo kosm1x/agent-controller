@@ -170,7 +170,9 @@ describe("createComplaintsProposals", () => {
   it("the job: the cause's place, the two computed lines and 1 to 3 chosen guards, and the valid non-answers", () => {
     const d = createComplaintsProposals("2026-11-30", input).description;
     expect(d).toContain("2. DÓNDE VIVE — where the CAUSE is, not where a workaround could go; exactly one of: ");
-    expect(d).toContain('6. PREDICCIÓN Y GUARDAS — only when point 3 holds a change: copy the two computed lines ("prediction:" and "baseline:") unchanged, then choose 1 to 3 of the guard candidates: the ones that would catch the task going quiet by doing less of the work your change touches. Copy each chosen candidate unchanged; never write one of your own. If the block has no guard candidates, write "sin guardas calculadas". When point 3 holds no change, write "no aplica" here.\nThis task is complete when every block has its section with points 1 to 6. "causa no visible aquí", "sin cambio de texto", "no aplica" and "(supuesto)" are valid answers that stay visible in your output; they are not unfinished work.\n\n## Rules\n');
+    expect(d).toContain('6. PREDICCIÓN Y GUARDAS — only when point 3 holds a change: copy the two computed lines ("prediction:" and "baseline:") unchanged, then choose 1 to 3 of the guard candidates: the ones that would catch the task going quiet by doing less of the work your change touches. Copy each chosen candidate unchanged; never write one of your own. If the block has no guard candidates, write "sin guardas calculadas" and say that this change cannot be registered as a prediction without a guard. When point 3 holds no change, write "no aplica" here.\nThis task is complete when every block has its section with points 1 to 6. "causa no visible aquí", "sin cambio de texto", "no aplica" and "(supuesto)" are valid answers that stay visible in your output; they are not unfinished work.\n\n## Rules\n');
+    expect(d).toContain("the task's instruction text (each block says whether it is the stored text or the text of the newest run), the tools it is given,");
+    expect(d).not.toContain("receives on every run");
     expect(d).toContain(". = clean, ? = not finished or cancelled (queued, running, waiting for context, cancelled),");
     expect(d).toContain("After the blocks: the names of all tools that exist. Most can be given to a task; some need a setup this material does not show.\n");
   });
@@ -247,7 +249,7 @@ describe("loadComplaintsProposalsInput", () => {
     rows = asSchedule(rows);
     storedText = { "s-one": "Stored task text.\nSecond line." };
     const text = loadComplaintsProposalsInput(NOW).packets[0].text;
-    expect(text).toContain("== stored instruction text of the task\nStored task text.\nSecond line.\n\n== tools the task is given\ntool_a\n");
+    expect(text).toContain("== stored instruction text of the task (the current text; older runs in the digest may have had a different one)\nStored task text.\nSecond line.\n\n== tools the task is given\ntool_a\n");
     expect(text).not.toContain("[date line]");
     expect(text).not.toContain("PAST OUTPUTS");
   });

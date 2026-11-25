@@ -148,7 +148,7 @@ export function renderPackets(
     }
 
     const run = newest[key];
-    out.push("", run?.stored ? "== stored instruction text of the task" : `== instruction text of the newest run (${newestTaskId.slice(0, 8)}); parts of it are data computed for that run`);
+    out.push("", run?.stored ? "== stored instruction text of the task (the current text; older runs in the digest may have had a different one)" : `== instruction text of the newest run (${newestTaskId.slice(0, 8)}); parts of it are data computed for that run`);
     out.push(run ? instructionText(run.description) : "not available");
 
     out.push("", "== tools the task is given");
