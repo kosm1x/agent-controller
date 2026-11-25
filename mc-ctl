@@ -154,12 +154,13 @@ cmd_status() {
   if [ -f "$DB_PATH" ]; then
     echo ""
     echo -e "${BOLD}  Quick Metrics${NC}"
-    local total running completed failed
+    local total running completed concerns failed
     total=$(sql_raw "SELECT COUNT(*) FROM tasks;" 2>/dev/null || echo "0")
     running=$(sql_raw "SELECT COUNT(*) FROM tasks WHERE status = 'running';" 2>/dev/null || echo "0")
-    completed=$(sql_raw "SELECT COUNT(*) FROM tasks WHERE status = 'completed';" 2>/dev/null || echo "0")
+    completed=$(sql_raw "SELECT COUNT(*) FROM tasks WHERE status IN ('completed', 'completed_with_concerns');" 2>/dev/null || echo "0")
+    concerns=$(sql_raw "SELECT COUNT(*) FROM tasks WHERE status = 'completed_with_concerns';" 2>/dev/null || echo "0")
     failed=$(sql_raw "SELECT COUNT(*) FROM tasks WHERE status = 'failed';" 2>/dev/null || echo "0")
-    echo -e "  Tasks:      ${total} total, ${GREEN}${completed}${NC} completed, ${CYAN}${running}${NC} running, ${RED}${failed}${NC} failed"
+    echo -e "  Tasks:      ${total} total, ${GREEN}${completed}${NC} completed (${concerns} with concerns), ${CYAN}${running}${NC} running, ${RED}${failed}${NC} failed"
   fi
 
   echo ""
