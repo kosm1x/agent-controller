@@ -33,6 +33,7 @@ import { executeOvernightTuning } from "./overnight-tuning.js";
 import { createMarketMorningScan } from "./market-morning-scan.js";
 import { createMarketEodScan } from "./market-eod-scan.js";
 import { createPmDailyRebalance } from "./pm-daily-rebalance.js";
+import { createComplaintsProposals, loadComplaintsProposalsInput } from "./complaints-proposals.js";
 import { isNyseTradingDay } from "../finance/market-calendar.js";
 import { getConfig } from "../config.js";
 import { errMsg } from "../lib/err-msg.js";
@@ -216,6 +217,8 @@ function getTaskTemplate(ritual: RitualDefinition): TaskSubmission {
       return createMarketEodScan(date);
     case "pm-daily-rebalance":
       return createPmDailyRebalance(date);
+    case "complaints-proposals":
+      return createComplaintsProposals(date, loadComplaintsProposalsInput(new Date()));
     default:
       throw new Error(`Unknown ritual: ${ritual.id}`);
   }

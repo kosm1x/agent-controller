@@ -208,7 +208,7 @@ describe("startRitualScheduler", () => {
     //   + 1 evolution-log-commit (weekly durability, 2026-06-17)
     //   + 1 no-verdict-reminder (V8.5 4.6, 2026-07-14)
     //   + 1 jme-consolidate (JME Phase 2 nightly batch, 2026-07-14)
-    expect(mockSchedule).toHaveBeenCalledTimes(19);
+    expect(mockSchedule).toHaveBeenCalledTimes(20);
     // JME nightly consolidation runs pre-dawn MX (Phase 2, audit C3).
     expect(mockSchedule.mock.calls.some((c) => c[0] === "45 2 * * *")).toBe(
       true,
@@ -244,7 +244,7 @@ describe("startRitualScheduler", () => {
     delete process.env.HINDSIGHT_ENABLED;
     try {
       startRitualScheduler();
-      expect(mockSchedule).toHaveBeenCalledTimes(18);
+      expect(mockSchedule).toHaveBeenCalledTimes(19);
     } finally {
       if (prior !== undefined) process.env.HINDSIGHT_ENABLED = prior;
     }
@@ -258,7 +258,7 @@ describe("startRitualScheduler", () => {
     process.env.HINDSIGHT_COST_PULL_ENABLED = "true";
     try {
       startRitualScheduler();
-      expect(mockSchedule).toHaveBeenCalledTimes(19);
+      expect(mockSchedule).toHaveBeenCalledTimes(20);
     } finally {
       if (priorEnabled !== undefined)
         process.env.HINDSIGHT_ENABLED = priorEnabled;
@@ -313,7 +313,7 @@ describe("stopRitualScheduler", () => {
     startRitualScheduler();
     stopRitualScheduler();
 
-    expect(mockStop).toHaveBeenCalledTimes(19);
+    expect(mockStop).toHaveBeenCalledTimes(20);
   });
 });
 
@@ -530,7 +530,7 @@ describe("delayed same-day retry of a failed ritual", () => {
       throw new Error("SQLITE_BUSY");
     });
     startRitualScheduler();
-    expect(mockSchedule).toHaveBeenCalledTimes(19);
+    expect(mockSchedule).toHaveBeenCalledTimes(20);
     expect(mockEmitEvent).toHaveBeenCalledWith(
       "schedule.run_failed",
       expect.objectContaining({

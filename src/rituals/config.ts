@@ -128,6 +128,14 @@ export const rituals: RitualDefinition[] = [
     cron: "0 7 * * *",
     enabled: false,
   },
+  {
+    id: "complaints-proposals",
+    title: "Complaints proposals",
+    // Monday 7:30 AM MX: one proposed change per triggered task type, report
+    // only (src/rituals/complaints-proposals.ts); nothing is applied.
+    cron: "30 7 * * 1",
+    enabled: true,
+  },
 ];
 
 /**
