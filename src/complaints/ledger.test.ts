@@ -470,3 +470,57 @@ describe("audit folds", () => {
   });
 });
 
+describe("a guard naming a set of equivalent tools", () => {
+  const set = (tools: unknown, min = 1, maxBelow = 0) => ({ tools, min, maxBelow });
+  /** Seven clean runs; calls[i] = that run's guard_tools object. */
+  const seven = (calls: Record<string, number>[]): TaskRow[] => runs(".......").map((r, i) => ({ ...r, guard_tools: JSON.stringify(calls[i]) }));
+
+  it("a run's count is the sum over the set; printed with the names joined by |", () => {
+    const c = check({ guards: [set(["file_read", "jarvis_file_read"])] }, seven([{ jarvis_file_read: 1 }, { file_read: 1 }, { file_read: 1, jarvis_file_read: 2 }, { jarvis_file_read: 1 }, { file_read: 3 }, { jarvis_file_read: 1 }, { file_read: 1 }]));
+    expect([c.guards[0].below, c.guards[0].word, c.state]).toEqual([0, "holds", "CONFIRMED"]);
+    expect(c.text).toBe(
+      `a CONFIRMED | ritual:pred since ${SINCE}: counted 7/7, complaints 0 (limit 2), unknown 0 [.......]; guard file_read|jarvis_file_read >= 1 calls: 0 run(s) below (limit 0) holds`,
+    );
+    // The same runs under the single-tool guard: the runs that used only the other tool are below.
+    expect(check({ guards: [{ tool: "jarvis_file_read", min: 1, maxBelow: 0 }] }, seven([{ jarvis_file_read: 1 }, { file_read: 1 }, { file_read: 1, jarvis_file_read: 2 }, { jarvis_file_read: 1 }, { file_read: 3 }, { jarvis_file_read: 1 }, { file_read: 1 }])).guards[0].below).toBe(3);
+  });
+
+  it("each tool alone below min, the sum not: not below; one short of min in sum: below", () => {
+    const g = { guards: [set(["exa", "web"], 4, 0)] };
+    const each = Array.from({ length: 7 }, () => ({ exa: 2, web: 2 }));
+    expect(check(g, seven(each)).guards[0].below).toBe(0);
+    expect(check({ guards: [exa(4, 0)] }, seven(each)).guards[0].below).toBe(7);
+    const short = check(g, seven([{ exa: 2, web: 1 }, ...each.slice(1)]));
+    expect([short.guards[0].below, short.guards[0].word]).toEqual([1, "broken"]);
+    // A name the runs never use adds nothing; a prototype member name is still 0 calls.
+    expect(check({ guards: [set(["constructor", "exa", "nosuch"], 3, 0)] }, seven(each)).guards[0].below).toBe(7);
+  });
+
+  it("three and four names are accepted; the did-not-run and no-trace rules are the single tool's", () => {
+    expect(reasons(file({ ...BASE, guards: [set(["a", "b", "c"]), set(["a", "b", "c", "d"])] }))).toEqual([]);
+    expect(check({ guards: [set(["exa", "web"], 1, 6)] }, runs(".", [null])).guards[0].below).toBe(1);
+  });
+
+  it("a single-tool guard prints exactly as before", () => {
+    expect(check({ guards: [exa(1, 0)] }, runs("...")).text).toBe(
+      `a COUNTING | ritual:pred since ${SINCE}: counted 3/7, complaints 0 (limit 2), unknown 4 [...]; guard exa >= 1 calls: 0 run(s) below (limit 0) pending`,
+    );
+  });
+
+  it("a malformed set: 1 or 5 names, a duplicate, unsorted, a bad name, not an array; both or neither of tool and tools", () => {
+    const must = '1: "tools" in guard 1 must be an array of 2 to 4 tool names, each text matching ^[A-Za-z0-9_.:-]{1,64}$, distinct and in ascending order';
+    for (const tools of [["a"], [], ["a", "b", "c", "d", "e"], ["a", "a"], ["b", "a"], ["a", "c", "b"], ["B", "a", "a"], ["a", "b c"], ["a", "b\n"], ["a", 7], "a|b", null]) {
+      expect([tools, reasons(file({ ...BASE, guards: [set(tools)] }))]).toEqual([tools, [must]]);
+    }
+    // Ascending is by code unit: upper case sorts before lower case.
+    expect(reasons(file({ ...BASE, guards: [set(["B", "a"])] }))).toEqual([]);
+    const one = '1: guard 1 must have exactly one of "tool" and "tools"';
+    expect(reasons(file({ ...BASE, guards: [{ tool: "exa", tools: ["a", "b"], min: 1, maxBelow: 0 }] }))).toEqual([one]);
+    expect(reasons(file({ ...BASE, guards: [{ min: 1, maxBelow: 0 }] }))).toEqual([one]);
+    expect(reasons(file({ ...BASE, guards: [exa(1, 0), { tools: ["a b"], min: 1 }] }))).toEqual([
+      '1: missing key "maxBelow" in guard 2',
+      '1: "tools" in guard 2 must be an array of 2 to 4 tool names, each text matching ^[A-Za-z0-9_.:-]{1,64}$, distinct and in ascending order',
+    ]);
+  });
+});
+

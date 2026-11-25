@@ -13,9 +13,12 @@
  *
  * A row is a verdict (src/complaints/verdict.ts, buildVerdict called once per
  * row on the same rows) plus up to 3 guards, "at most J of the counted runs
- * make fewer than M calls of `tool`". A guard counts a tool's calls that have
- * no did-not-run gate row: the ledger SQL's `guard_tools`
- * (src/complaints/query.ts), tool.called rows minus tool.gated rows whose
+ * make fewer than M calls of `tool`". A guard may name a set of equivalent
+ * tools instead (`tools`: 2 to 4 distinct names in ascending order, printed
+ * joined by `|`); a run's calls are then the sum over the set. A guard counts
+ * a tool's calls that have no did-not-run gate row: the ledger SQL's
+ * `guard_tools` (src/complaints/query.ts, every tool the run called, so a
+ * set needs nothing more from it), tool.called rows minus tool.gated rows whose
  * decision is in GATED_NOT_RUN. There is no trace event for a call that ran,
  * so these known cases still count: a call that errored; a placeholder
  * refusal on the first-call path (it is refused before the gate, so it leaves
@@ -54,11 +57,8 @@ export const LEDGER_DAYS = 30;
 export const CLOSED_STATES = ["REFUTED", "CONFIRMED", "CONFIRMED, guard broken", "EXPIRED"] as const;
 export type LedgerState = (typeof CLOSED_STATES)[number] | "COUNTING" | "CONFIRMED, guard pending";
 
-export interface Guard {
-  tool: string;
-  min: number;
-  maxBelow: number;
-}
+/** One tool, or a set of equivalent tools whose calls are summed. */
+export type Guard = ({ tool: string } | { tools: string[] }) & { min: number; maxBelow: number };
 
 export interface Prediction {
   /** 1-based line in the file. */
@@ -82,7 +82,7 @@ const ID = /^[A-Za-z0-9_-]{1,40}$/;
 const TOOL = /^[A-Za-z0-9_.:-]{1,64}$/;
 const DAY_MS = 86_400_000;
 const KEYS = ["id", "type", "since", "maxComplaints", "runs", "change", "baseline", "guards", "closed", "answer"];
-const GUARD_KEYS = ["tool", "min", "maxBelow"];
+const GUARD_KEYS = ["tool", "tools", "min", "maxBelow"];
 const CLOSED_KEYS = ["state", "checkedAt", "line"];
 const MAX = Number.MAX_SAFE_INTEGER;
 
@@ -149,11 +149,16 @@ export function parseLedger(src: string, latest: string): { predictions: Predict
       o.guards.forEach((g: unknown, j) => {
         const where = ` in guard ${j + 1}`;
         if (!isObject(g)) return found.push(`guard ${j + 1} must be an object`);
-        found.push(...objectProblems(g, GUARD_KEYS, GUARD_KEYS, [
+        const names = g.tools;
+        found.push(...objectProblems(g, GUARD_KEYS, GUARD_KEYS.slice(2), [
           ["tool", typeof g.tool === "string" && TOOL.test(g.tool), `text matching ${TOOL.source}`],
+          ["tools", Array.isArray(names) && names.length >= 2 && names.length <= 4
+            && names.every((t, k) => typeof t === "string" && TOOL.test(t) && (k === 0 || cmp(names[k - 1], t) < 0)),
+            `an array of 2 to 4 tool names, each text matching ${TOOL.source}, distinct and in ascending order`],
           ["min", whole(g.min, 1, MAX), "a whole number of at least 1"],
           ["maxBelow", whole(g.maxBelow, 0, hi), below],
         ], where));
+        if (Object.hasOwn(g, "tool") === Object.hasOwn(g, "tools")) found.push(`guard ${j + 1} must have exactly one of "tool" and "tools"`);
       });
     }
     if (isObject(o.closed)) {
@@ -196,7 +201,7 @@ export function parseLedger(src: string, latest: string): { predictions: Predict
 
 export interface GuardCheck {
   guard: Guard;
-  /** Judged runs with fewer than `min` calls of the tool with no did-not-run gate row (no trace rows: 0). */
+  /** Judged runs with fewer than `min` calls with no did-not-run gate row of the guard's tool, or summed over its set (no trace rows: 0). */
   below: number;
   /** Counted runs not yet judged: finished in the check's second or later, or with no completed_at. */
   unsettled: number;
@@ -217,6 +222,8 @@ export interface RowCheck {
 }
 
 const GUARD_WORD = { CONFIRMED: "holds", REFUTED: "broken", COUNTING: "pending" } as const;
+
+const toolNames = (g: Guard): string[] => ("tools" in g ? g.tools : [g.tool]);
 
 /** ms of an ISO time in the CLI's pattern; NaN for anything else. */
 const isoMs = (v: unknown): number => (typeof v === "string" && ISO_TIME.test(v) ? Date.parse(v) : NaN);
@@ -259,7 +266,8 @@ export function checkRow(p: Prediction, rows: TaskRow[], now: string, replay: bo
   const unsettled = v.runList.length - judged.length;
   const guards = p.guards.map((guard): GuardCheck => {
     // Own keys only: a tool named like an Object prototype member is still 0 calls.
-    const below = counts.filter((t) => (Object.hasOwn(t, guard.tool) ? t[guard.tool] : 0) < guard.min).length;
+    const calls = (t: Record<string, number>): number => toolNames(guard).reduce((n, tool) => n + (Object.hasOwn(t, tool) ? t[tool] : 0), 0);
+    const below = counts.filter((t) => calls(t) < guard.min).length;
     return { guard, below, unsettled, word: GUARD_WORD[closeRule(below, v.unknown + unsettled, guard.maxBelow)] };
   });
   const words = guards.map((g) => g.word);
@@ -269,7 +277,7 @@ export function checkRow(p: Prediction, rows: TaskRow[], now: string, replay: bo
     : words.includes("pending") ? "CONFIRMED, guard pending"
     : "CONFIRMED";
   const guardText = guards.length === 0 ? "guard: none"
-    : guards.map(({ guard: g, below, word }) => `guard ${g.tool} >= ${g.min} calls: ${below} run(s) below (limit ${g.maxBelow}) ${word}`).join("; ")
+    : guards.map(({ guard: g, below, word }) => `guard ${toolNames(g).join("|")} >= ${g.min} calls: ${below} run(s) below (limit ${g.maxBelow}) ${word}`).join("; ")
       + (guards.length > 0 && unsettled > 0 ? `; ${unsettled} counted run(s) not yet judged` : "");
   const none = rows.some((r) => typeKey(r) === p.type) ? "" : `; no run of this type in ${LEDGER_DAYS} days`;
   const line = head(state)
