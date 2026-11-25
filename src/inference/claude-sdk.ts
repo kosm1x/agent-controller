@@ -750,7 +750,7 @@ export interface OpusTierBenchmarkOverride {
   opusModel?: string;
   /** SDK thinking config instead of `defaultThinkingFor(model)`. */
   thinking?: ThinkingConfig;
-  /** Effort applied when the caller passed none (SDK default otherwise). */
+  /** Effort applied when the caller passed none (ahead of SONNET_EFFORT). */
   effort?: "low" | "medium" | "high" | "max";
   /** Surface an Opus failure instead of masking it with the Sonnet retry. */
   noFallback?: boolean;
@@ -973,9 +973,11 @@ export async function queryClaudeSdk(opts: {
   unlimited?: boolean;
   model?: string;
   /**
-   * Reasoning-effort knob (V8.5 Phase 2.3). Maps to SDK Options.effort;
-   * unset = SDK default ("high"). Callers thread the classifier's modelTier
-   * here (flash→low, standard→medium, capable→high). Do NOT pass on Haiku
+   * Reasoning effort, mapped to SDK Options.effort; when unset, the options
+   * builder in queryClaudeSdk applies its fallbacks. Set today by the two
+   * shims, queryClaudeSdkAsInfer and queryClaudeSdkAsInferWithTools; the
+   * fast-runner's tier-derived effort is deliberately not passed on this
+   * path (a ruled choice, revisited at model upgrades). Do NOT pass on Haiku
    * legs — Haiku 4.5 has no effort support (the SDK silently downgrades,
    * but the fallback leg should carry the minimal request).
    */
@@ -1333,17 +1335,16 @@ export async function queryClaudeSdk(opts: {
       autoMemoryEnabled: false,
     },
     maxTurns: opts.maxTurns ?? 20,
-    // Effort knob (V8.5 Phase 2.3): request-level param, does not touch the
-    // cached prompt prefix. Omitted when unset so the SDK default ("high")
-    // applies — matters because effort semantics may drift across SDK bumps.
-    // SONNET_EFFORT (2026-09-29) is the last fallback and reaches the Sonnet
-    // leg only — never Haiku (no effort support) or Opus (own ruling).
+    // Effort sent: the caller's opts.effort, else the benchmark override's,
+    // else SONNET_EFFORT when the effective model is SONNET_MODEL_ID; with
+    // none of them the field is omitted and the SDK's own default applies.
+    // Its effect on the cached prompt is not established here.
     ...((opts.effort ?? benchmarkOverride?.effort ?? envSonnetEffort) && {
       effort: opts.effort ?? benchmarkOverride?.effort ?? envSonnetEffort,
     }),
-    // Task-budget pacing (V8.5 Phase 3.4): request-level like effort, no
-    // cache-prefix impact. Only forwarded when a caller passed a value —
-    // the flag gate lives at the call sites (inferWithTools seam).
+    // Task-budget pacing (V8.5 Phase 3.4): only forwarded when a caller
+    // passed a value; queryClaudeSdkAsInferWithTools sets it only when
+    // TASK_BUDGET_PACING_ENABLED is "true".
     ...(opts.taskBudgetTokens && {
       taskBudget: { total: opts.taskBudgetTokens },
     }),

@@ -3688,10 +3688,10 @@ describe("SDK 0.3 migration (V8.5 Phase 1)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Effort wiring (V8.5 Phase 2.3) — the classifier's modelTier maps to the SDK
-// effort knob at this seam. Contract: effort passes through verbatim when set,
-// and the key is ABSENT (not undefined/null) when unset so the SDK default
-// ("high") applies without us hardcoding it.
+// Effort wiring (V8.5 Phase 2.3) — queryClaudeSdk's effort option. Contract:
+// effort passes through verbatim when set, and the key is ABSENT (not
+// undefined/null) when it, the benchmark override and SONNET_EFFORT are all
+// unset, so the SDK's own default applies.
 // ---------------------------------------------------------------------------
 
 describe("effort wiring (V8.5 Phase 2.3)", () => {

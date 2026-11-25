@@ -543,11 +543,9 @@ export interface InferWithToolsOptions {
    *  provider (no failover). Set by the SDK last line. */
   onlyProvider?: string;
   /**
-   * Reasoning-effort knob (V8.5 Phase 2.3), honored on the claude-sdk path
-   * only. Fast-runner maps the classifier's modelTier here (flash→low,
-   * standard→medium, capable→high); unset = SDK default ("high"). The
-   * openai path ignores it (per-provider request shaping lives in
-   * adapter-openai.ts).
+   * Reasoning effort, forwarded by the claude-sdk route
+   * (inferWithToolsViaClaudeSdk, primary leg only); the OpenAI-compat loop
+   * (inferWithToolsViaOpenAi) does not read it.
    */
   effort?: "low" | "medium" | "high" | "max";
   /**
