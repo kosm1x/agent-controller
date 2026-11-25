@@ -373,14 +373,14 @@ describe("createMcpTool", () => {
   it.each([
     ["an Error without a message", () => new Error()],
     ["a thrown empty string", () => ""],
-  ])("%s thrown by the call returns the fallback text", async (_label, thrown) => {
+  ])("%s thrown by the call returns the error helper's sentence", async (_label, thrown) => {
     const callFn: McpCallFn = vi.fn().mockRejectedValue(thrown());
     const tool = createMcpTool("w", { name: "t" }, callFn);
 
     expect(JSON.parse(await tool.execute({}))).toEqual({ error: THROWN_NO_MESSAGE });
   });
 
-  it("an Error whose message is undefined thrown by the call returns the fallback text", async () => {
+  it("an Error whose message is undefined thrown by the call returns the error helper's sentence", async () => {
     const callFn: McpCallFn = vi
       .fn()
       .mockRejectedValue(Object.assign(new Error("x"), { message: undefined }));

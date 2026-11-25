@@ -57,7 +57,8 @@ interface BackupResult {
 
 /**
  * Sync all jarvis_files to the remote Postgres backup.
- * Upserts by path — latest updated_at wins.
+ * Pushes local rows as a merge-duplicates upsert with no updated_at compare:
+ * when the backup already holds the row, the pushed values overwrite it.
  */
 export async function syncKbToRemote(): Promise<BackupResult> {
   const apiKey = getApiKey();
@@ -70,7 +71,7 @@ export async function syncKbToRemote(): Promise<BackupResult> {
   // List paths only: listFiles' length(content) read every content page in one
   // synchronous call, and on a cold page cache that blocked the event loop for
   // 8-12 s (prometheus-alert-notifier timed out). Content is read per row below.
-  // Order is path ASC (was priority, path); irrelevant, the remote upserts by path.
+  // Order is path ASC (was priority, path); it sets which rows share each batch of 20.
   const paths = listFilePaths();
   let pushed = 0;
   let unchanged = 0;

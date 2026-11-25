@@ -3723,10 +3723,17 @@ describe("effort wiring (V8.5 Phase 2.3)", () => {
   });
 
   it("queryClaudeSdk omits the effort key entirely when unset (SDK default applies)", async () => {
-    mockMessages.value = successResult();
-    await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
-    const opts = lastQueryArgs.value?.options as Record<string, unknown>;
-    expect("effort" in opts).toBe(false);
+    const prior = process.env.SONNET_EFFORT;
+    delete process.env.SONNET_EFFORT;
+    try {
+      mockMessages.value = successResult();
+      await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
+      const opts = lastQueryArgs.value?.options as Record<string, unknown>;
+      expect("effort" in opts).toBe(false);
+    } finally {
+      if (prior === undefined) delete process.env.SONNET_EFFORT;
+      else process.env.SONNET_EFFORT = prior;
+    }
   });
 
   // Opus-tier benchmark seam (2026-09-15): production shape is pinned here so
@@ -3739,33 +3746,40 @@ describe("effort wiring (V8.5 Phase 2.3)", () => {
   });
 
   it("benchmark override routes thinking/effort into SDK options and taps the result; reset restores defaults", async () => {
-    const { setOpusTierBenchmarkOverride } = await import("./claude-sdk.js");
-    const tapped: unknown[] = [];
-    setOpusTierBenchmarkOverride({
-      thinking: { type: "adaptive" },
-      effort: "medium",
-      tap: (r) => tapped.push(r),
-    });
+    const prior = process.env.SONNET_EFFORT;
+    delete process.env.SONNET_EFFORT;
     try {
+      const { setOpusTierBenchmarkOverride } = await import("./claude-sdk.js");
+      const tapped: unknown[] = [];
+      setOpusTierBenchmarkOverride({
+        thinking: { type: "adaptive" },
+        effort: "medium",
+        tap: (r) => tapped.push(r),
+      });
+      try {
+        mockMessages.value = successResult();
+        const result = await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
+        const opts = lastQueryArgs.value?.options as { thinking?: unknown; effort?: string };
+        expect(opts.thinking).toEqual({ type: "adaptive" });
+        expect(opts.effort).toBe("medium");
+        expect(tapped).toEqual([result]);
+        // caller-supplied effort still wins over the override
+        mockMessages.value = successResult();
+        await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [], effort: "low" });
+        expect((lastQueryArgs.value?.options as { effort?: string }).effort).toBe("low");
+      } finally {
+        setOpusTierBenchmarkOverride(undefined);
+      }
       mockMessages.value = successResult();
-      const result = await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
-      const opts = lastQueryArgs.value?.options as { thinking?: unknown; effort?: string };
-      expect(opts.thinking).toEqual({ type: "adaptive" });
-      expect(opts.effort).toBe("medium");
-      expect(tapped).toEqual([result]);
-      // caller-supplied effort still wins over the override
-      mockMessages.value = successResult();
-      await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [], effort: "low" });
-      expect((lastQueryArgs.value?.options as { effort?: string }).effort).toBe("low");
+      await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
+      const opts = lastQueryArgs.value?.options as Record<string, unknown>;
+      expect(opts.thinking).toEqual({ type: "disabled" });
+      expect("effort" in opts).toBe(false);
+      expect(tapped).toHaveLength(2); // both override-time calls tapped; the post-reset call did not
     } finally {
-      setOpusTierBenchmarkOverride(undefined);
+      if (prior === undefined) delete process.env.SONNET_EFFORT;
+      else process.env.SONNET_EFFORT = prior;
     }
-    mockMessages.value = successResult();
-    await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
-    const opts = lastQueryArgs.value?.options as Record<string, unknown>;
-    expect(opts.thinking).toEqual({ type: "disabled" });
-    expect("effort" in opts).toBe(false);
-    expect(tapped).toHaveLength(2); // both override-time calls tapped; the post-reset call did not
   });
 
   it("queryClaudeSdkAsInferWithTools threads options.effort through to the SDK", async () => {

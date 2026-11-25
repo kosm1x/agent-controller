@@ -15,8 +15,8 @@
  * INVARIANTS (identical to the original trigger.ts wrapper):
  *  - Observability, not a gate: any pipeline failure degrades to a direct
  *    execute — never blocks, never swallows the tool's own output.
- *  - At-most-once: the execute thunk runs exactly once across all paths; after
- *    `output` is set the degrade path never re-executes.
+ *  - At-most-once: the execute thunk runs at most once; after `output` is set
+ *    the degrade path does not re-execute.
  *  - Fails OPEN — safe for L1-L2 ONLY. Any future L≥3 (autonomous) wiring MUST
  *    NOT reuse this degrade: a pipeline failure on an autonomous decision must
  *    fail CLOSED (block or drop to confirm), never direct-execute.

@@ -300,7 +300,7 @@ describe("recordGatedExecution — shared wrapper contract", () => {
   it.each([
     ["an Error without a message", () => new Error()],
     ["a thrown empty string", () => ""],
-  ])("interactive: %s returns the fallback text and the decision stays pending", async (_label, thrown) => {
+  ])("interactive: %s returns the error helper's sentence and the decision stays pending", async (_label, thrown) => {
     process.env.V83_ENABLED = "true";
     process.env.V83_GATED_CAPABILITIES = "gmail_send";
     const out = await recordGatedExecution(
@@ -315,7 +315,7 @@ describe("recordGatedExecution — shared wrapper contract", () => {
     expect(decisionRows().map((r) => r.status)).toEqual(["pending"]);
   });
 
-  it("interactive: an Error whose message is undefined returns the fallback text and the decision stays pending", async () => {
+  it("interactive: an Error whose message is undefined returns the error helper's sentence and the decision stays pending", async () => {
     process.env.V83_ENABLED = "true";
     process.env.V83_GATED_CAPABILITIES = "gmail_send";
     const out = await recordGatedExecution(

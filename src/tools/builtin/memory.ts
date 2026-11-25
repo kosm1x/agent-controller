@@ -5,8 +5,11 @@
  * memory_search is registered on either store; memory_store and memory_reflect
  * only when the remote memory service is the store.
  *
- * Governance: Per-task store counter caps memory_store at MAX_STORES_PER_TASK
- * to prevent memory pollution from runaway tool loops.
+ * Governance: memory_store counts stores per task id and refuses one past
+ * MAX_STORES_PER_TASK while setMemoryTaskContext has set a task id. No caller
+ * outside the tests sets one, so this counter does not limit stores in the
+ * service; the task executor (src/tools/task-executor.ts) keeps its own
+ * per-task store limit.
  */
 
 import type { Tool } from "../types.js";

@@ -1852,6 +1852,9 @@ describe("swarm parent books its planner + reflector spend (cost_ledger)", () =>
 describe("a swarm run judged unsuccessful carries an error text", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    mockPlan.mockReset();
+    mockReflect.mockReset();
+    mockSubmitTask.mockReset();
   });
 
   const SENTENCE = "Swarm run judged unsuccessful";

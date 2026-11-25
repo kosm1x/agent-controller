@@ -385,9 +385,10 @@ export const DIAGRAM_TOOLS = ["diagram_generate"];
 
 /**
  * v7.1 chart rendering + vision pattern recognition. Scope-gated on chart/
- * pattern vocabulary. market_chart_render produces a PNG of OHLC + overlays;
- * market_chart_patterns classifies a PNG (or auto-renders first) into a named
- * formation and writes the result to `chart_patterns` for post-F7 RRF fusion.
+ * pattern vocabulary. market_chart_render writes an SVG (default) or a PNG
+ * of OHLC + overlays; market_chart_patterns classifies a PNG (or auto-renders
+ * one first) into a named formation and writes the result to `chart_patterns`
+ * for post-F7 RRF fusion.
  */
 export const CHART_TOOLS = ["market_chart_render", "market_chart_patterns"];
 

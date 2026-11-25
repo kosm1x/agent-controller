@@ -57,9 +57,9 @@ import { skillSaveTool, skillListTool } from "./builtin/skills.js";
 import { skillDescribeTool } from "./builtin/skill-describe.js";
 import { skillLoadTool } from "./builtin/skill-load.js";
 import { skillRunTool } from "./builtin/skill-run.js";
-// Item 10 (W1): pass-through spy, so a test can force the secret-ref refusal
-// on a write-class tool (no write-class tool reaches it today). The scrub is a
-// pass-through spy too, so a test can give it a synthetic replacement.
+// The three replaced functions (resolveSecretRefs, scrubSecrets, scrubJsonText)
+// are pass-through spies over the real ones, so a test can force a secret-ref
+// refusal or give a scrub a synthetic replacement.
 vi.mock("../lib/secret-refs.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/secret-refs.js")>();
   return {
@@ -679,12 +679,6 @@ describe("evidence corpus typing (usability Phase 3 — R1 C4, R2 C-1/C-4, R3 C-
     );
     _resetToolEvidence();
     const reg = new ToolRegistry();
-    const add = (name: string, readOnlyHint: boolean, exec: (a: Record<string, unknown>) => string) => {
-      const t = makeTool(name);
-      (t as { readOnlyHint?: boolean }).readOnlyHint = readOnlyHint;
-      t.execute = async (a) => exec(a);
-      reg.register(t);
-    };
     return { reg, enterRunToolContext, takeToolEvidence };
   }
 
