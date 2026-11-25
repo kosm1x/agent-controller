@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-25 21:37 UTC — LIVE build `485298cf` unchanged; seven code commits wait for a deploy (queue 4jn): `5662a427`, `5c65392f`, `bc70d4d9`, `c76690f2`, `cfbdaf15`, `ee675531` and `926f0ca3`, the save-time notice for a secret too short to be cleaned. The confirmation-card fix is parked with its reviewed design and its trigger. A read-only inventory of what is left is done (about ninety rows, fifteen proposed pieces); the first piece, comment corrections and test pins, is in build. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Then the remaining small pieces and the Code re-score.**
+
 **Status 2026-11-25 19:57 UTC — LIVE build `485298cf` unchanged; six code commits wait for a deploy (queue 4jm): `5662a427`, `5c65392f`, `bc70d4d9`, `c76690f2`, `cfbdaf15` and `ee675531`, the other model path's record of an early placeholder refusal. Queued next: a corrected retry that becomes a confirmation card clears the earlier refusal record; a save-time warning ruled by the operator. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Then the small follow-ups and the Code re-score.**
 
 **Status 2026-11-25 19:12 UTC — LIVE build `485298cf` unchanged; five code commits wait for a deploy (queue 4jl): `5662a427`, `5c65392f`, `bc70d4d9`, `c76690f2` and `cfbdaf15`, the clean of a failed write's recorded error text after the decode (the privacy item left open by 4jj). Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: the small follow-ups, then the Code re-score.**
