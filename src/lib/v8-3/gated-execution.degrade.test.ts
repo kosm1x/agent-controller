@@ -1,17 +1,25 @@
 /**
- * qa W5 (2026-08-08): the ONLY line preventing a double-execute on a pipeline
- * failure AFTER the tool ran is `if (output === undefined) return executeThunk()`
- * in recordGatedExecution's catch. The sibling degrade tests all throw BEFORE
- * execute (unseeded capability), so this file forces a POST-execute pipeline
- * throw (updateDecisionStatus raising, e.g. SQLITE_BUSY) and pins:
- * at-most-once execution + output fidelity. Mutation check: replace the guard
- * with an unconditional `return executeThunk()` and this fails (ran === 2 —
- * in production that is two sent emails / two created schedules).
+ * The degrade path of recordGatedExecution: the decision pipeline fails after
+ * the tool ran, or before it.
+ *
+ * After: updateDecisionStatus raises (e.g. SQLITE_BUSY) once the tool has run;
+ * the guard `if (output === undefined) return executeThunk()` in the catch
+ * keeps it at one run and returns its output. With an unconditional
+ * `return executeThunk()` the first case fails (ran === 2 — in production,
+ * two sent emails or two created schedules).
+ *
+ * Before: a database handle whose first read throws stops the pipeline before
+ * the tool runs; the fallback runs it once and returns its output.
+ *
+ * The cases that throw a value whose text form throws check that the catch's
+ * log line does not change these results.
  *
  * Own file because the decisions-store vi.mock is hoisted file-wide.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type Database from "better-sqlite3";
 import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
+import { updateDecisionStatus } from "./decisions-store.js";
 import { recordGatedExecution } from "./gated-execution.js";
 
 vi.mock("./decisions-store.js", async (importActual) => {
@@ -61,4 +69,49 @@ describe("recordGatedExecution — pipeline throw AFTER the tool ran", () => {
     expect(out).toBe("sent"); // output fidelity through the degrade
     expect(ran).toBe(1); // the double-execute guard — the point of this file
   });
+
+  // The degrade catch logs the pipeline's thrown value through the error-text
+  // helper before it decides; a value whose text form throws must not stop it.
+  it("a pipeline that throws an unreadable value after the call returns the output and never runs the call again", async () => {
+    vi.mocked(updateDecisionStatus).mockImplementationOnce(() => {
+      throw Object.create(null) as unknown;
+    });
+    let ran = 0;
+    const out: unknown = await recordGatedExecution(
+      "gmail_send",
+      { to: "a@b.c" },
+      async () => {
+        ran++;
+        return "sent";
+      },
+      { source: "background", threadId: "background" },
+    ).catch((e: unknown) => e);
+    expect({ out, ran }).toEqual({ out: "sent", ran: 1 });
+  });
+});
+
+describe("recordGatedExecution — pipeline throw BEFORE the tool ran", () => {
+  it.each(["interactive", "background"] as const)(
+    "a pipeline that throws an unreadable value before the call runs the call once and returns its output (%s)",
+    async (source) => {
+      // The capability read is the pipeline's first step: a handle whose
+      // prepare throws makes the pipeline fail before the call.
+      const db = {
+        prepare: () => {
+          throw Object.create(null) as unknown;
+        },
+      } as unknown as Database.Database;
+      let ran = 0;
+      const out: unknown = await recordGatedExecution(
+        "gmail_send",
+        { to: "a@b.c" },
+        async () => {
+          ran++;
+          return "sent";
+        },
+        { source, threadId: "t1", db },
+      ).catch((e: unknown) => e);
+      expect({ out, ran }).toEqual({ out: "sent", ran: 1 });
+    },
+  );
 });

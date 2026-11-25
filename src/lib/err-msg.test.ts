@@ -34,7 +34,59 @@ describe("errMsg", () => {
     expect(errMsg(value)).toBe(expected);
   });
 
-  it("a value whose text form throws still throws", () => {
-    expect(() => errMsg(Object.create(null))).toThrow(TypeError);
+  // A catch block that calls the helper must not fail inside its catch: a
+  // value whose message or text form throws when read gets a second sentence.
+  const UNREADABLE = "(unreadable error)";
+  const trapThrows = {
+    get(): never {
+      throw new Error("trap");
+    },
+  };
+
+  it.each([
+    ["an object with no prototype", () => Object.create(null) as unknown],
+    ["an object whose toString throws", () => ({ toString(): string { throw new Error("t"); } })],
+    ["an object whose toString and valueOf return objects", () => ({ toString: () => ({}), valueOf: () => ({}) })],
+    ["an object whose toString returns a symbol", () => ({ toString: () => Symbol("s") })],
+    ["an object whose Symbol.toPrimitive throws", () => ({ [Symbol.toPrimitive](): never { throw new Error("p"); } })],
+    [
+      "an Error whose message getter throws",
+      () => Object.defineProperty(new Error("x"), "message", { get(): never { throw new Error("g"); } }),
+    ],
+    ["a proxy whose get trap throws", () => new Proxy({}, trapThrows)],
+    ["a proxy over an Error whose get trap throws", () => new Proxy(new Error("x"), trapThrows)],
+    [
+      "a revoked proxy",
+      () => {
+        const r = Proxy.revocable({}, {});
+        r.revoke();
+        return r.proxy;
+      },
+    ],
+  ])("%s gives the unreadable sentence", (_label, make) => {
+    const value: unknown = make();
+    let got: unknown;
+    try {
+      got = errMsg(value);
+    } catch (e) {
+      got = e;
+    }
+    expect(got).toBe(UNREADABLE);
+  });
+
+  it.each([
+    ["a thrown symbol", () => Symbol("s") as unknown, "Symbol(s)"],
+    ["an object whose toString returns a number", () => ({ toString: () => 5 }), "5"],
+    ["a proxy over an Error", () => new Proxy(new Error("x"), {}), "x"],
+    ["a proxy over a plain object", () => new Proxy({}, {}), "[object Object]"],
+  ])("%s keeps its own text", (_label, make, expected) => {
+    const value: unknown = make();
+    let got: unknown;
+    try {
+      got = errMsg(value);
+    } catch (e) {
+      got = e;
+    }
+    expect(got).toBe(expected);
   });
 });

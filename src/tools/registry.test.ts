@@ -1419,7 +1419,7 @@ describe("write-class outcome (queue 2026-10-08 late item 10)", () => {
     expect(first.outcome).toEqual({
       tool: "file_edit",
       ok: false,
-      error: "tool failed without a readable error message",
+      error: "(unreadable error)",
     });
     await expect(first.call).rejects.toBe(unreadable);
     const thrown = ["write refused"];
