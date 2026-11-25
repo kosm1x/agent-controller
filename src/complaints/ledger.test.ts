@@ -49,6 +49,7 @@ function runs(letters: string, calls: (number | null)[] = []): TaskRow[] {
 }
 
 const BASE = { id: "a", type: TYPE, since: SINCE, maxComplaints: 2, runs: 7, change: "a change", baseline: "a baseline" };
+const ANSWER_NOTE = `record it with the operator's answer to "do the outputs since the change read worse, the same or better": "answer", text whose last word is worse, same or better`;
 const exa = (min: number, maxBelow: number) => ({ tool: "exa", min, maxBelow });
 const file = (...objs: object[]): string => objs.map((o) => JSON.stringify(o)).join("\n") + "\n";
 const reasons = (src: string): string[] => parseLedger(src, NOW).problems.map((p) => `${p.line}: ${p.reason}`);
@@ -109,7 +110,7 @@ describe("parseLedger", () => {
     expect(reasons(file({ ...BASE, maxComplaints: 1.5 }))).toEqual(['1: "maxComplaints" must be a whole number from 0 to 6 (below "runs")']);
     expect(reasons(file({ ...BASE, change: "  " }))).toEqual(['1: "change" must be non-empty text']);
     expect(reasons(file({ ...BASE, baseline: 3 }))).toEqual(['1: "baseline" must be non-empty text']);
-    expect(reasons(file({ ...BASE, answer: 3 }))).toEqual(['1: "answer" must be text']);
+    expect(reasons(file({ ...BASE, answer: 3 }))).toEqual(['1: "answer" must be text whose last word (after its last space) is "worse", "same" or "better"']);
   });
 
   it("bad id, duplicate id, bad type, bad since, K >= N, runs 0 and 101", () => {
@@ -232,7 +233,7 @@ describe("checkRow", () => {
   it("closed but not recorded: the paste object, its line equal to the row's line", () => {
     const c = check({ guards: [exa(1, 0)] }, runs("......."));
     expect(c.state).toBe("CONFIRMED");
-    expect(c.notes).toEqual([`"closed":${JSON.stringify({ state: "CONFIRMED", checkedAt: NOW, line: c.text })}`]);
+    expect(c.notes).toEqual([`"closed":${JSON.stringify({ state: "CONFIRMED", checkedAt: NOW, line: c.text })}`, ANSWER_NOTE]);
     expect(JSON.parse(`{${c.notes[0]}}`).closed.line).toBe(c.text);
     expect(check({ guards: [exa(1, 0)] }, runs("......R")).notes).toEqual([]);
   });
@@ -242,7 +243,7 @@ describe("checkRow", () => {
     const first = check({}, rows);
     const later = [...rows, row({ task_id: "late", status: "failed", created_at: "2026-11-21 12:00:00" })];
     const c = check({ closed: { state: first.state, checkedAt: NOW, line: first.text } }, later, "2026-11-22T00:00:00.000Z");
-    expect([c.state, c.mismatch, c.notes]).toEqual(["CONFIRMED", false, [`recorded CONFIRMED at ${NOW}; recheck agrees`]]);
+    expect([c.state, c.mismatch, c.notes]).toEqual(["CONFIRMED", false, [`recorded CONFIRMED at ${NOW}; recheck agrees; operator's read: OWED`]]);
   });
 
   it("a row edited after its closure is a MISMATCH", () => {
@@ -262,18 +263,18 @@ describe("checkRow", () => {
     const recorded = check({ since: edge, closed: { state: "REFUTED", checkedAt: "2026-10-25T00:00:00.000Z", line: "x" } }, []);
     expect([recorded.state, recorded.mismatch, recorded.notes, recorded.text]).toEqual([
       "REFUTED", false, [],
-      `a REFUTED | ritual:pred since ${edge}: recorded REFUTED at 2026-10-25T00:00:00.000Z; not rechecked (since is outside the 30-day window)`,
+      `a REFUTED | ritual:pred since ${edge}: recorded REFUTED at 2026-10-25T00:00:00.000Z; not rechecked (since is outside the 30-day window); operator's read: OWED`,
     ]);
     expect(check({ since: "2026-10-21T18:00:01Z" }, []).state).toBe("COUNTING");
   });
 
-  it("two files differing only in answer give byte-identical output", () => {
+  it("two files differing only in answer give byte-identical output while the row is still open and cannot close", () => {
     const out = (answer?: string) => {
       const { predictions } = parseLedger(file({ ...BASE, guards: [exa(1, 0)], ...(answer === undefined ? {} : { answer }) }), NOW);
-      return renderLedger("f.jsonl", NOW, predictions.map((p) => checkRow(p, runs("......."), NOW, false)), false);
+      return renderLedger("f.jsonl", NOW, predictions.map((p) => checkRow(p, runs("..."), NOW, false)), false);
     };
-    expect(out("held up, see the runs")).toBe(out());
-    expect(out()).toMatch(/^Ledger f\.jsonl checked at 2026-11-20T18:00:00\.000Z over the 30 days before it: 1 row\(s\); a guard counts a tool's calls with no did-not-run gate row \(errored calls and some refusals included\)\na CONFIRMED \| /);
+    expect(out("held up, see the runs: same")).toBe(out());
+    expect(out()).toMatch(/^Ledger f\.jsonl checked at 2026-11-20T18:00:00\.000Z over the 30 days before it: 1 row\(s\); a guard counts a tool's calls with no did-not-run gate row \(errored calls and some refusals included\)\na COUNTING \| /);
   });
 });
 
@@ -321,12 +322,12 @@ describe("audit folds", () => {
     const rows = runs(".......");
     const raw = JSON.stringify({ ...BASE, guards: [exa(1, 0)] });
     const c = checkRow(parseLedger(`${raw}\n`, NOW).predictions[0], rows, NOW, false);
-    expect(c.notes).toHaveLength(1);
+    expect(c.notes).toHaveLength(2);
     const pasted = `${raw.slice(0, -1)},${c.notes[0]}}`;
     const later = "2026-11-21T00:00:00.000Z";
     const { predictions, problems } = parseLedger(`${pasted}\n`, later);
     expect(problems).toEqual([]);
-    expect(checkRow(predictions[0], rows, later, false).notes).toEqual([`recorded CONFIRMED at ${NOW}; recheck agrees`]);
+    expect(checkRow(predictions[0], rows, later, false).notes).toEqual([`recorded CONFIRMED at ${NOW}; recheck agrees; operator's read: OWED`]);
     // Every paste offered (expired rows too) is canonical once inserted.
     const old = JSON.stringify({ ...BASE, since: "2026-10-01T00:00:00Z" });
     const e = checkRow(parseLedger(`${old}\n`, NOW).predictions[0], [], NOW, false);
@@ -349,7 +350,7 @@ describe("audit folds", () => {
     expect(reasons(file({ ...BASE, ...closedAt("2026-11-16T00:00:00Z", "EXPIRED") }))).toEqual([must]);
   });
 
-  it("no printed field can carry a line break; change, baseline and answer are never printed", () => {
+  it("no printed field can carry a line break; change and baseline are never printed, answer only by its last word", () => {
     expect(reasons(file({ ...BASE, id: "a\nb" }))).toEqual(['1: "id" must be text matching ^[A-Za-z0-9_-]{1,40}$']);
     expect(reasons(file({ ...BASE, type: "ritual:a\nb CONFIRMED" }))).toEqual(['1: "type" must be text matching ^(ritual|schedule):[A-Za-z0-9_-]+$']);
     expect(reasons(file({ ...BASE, type: "ritual:a\n" }))).toEqual(['1: "type" must be text matching ^(ritual|schedule):[A-Za-z0-9_-]+$']);
@@ -361,7 +362,7 @@ describe("audit folds", () => {
     expect(reasons(file({ ...BASE, ...closedAt("2026-11-16T00:00:00Z", "CONFIRMED", "one two") }))).toEqual(['1: "line" in "closed" must be single-line text']);
     expect(reasons(file({ ...BASE, ...closedAt("2026-11-16T00:00:00Z\n") }))).toHaveLength(1);
     const forged = "x\nb CONFIRMED | forged";
-    const { predictions } = parseLedger(file({ ...BASE, change: forged, baseline: forged, answer: forged }), NOW);
+    const { predictions } = parseLedger(file({ ...BASE, change: forged, baseline: forged, answer: `${forged} better` }), NOW);
     const out = renderLedger("f", NOW, predictions.map((p) => checkRow(p, runs("......."), NOW, false)), false);
     expect(out).not.toContain("forged");
     expect(out.split("\n")).toHaveLength(4);
@@ -380,7 +381,7 @@ describe("audit folds", () => {
 
   it("replay: a recorded closure is not rechecked and cannot mismatch; no closure is offered; the header says so", () => {
     const rec = check({ maxComplaints: 3, ...closedAt("2026-11-16T00:00:00.000Z", "REFUTED") }, runs("CCC...."), NOW, true);
-    expect([rec.state, rec.mismatch, rec.notes]).toEqual(["CONFIRMED", false, ["recorded REFUTED at 2026-11-16T00:00:00.000Z; not rechecked (replay)"]]);
+    expect([rec.state, rec.mismatch, rec.notes]).toEqual(["CONFIRMED", false, ["recorded REFUTED at 2026-11-16T00:00:00.000Z; not rechecked (replay); operator's read: OWED"]]);
     expect(check({}, runs("......."), NOW, true).notes).toEqual([]);
     expect(check({ since: "2026-10-01T00:00:00Z" }, [], NOW, true).notes).toEqual([]);
     const out = renderLedger("f", NOW, [rec], true);
@@ -454,7 +455,7 @@ describe("audit folds", () => {
     const { predictions, problems } = parseLedger(file(o), NOW);
     expect(problems).toEqual([]);
     const c = checkRow(predictions[0], runs("......."), early, true);
-    expect([c.mismatch, c.notes]).toEqual([false, ["recorded CONFIRMED at 2026-11-20T12:00:00.000Z, after this time; not rechecked (replay)"]]);
+    expect([c.mismatch, c.notes]).toEqual([false, ["recorded CONFIRMED at 2026-11-20T12:00:00.000Z, after this time; not rechecked (replay); operator's read: OWED"]]);
     // Still refused in a replay: before since, or 30 days or more after it.
     expect(parseLedger(file({ ...o, ...closedAt("2026-11-15T11:00:00Z") }), NOW).problems).toHaveLength(1);
     expect(parseLedger(file({ ...o, ...closedAt("2026-12-15T12:00:00Z") }), NOW).problems).toHaveLength(1);
@@ -524,3 +525,104 @@ describe("a guard naming a set of equivalent tools", () => {
   });
 });
 
+describe("the operator's read: the last word of answer, beside a recorded closure", () => {
+  const LATER = "2026-11-22T00:00:00.000Z";
+  const rec = (state: string, answer?: string, over: object = {}) => ({ ...over, closed: { state, checkedAt: NOW, line: "x" }, ...(answer === undefined ? {} : { answer }) });
+  const BAD = '1: "answer" must be text whose last word (after its last space) is "worse", "same" or "better"';
+  /** The recorded line of a closure that rechecks as agreeing at LATER. */
+  const agrees = (state: string, rows: TaskRow[], answer?: string, over: object = {}) => check(rec(state, answer, over), rows, LATER).notes;
+
+  it("each of the three words is the read; text before the last space is free; no space: the whole text", () => {
+    for (const word of ["worse", "same", "better"]) {
+      expect(pred({ answer: `asked whether the outputs read worse, the same or better: ${word}` }).read).toBe(word);
+      expect(pred({ answer: word }).read).toBe(word);
+    }
+    expect(pred({}).read).toBeNull();
+  });
+
+  it("any other ending is a file problem, quoting nothing from the answer", () => {
+    for (const answer of ["", " ", "better.", "Better", "better ", "worse\tbetter x", "it read BETTER", "x better\n", "x\u00a0better", "best", "OWED"]) {
+      expect([answer, reasons(file({ ...BASE, answer }))]).toEqual([answer, [BAD]]);
+    }
+    expect(reasons(file({ ...BASE, answer: "x\nbetter" }))).toEqual([BAD]);
+    expect(reasons(file({ ...BASE, answer: "x\n better" }))).toEqual([]);
+  });
+
+  it("an open row may carry an answer (accepted, as before); nothing of it is printed", () => {
+    const rows = runs("...");
+    expect(check({ answer: "early: worse" }, rows)).toEqual({ ...check({}, rows), prediction: pred({ answer: "early: worse" }) });
+  });
+
+  it("OWED without an answer, on the agreeing, replay and outside-the-window lines; never an error", () => {
+    expect(agrees("CONFIRMED", runs("......."))).toEqual([`recorded CONFIRMED at ${NOW}; recheck agrees; operator's read: OWED`]);
+    const replay = check(rec("CONFIRMED"), runs("......."), NOW, true);
+    expect([replay.mismatch, replay.notes]).toEqual([false, [`recorded CONFIRMED at ${NOW}; not rechecked (replay); operator's read: OWED`]]);
+    const outside = (answer?: string) => check({ since: "2026-10-21T18:00:00Z", ...rec("REFUTED", answer), closed: { state: "REFUTED", checkedAt: "2026-10-25T00:00:00.000Z", line: "x" } }, []);
+    const head = "a REFUTED | ritual:pred since 2026-10-21T18:00:00.000Z: recorded REFUTED at 2026-10-25T00:00:00.000Z; not rechecked (since is outside the 30-day window)";
+    expect([outside().mismatch, outside().notes, outside().text]).toEqual([false, [], `${head}; operator's read: OWED`]);
+    expect(outside("a: better").text).toBe(`${head}; operator's read: better (differs from the count)`);
+  });
+
+  it("differs from the count: CONFIRMED (any) read worse, REFUTED read better; every other pairing does not", () => {
+    const confirmed = runs(".......");
+    const refuted = runs("CCC....");
+    const line = (state: string, word: string) => `recorded ${state} at ${NOW}; recheck agrees; operator's read: ${word}`;
+    expect(agrees("REFUTED", refuted, "a: better")).toEqual([`${line("REFUTED", "better")} (differs from the count)`]);
+    expect(agrees("CONFIRMED", confirmed, "a: worse")).toEqual([`${line("CONFIRMED", "worse")} (differs from the count)`]);
+    const broken = { guards: [{ tool: "web", min: 1, maxBelow: 0 }] };
+    expect(agrees("CONFIRMED, guard broken", confirmed, "a: worse", broken)).toEqual([`${line("CONFIRMED, guard broken", "worse")} (differs from the count)`]);
+    expect(agrees("REFUTED", refuted, "a: worse")).toEqual([line("REFUTED", "worse")]);
+    expect(agrees("REFUTED", refuted, "a: same")).toEqual([line("REFUTED", "same")]);
+    expect(agrees("CONFIRMED", confirmed, "a: better")).toEqual([line("CONFIRMED", "better")]);
+    expect(agrees("CONFIRMED", confirmed, "a: same")).toEqual([line("CONFIRMED", "same")]);
+    expect(agrees("CONFIRMED, guard broken", confirmed, "a: better", broken)).toEqual([line("CONFIRMED, guard broken", "better")]);
+    // In a replay the same pairing rule holds.
+    expect(check(rec("REFUTED", "a: better"), refuted, NOW, true).notes).toEqual([`recorded REFUTED at ${NOW}; not rechecked (replay); operator's read: better (differs from the count)`]);
+  });
+
+  it("an EXPIRED closure gets no read text, with or without an answer", () => {
+    const since = "2026-10-01T00:00:00Z";
+    for (const answer of [undefined, "a: better"]) {
+      const c = check({ since, closed: { state: "EXPIRED", checkedAt: "2026-10-31T00:00:00.000Z", line: "x" }, ...(answer ? { answer } : {}) }, []);
+      expect(c.text).toBe("a EXPIRED | ritual:pred since 2026-10-01T00:00:00.000Z: recorded EXPIRED at 2026-10-31T00:00:00.000Z; not rechecked (since is outside the 30-day window)");
+    }
+    // A replay early enough to put since back inside the window: the replay line, still no read.
+    const o = { ...BASE, closed: { state: "EXPIRED", checkedAt: "2026-12-15T12:00:00.000Z", line: "x" }, answer: "a: worse" };
+    const { predictions, problems } = parseLedger(file(o), "2026-12-20T00:00:00.000Z");
+    expect(problems).toEqual([]);
+    expect(checkRow(predictions[0], runs("......."), NOW, true).notes).toEqual(["recorded EXPIRED at 2026-12-15T12:00:00.000Z, after this time; not rechecked (replay)"]);
+  });
+
+  it("a MISMATCH line is unchanged: no read beside a closure the recheck disputes", () => {
+    expect(check(rec("REFUTED", "a: better"), runs("......."), LATER).notes).toEqual([`MISMATCH: recorded REFUTED at ${NOW}, recheck says CONFIRMED`]);
+  });
+
+  it("the paste offer is followed by one line asking for the answer; an EXPIRED paste is not", () => {
+    for (const [letters, st] of [[".......", "CONFIRMED"], ["CCC", "REFUTED"]]) {
+      const c = check({}, runs(letters));
+      expect([c.state, c.notes]).toEqual([st, [`"closed":${JSON.stringify({ state: st, checkedAt: NOW, line: c.text })}`, ANSWER_NOTE]]);
+      const out = renderLedger("f", NOW, [c], false).split("\n");
+      expect(out.slice(2)).toEqual([`  ${c.notes[0]}`, `  ${ANSWER_NOTE}`, ""]);
+    }
+    expect(check({ since: "2026-10-01T00:00:00Z" }, []).notes).toHaveLength(1);
+    expect(check({}, runs("......."), NOW, true).notes).toEqual([]);
+  });
+
+  it("an open row that can close and already carries an answer gets the paste line only; without one, both lines", () => {
+    const rows = runs(".......");
+    const without = check({}, rows);
+    const paste = `"closed":${JSON.stringify({ state: "CONFIRMED", checkedAt: NOW, line: without.text })}`;
+    expect(without.notes).toEqual([paste, ANSWER_NOTE]);
+    for (const answer of ["read: worse", "same", "a: better"]) {
+      const c = check({ answer }, rows);
+      expect([answer, c.state, c.notes]).toEqual([answer, "CONFIRMED", [paste]]);
+      expect(renderLedger("f", NOW, [c], false).split("\n").slice(2)).toEqual([`  ${paste}`, ""]);
+    }
+  });
+
+  it("the committed row 2 closure reads better, which differs from its REFUTED count", () => {
+    const row2 = readFileSync(COMMITTED, "utf8").split("\n").map((l) => (l ? JSON.parse(l) : null)).find((o) => o?.id === "2");
+    expect(row2?.closed?.state).toBe("REFUTED");
+    expect(pred({ answer: row2.answer }).read).toBe("better");
+  });
+});

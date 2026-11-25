@@ -7,9 +7,20 @@
  *
  * Each line must be canonical JSON (the text JSON.stringify gives back for
  * it), so a duplicate key cannot hide behind the one that wins. Every value
- * the tool prints is held to a pattern with no line break; `change`,
- * `baseline` and `answer` are never printed, and a problem message quotes
- * text from the file (a key name) only ASCII-escaped.
+ * the tool prints is held to a pattern with no line break; `change` and
+ * `baseline` are never printed, nor is `answer` beyond its last word, and a
+ * problem message quotes text from the file (a key name) only ASCII-escaped.
+ *
+ * A closing pairs the count with the operator's answer to "do the outputs
+ * since the change read worse, the same or better": `answer`, free text whose
+ * last word (after its last space) must be exactly worse, same or better. That
+ * word, the row's read, is the only text of `answer` ever printed: on a
+ * recorded closure's line, a MISMATCH excepted (the recheck disputes the
+ * closure, so there is no settled count to pair), OWED when there is no
+ * answer, marked when it points the other way from the recorded state
+ * (CONFIRMED... read worse, REFUTED read better). An EXPIRED closure has no
+ * verdict to pair, so it gets no read. The paste offer asks for the answer
+ * only while the row has none.
  *
  * A row is a verdict (src/complaints/verdict.ts, buildVerdict called once per
  * row on the same rows) plus up to 3 guards, "at most J of the counted runs
@@ -71,6 +82,8 @@ export interface Prediction {
   runs: number;
   guards: Guard[];
   closed: { state: string; checkedAt: string; line: string } | null;
+  /** The last word of `answer`; null without one. */
+  read: Read | null;
 }
 
 export interface Problem {
@@ -85,6 +98,10 @@ const KEYS = ["id", "type", "since", "maxComplaints", "runs", "change", "baselin
 const GUARD_KEYS = ["tool", "tools", "min", "maxBelow"];
 const CLOSED_KEYS = ["state", "checkedAt", "line"];
 const MAX = Number.MAX_SAFE_INTEGER;
+const READS = ["worse", "same", "better"] as const;
+type Read = (typeof READS)[number];
+/** The text after the last space (all of it when there is none). */
+const lastWord = (s: string): string => s.slice(s.lastIndexOf(" ") + 1);
 
 type Obj = Record<string, unknown>;
 const isObject = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -143,7 +160,7 @@ export function parseLedger(src: string, latest: string): { predictions: Predict
       ["baseline", text(o.baseline), "non-empty text"],
       ["guards", Array.isArray(o.guards) && o.guards.length >= 1 && o.guards.length <= 3, "an array of 1 to 3 guards"],
       ["closed", isObject(o.closed), "an object"],
-      ["answer", typeof o.answer === "string", "text"],
+      ["answer", typeof o.answer === "string" && (READS as readonly string[]).includes(lastWord(o.answer)), 'text whose last word (after its last space) is "worse", "same" or "better"'],
     ], ""));
     if (Array.isArray(o.guards) && o.guards.length <= 3) {
       o.guards.forEach((g: unknown, j) => {
@@ -185,6 +202,7 @@ export function parseLedger(src: string, latest: string): { predictions: Predict
       runs: o.runs as number,
       guards: (o.guards as Guard[] | undefined) ?? [],
       closed: (o.closed as Prediction["closed"] | undefined) ?? null,
+      read: typeof o.answer === "string" ? (lastWord(o.answer) as Read) : null,
     });
   });
   // Two open rows on one type: both changes are live in the same runs, so
@@ -216,7 +234,7 @@ export interface RowCheck {
   guards: GuardCheck[];
   /** The row's line as printed. */
   text: string;
-  /** Printed under the row: the recheck of a recorded closure, or the closure to paste. */
+  /** Printed under the row: the recheck of a recorded closure, or the closure to paste and what goes with it. */
   notes: string[];
   mismatch: boolean;
 }
@@ -246,10 +264,13 @@ export function checkRow(p: Prediction, rows: TaskRow[], now: string, replay: bo
   const head = (state: LedgerState): string => `${p.id} ${state} | ${p.type} since ${p.since}: `;
   const after = p.closed !== null && Date.parse(p.closed.checkedAt) > Date.parse(now);
   const rec = p.closed && `recorded ${p.closed.state} at ${p.closed.checkedAt}${after ? ", after this time" : ""}`;
+  const s = p.closed?.state;
+  const differs = (s?.startsWith("CONFIRMED") && p.read === "worse") || (s === "REFUTED" && p.read === "better");
+  const read = !s || s === "EXPIRED" ? "" : `; operator's read: ${p.read ?? "OWED"}${differs ? " (differs from the count)" : ""}`;
   if (!windowSince(Date.parse(p.since), Date.parse(now), LEDGER_DAYS).inside) {
     const state = (p.closed?.state ?? "EXPIRED") as LedgerState;
     const why = `since is outside the ${LEDGER_DAYS}-day window`;
-    const line = head(state) + (rec ? `${rec}; not rechecked (${why})` : why);
+    const line = head(state) + (rec ? `${rec}; not rechecked (${why})${read}` : why);
     const notes = p.closed || replay ? [] : [paste(state, now, line)];
     return { prediction: p, state, verdict: null, guards: [], text: line, notes, mismatch: false };
   }
@@ -283,13 +304,15 @@ export function checkRow(p: Prediction, rows: TaskRow[], now: string, replay: bo
   const line = head(state)
     + `counted ${v.counted}/${v.runs}, complaints ${v.complaints} (limit ${p.maxComplaints}), unknown ${v.unknown} [${v.strip}]; ${guardText}${none}`;
   const mismatch = !replay && p.closed !== null && p.closed.state !== state;
-  const notes = rec ? [replay ? `${rec}; not rechecked (replay)` : mismatch ? `MISMATCH: ${rec}, recheck says ${state}` : `${rec}; recheck agrees`]
-    : !replay && (CLOSED_STATES as readonly string[]).includes(state) ? [paste(state, now, line)] : [];
+  const notes = rec ? [replay ? `${rec}; not rechecked (replay)${read}` : mismatch ? `MISMATCH: ${rec}, recheck says ${state}` : `${rec}; recheck agrees${read}`]
+    : !replay && (CLOSED_STATES as readonly string[]).includes(state) ? [paste(state, now, line), ...(p.read ? [] : [ANSWER_NOTE])] : [];
   return { prediction: p, state, verdict: v, guards, text: line, notes, mismatch };
 }
 
 /** The `closed` member a person pastes into the row once it has closed. */
 const paste = (state: LedgerState, now: string, line: string): string => `"closed":${JSON.stringify({ state, checkedAt: now, line })}`;
+/** Printed under a paste, but EXPIRED's, while the row has no answer. */
+const ANSWER_NOTE = `record it with the operator's answer to "do the outputs since the change read worse, the same or better": "answer", text whose last word is worse, same or better`;
 
 export function renderLedger(file: string, now: string, checks: RowCheck[], replay: boolean): string {
   const at = replay ? `replayed at ${now} (a replay, not a recheck)` : `checked at ${now}`;

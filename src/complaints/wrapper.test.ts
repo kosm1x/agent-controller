@@ -640,7 +640,7 @@ describe("--ledger: every prediction in a file, checked by code", () => {
   const GUARD_NOTE = "; a guard counts a tool's calls with no did-not-run gate row (errored calls and some refusals included)";
   const base = { type: "ritual:lg", since: S, maxComplaints: 1, runs: 3, change: "a change", baseline: "a baseline" };
   const ROWS = {
-    a: { id: "a", ...base, guards: [{ tool: "exa", min: 2, maxBelow: 1 }], answer: "never printed" },
+    a: { id: "a", ...base, guards: [{ tool: "exa", min: 2, maxBelow: 1 }], answer: "never printed: worse" },
     b: { id: "b", ...base, guards: [{ tool: "exa", min: 1, maxBelow: 1 }], closed: { state: "CONFIRMED", checkedAt: RECORDED, line: "earlier" } },
     c: { id: "c", ...base, type: "ritual:nobody", maxComplaints: 0, runs: 2 },
     d: { id: "d", ...base, type: "ritual:old", since: "2026-10-01T00:00:00Z", maxComplaints: 0, runs: 1 },
@@ -691,7 +691,7 @@ describe("--ledger: every prediction in a file, checked by code", () => {
         `Ledger ${f} replayed at ${CHECKED} (a replay, not a recheck) over the 30 days before it: 6 row(s)${GUARD_NOTE}`,
         LINE_A,
         LINE_B,
-        `  recorded CONFIRMED at ${RECORDED}; not rechecked (replay)`,
+        `  recorded CONFIRMED at ${RECORDED}; not rechecked (replay); operator's read: OWED`,
         LINE_C,
         LINE_D,
         LINE_E,
@@ -704,7 +704,7 @@ describe("--ledger: every prediction in a file, checked by code", () => {
 
   it("replay earlier than a recorded closure: the row is marked, the file is not refused; exit 0", () => {
     const r = ledger_at("2026-11-18T00:00:00Z", [ledgerFile("early.jsonl", [ROWS.b])]);
-    expect([r.status, r.stderr, r.stdout.split("\n").slice(2)]).toEqual([0, "", [`  recorded CONFIRMED at ${RECORDED}, after this time; not rechecked (replay)`, ""]]);
+    expect([r.status, r.stderr, r.stdout.split("\n").slice(2)]).toEqual([0, "", [`  recorded CONFIRMED at ${RECORDED}, after this time; not rechecked (replay); operator's read: OWED`, ""]]);
   }, 60_000);
 
   it("a file name with a newline and ESC prints ASCII-escaped on stdout and stderr", () => {
@@ -725,13 +725,13 @@ describe("--ledger: every prediction in a file, checked by code", () => {
   it("the --now=<time> form is a replay too: the wrapper pins no clock and sets no marker", () => {
     const f = ledgerFile("eq-form.jsonl", [ROWS.b]);
     const r = wrapper(["--db", ldb, `--now=${NOW}`, "--ledger", f]);
-    expect([r.status, r.stdout.split("\n")]).toEqual([0, [expect.stringContaining(`replayed at ${CHECKED} (a replay, not a recheck)`), LINE_B, `  recorded CONFIRMED at ${RECORDED}; not rechecked (replay)`, ""]]);
+    expect([r.status, r.stdout.split("\n")]).toEqual([0, [expect.stringContaining(`replayed at ${CHECKED} (a replay, not a recheck)`), LINE_B, `  recorded CONFIRMED at ${RECORDED}; not rechecked (replay); operator's read: OWED`, ""]]);
   }, 60_000);
 
   it("replay: a recorded closure the rows disagree with is not a MISMATCH and exits 0", () => {
     const f = ledgerFile("replay-mismatch.jsonl", [{ ...ROWS.b, closed: { ...ROWS.b.closed, state: "REFUTED" } }]);
     const r = ledger([f]);
-    expect([r.status, r.stdout.split("\n").slice(1)]).toEqual([0, [LINE_B, `  recorded REFUTED at ${RECORDED}; not rechecked (replay)`, ""]]);
+    expect([r.status, r.stdout.split("\n").slice(1)]).toEqual([0, [LINE_B, `  recorded REFUTED at ${RECORDED}; not rechecked (replay); operator's read: OWED`, ""]]);
   }, 60_000);
 
   it("an empty ledger file prints the ledger header with 0 rows, not the digest", () => {
@@ -764,6 +764,11 @@ describe("--ledger: every prediction in a file, checked by code", () => {
         `ledger ${f} line 2: "maxComplaints" must be a whole number from 0 to 1 (below "runs")`,
         `ledger ${f} line 3: rows "a" (line 1) and "a2" are both open on ritual:lg`,
       ],
+    ],
+    [
+      "an answer whose last word is not worse, same or better",
+      () => ["--now", NOW, "--ledger", ledgerFile("bad-answer.jsonl", [{ ...ROWS.b, answer: "read: fine" }])],
+      (f) => [`ledger ${f} line 1: "answer" must be text whose last word (after its last space) is "worse", "same" or "better"`],
     ],
   ];
   it.each(ERRORS)("%s: exit 2, the exact stderr lines, no stdout, no database opened", (_name, args, lines) => {
@@ -821,9 +826,10 @@ describe("--ledger at the clock (no --now): recorded closures are rechecked", ()
     const now = /checked at (\S+) /.exec(lines[0])?.[1];
     expect(lines.slice(1)).toEqual([
       LINE_P,
-      `  recorded CONFIRMED at ${recorded}; recheck agrees`,
+      `  recorded CONFIRMED at ${recorded}; recheck agrees; operator's read: OWED`,
       LINE_R,
       `  "closed":${JSON.stringify({ state: "CONFIRMED", checkedAt: now, line: LINE_R })}`,
+      `  record it with the operator's answer to "do the outputs since the change read worse, the same or better": "answer", text whose last word is worse, same or better`,
       "",
     ]);
   }, 60_000);
@@ -834,7 +840,7 @@ describe("--ledger at the clock (no --now): recorded closures are rechecked", ()
     const lines = r.stdout.split("\n");
     expect(lines[0]).toMatch(HEADER);
     expect(lines.slice(1, 4)).toEqual([LINE_P, `  MISMATCH: recorded REFUTED at ${recorded}, recheck says CONFIRMED`, LINE_R]);
-    expect(lines).toHaveLength(6);
+    expect(lines).toHaveLength(7);
   }, 60_000);
 
   it("at the clock a closure recorded later than the check is a file problem: exit 2", () => {
