@@ -11,6 +11,7 @@
 
 import type { TaskExecutionContext } from "../inference/execution-context.js";
 import type { ToolRegistry } from "./registry.js";
+import { recordFailedWrite } from "./registry.js";
 import type { ToolExecutor } from "../inference/adapter.js";
 import { createLogger } from "../lib/logger.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
@@ -402,9 +403,13 @@ export function createTaskExecutor(
       return JSON.stringify({ error: gate.error });
     }
     if (gate.action === "confirm") {
-      // No card for a call the registry would refuse after the approval.
+      // No card for a call the registry would refuse after the approval;
+      // recorded as the registry records that refusal.
       const refused = placeholderRefusalBeforeGate(name, args, context.taskId);
-      if (refused !== null) return refused;
+      if (refused !== null) {
+        recordFailedWrite(name, args, refused);
+        return refused;
+      }
       // Store the pending operation so the router can execute it on confirmation
       context.setPendingConfirmation(name, args);
       log.info(
@@ -424,9 +429,13 @@ export function createTaskExecutor(
     // Memory store rate limiting via context
     if (name === "memory_store") {
       if (!context.tryMemoryStore()) {
-        return JSON.stringify({
+        // The refusal goes to `recordFailedWrite` (a failed write of the
+        // current run; nothing outside a run), then is returned.
+        const refused = JSON.stringify({
           error: `Memory store limit reached (${context.getMemoryStoreLimit()}/task): nothing was stored. Further memory_store calls in this task are refused too.`,
         });
+        recordFailedWrite(name, args, refused);
+        return refused;
       }
     }
 

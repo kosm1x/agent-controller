@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { ToolRegistry } from "./registry.js";
-import { resolveSecretRefs } from "../lib/secret-refs.js";
+import { resolveSecretRefs, scrubSecrets } from "../lib/secret-refs.js";
 import { getToolAnnotations } from "./types.js";
 import type { Tool } from "./types.js";
 import {
@@ -58,10 +58,15 @@ import { skillDescribeTool } from "./builtin/skill-describe.js";
 import { skillLoadTool } from "./builtin/skill-load.js";
 import { skillRunTool } from "./builtin/skill-run.js";
 // Item 10 (W1): pass-through spy, so a test can force the secret-ref refusal
-// on a write-class tool (no write-class tool reaches it today).
+// on a write-class tool (no write-class tool reaches it today). The scrub is a
+// pass-through spy too, so a test can give it a synthetic replacement.
 vi.mock("../lib/secret-refs.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/secret-refs.js")>();
-  return { ...actual, resolveSecretRefs: vi.fn(actual.resolveSecretRefs) };
+  return {
+    ...actual,
+    resolveSecretRefs: vi.fn(actual.resolveSecretRefs),
+    scrubSecrets: vi.fn(actual.scrubSecrets),
+  };
 });
 // Chat scope universe — for the deferred-tool reachability invariant.
 import { getAllAvailableTools } from "../messaging/scope.js";
@@ -1373,5 +1378,78 @@ describe("write-class outcome (queue 2026-10-08 late item 10)", () => {
     expect(ran).toBe(0);
     expect(takeHiddenWriteFailures("t-h7")).toBeUndefined();
     expect(takeWriteOutcome("t-h7")).toEqual({ tool: "file_write", ok: true });
+  });
+
+  /** A file_edit stand-in that throws `thrown()`; the rejection is settled before the record is read. */
+  async function throwingEdit(taskId: string, thrown: () => unknown) {
+    const { reg, enterRunToolContext, takeWriteOutcome } = await setup();
+    const t = makeTool("file_edit");
+    t.execute = async () => {
+      throw thrown();
+    };
+    reg.register(t);
+    const call = enterRunToolContext(taskId, () =>
+      reg.execute("file_edit", { path: "/tmp/a.md" }),
+    );
+    await call.catch(() => undefined);
+    return { call, outcome: takeWriteOutcome(taskId) };
+  }
+
+  /** Runs `fn` with the scrub replaced by `impl`, then puts the real scrub back. */
+  async function withScrub<T>(impl: (s: string) => string, fn: () => Promise<T>): Promise<T> {
+    const actual = await vi.importActual<typeof import("../lib/secret-refs.js")>(
+      "../lib/secret-refs.js",
+    );
+    vi.mocked(scrubSecrets).mockImplementation(impl);
+    try {
+      return await fn();
+    } finally {
+      vi.mocked(scrubSecrets).mockImplementation(actual.scrubSecrets);
+    }
+  }
+
+  it("a thrown value that is not an Error is recorded through the scrub, and that same value is rethrown", async () => {
+    const thrown = ["write refused for synthvalue42"];
+    const { call, outcome } = await withScrub(
+      (s) => s.split("synthvalue42").join("[hidden]"),
+      () => throwingEdit("t-x1", () => thrown),
+    );
+    expect(outcome).toEqual({ tool: "file_edit", ok: false, error: "write refused for [hidden]" });
+    await expect(call).rejects.toBe(thrown);
+  });
+
+  it("a thrown value whose text form throws, or whose scrub throws, is still recorded with a fixed sentence and rethrown as it is", async () => {
+    const unreadable: unknown = Object.create(null); // String() throws on it
+    const first = await throwingEdit("t-x2", () => unreadable);
+    expect(first.outcome).toEqual({
+      tool: "file_edit",
+      ok: false,
+      error: "tool failed without a readable error message",
+    });
+    await expect(first.call).rejects.toBe(unreadable);
+    const thrown = ["write refused"];
+    const second = await withScrub(
+      () => {
+        throw new Error("scrub unavailable");
+      },
+      () => throwingEdit("t-x3", () => thrown),
+    );
+    expect(second.outcome).toEqual({
+      tool: "file_edit",
+      ok: false,
+      error: "tool failed without a readable error message",
+    });
+    await expect(second.call).rejects.toBe(thrown);
+  });
+
+  it("a thrown value with an empty text form is recorded with errMsg's sentence, not an empty text", async () => {
+    const thrown: unknown[] = [];
+    const { call, outcome } = await throwingEdit("t-x4", () => thrown);
+    expect(outcome).toEqual({
+      tool: "file_edit",
+      ok: false,
+      error: "unknown error (no message given)",
+    });
+    await expect(call).rejects.toBe(thrown);
   });
 });

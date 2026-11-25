@@ -10,9 +10,16 @@ import {
   NO_CONFIRM_CHANNEL_ERROR,
   NO_CONFIRM_IN_CHAT_ERROR,
   NO_CONFIRM_A2A_ERROR,
+  placeholderRefusalBeforeGate,
 } from "./task-executor.js";
 import { TaskExecutionContext } from "../inference/execution-context.js";
 import { ToolRegistry } from "./registry.js";
+import { enterRunToolContext } from "./rule-of-two.js";
+import {
+  takeWriteOutcome,
+  recordWriteOutcome,
+  takeHiddenWriteFailures,
+} from "../lib/v8-4/numbers.js";
 import { wpPublishTool } from "./builtin/wordpress.js";
 
 // Ruling 2026-10-03: the undeclared-tool refusal is a trace event.
@@ -110,6 +117,55 @@ describe("createTaskExecutor", () => {
 
     // B is unaffected
     expect(await execB("memory_store", { content: "b0" })).toBe('{"ok": true}');
+  });
+
+  const MEMORY_LIMIT_SENTENCE =
+    "Memory store limit reached (5/task): nothing was stored. Further memory_store calls in this task are refused too.";
+  const MEMORY_LIMIT_TEXT =
+    '{"error":"Memory store limit reached (5/task): nothing was stored. Further memory_store calls in this task are refused too."}';
+
+  it("inside a run, a refused memory_store is recorded as a failed write of the run with the refusal sentence; the returned text is unchanged", async () => {
+    const registry = mockRegistry();
+    // The run id differs from the context id on purpose: the record follows the run.
+    const exec = createTaskExecutor(registry, new TaskExecutionContext("ctx-mem"));
+    await enterRunToolContext("run-mem", async () => {
+      for (let i = 0; i < 5; i++)
+        await exec("memory_store", { content: `fact ${i}` });
+      expect(takeWriteOutcome("run-mem")).toBeUndefined(); // the allowed calls record nothing here
+      for (const content of ["too many", "still too many"])
+        expect(await exec("memory_store", { content })).toBe(MEMORY_LIMIT_TEXT);
+    });
+    expect(takeWriteOutcome("run-mem")).toEqual({
+      tool: "memory_store",
+      ok: false,
+      error: MEMORY_LIMIT_SENTENCE,
+    });
+    expect(takeWriteOutcome("ctx-mem")).toBeUndefined();
+    expect(registry.execute).toHaveBeenCalledTimes(5);
+  });
+
+  it("outside a run, a refused memory_store records nothing", async () => {
+    const registry = mockRegistry();
+    const exec = createTaskExecutor(registry, new TaskExecutionContext("out-mem"));
+    for (let i = 0; i < 5; i++)
+      await exec("memory_store", { content: `fact ${i}` });
+    expect(await exec("memory_store", { content: "too many" })).toBe(MEMORY_LIMIT_TEXT);
+    expect(takeWriteOutcome("out-mem")).toBeUndefined();
+  });
+
+  it("two memory_store refusals in a run leave one failed record and no hidden failure", async () => {
+    const registry = mockRegistry();
+    const exec = createTaskExecutor(registry, new TaskExecutionContext("ctx-mem2"));
+    await enterRunToolContext("run-mem2", async () => {
+      for (let i = 0; i < 7; i++)
+        await exec("memory_store", { content: `fact ${i}` });
+    });
+    expect(takeHiddenWriteFailures("run-mem2")).toBeUndefined();
+    expect(takeWriteOutcome("run-mem2")).toEqual({
+      tool: "memory_store",
+      ok: false,
+      error: MEMORY_LIMIT_SENTENCE,
+    });
   });
 });
 
@@ -236,6 +292,67 @@ describe("confirmation gate bypass for non-interactive tasks", () => {
       tool: "gmail_send",
       attrs: { tool: "gmail_send", reason: "rendered_placeholder", stage: "pre_gate" },
     });
+  });
+
+  it("a write-class call refused for a rendered placeholder before the card is recorded as a failed write of the run, the returned text unchanged; outside a run nothing is recorded", async () => {
+    const reg = mockRegistry();
+    (reg.getEffectiveRiskTier as ReturnType<typeof vi.fn>).mockReturnValue(
+      "high",
+    );
+    const ph =
+      "[oculto · úsalo por nombre: $SECRET_DEMO_X en shell_exec, {{SECRET_DEMO_X}} en http_fetch/navegador]";
+    const args = { namespace: "demo-notes", pdf_path: `/tmp/${ph}.pdf` };
+    const refusal = placeholderRefusalBeforeGate("kb_ingest_pdf_structured", args);
+    expect(refusal).not.toBeNull();
+    // The run id differs from the context id on purpose: the record follows the run.
+    const inRun = await enterRunToolContext("run-ph", () =>
+      createTaskExecutor(reg, askable("ctx-ph"))("kb_ingest_pdf_structured", args),
+    );
+    expect(inRun).toBe(refusal);
+    expect(takeWriteOutcome("run-ph")).toEqual({
+      tool: "kb_ingest_pdf_structured",
+      ok: false,
+      error: (JSON.parse(refusal!).error as string).slice(0, 300), // the store keeps 300 chars
+    });
+    expect(takeWriteOutcome("ctx-ph")).toBeUndefined();
+    const outside = await createTaskExecutor(reg, askable("ctx-ph-out"))(
+      "kb_ingest_pdf_structured",
+      args,
+    );
+    expect(outside).toBe(refusal);
+    expect(takeWriteOutcome("ctx-ph-out")).toBeUndefined();
+    expect(reg.execute).not.toHaveBeenCalled();
+  });
+
+  it("inside a run, a write-class call that gets the confirmation card leaves no write outcome", async () => {
+    const reg = mockRegistry();
+    (reg.getEffectiveRiskTier as ReturnType<typeof vi.fn>).mockReturnValue(
+      "high",
+    );
+    const out = await enterRunToolContext("run-card", () =>
+      createTaskExecutor(reg, askable("ctx-card"))("kb_ingest_pdf_structured", {
+        namespace: "demo-notes",
+        pdf_path: "/tmp/demo.pdf",
+      }),
+    );
+    expect(JSON.parse(out).error).toBe("CONFIRMATION_REQUIRED");
+    expect(takeWriteOutcome("run-card")).toBeUndefined();
+  });
+
+  it("the early placeholder refusal is recorded with the call's target keys: a later successful write on the same namespace repairs it", async () => {
+    const reg = mockRegistry();
+    (reg.getEffectiveRiskTier as ReturnType<typeof vi.fn>).mockReturnValue(
+      "high",
+    );
+    const ph =
+      "[oculto · úsalo por nombre: $SECRET_DEMO_X en shell_exec, {{SECRET_DEMO_X}} en http_fetch/navegador]";
+    const args = { namespace: "demo-notes", pdf_path: `/tmp/${ph}.pdf` };
+    await enterRunToolContext("run-keys", () =>
+      createTaskExecutor(reg, askable("ctx-keys"))("kb_ingest_pdf_structured", args),
+    );
+    recordWriteOutcome("run-keys", "file_write", true, undefined, ["demo-notes"]);
+    expect(takeHiddenWriteFailures("run-keys")).toBeUndefined();
+    expect(takeWriteOutcome("run-keys")).toEqual({ tool: "file_write", ok: true });
   });
 
   it("allows high-risk tools in non-interactive context (scheduled tasks)", async () => {

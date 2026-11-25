@@ -30,6 +30,7 @@ import {
   scrubJsonText,
 } from "../lib/secret-refs.js";
 import { traceSecretRefRefused } from "../lib/secret-ref-trace.js";
+import { errMsg } from "../lib/err-msg.js";
 import { isToolOfferedToCurrentRun } from "../projects/capabilities.js";
 import { createLogger } from "../lib/logger.js";
 import { jsonSchemaToZod, validateArgs } from "./schema-validator.js";
@@ -206,7 +207,7 @@ function errorFieldText(text: string): string | undefined {
 }
 
 /** Item 10: a failed write-class call of the current run, with its target keys (no-op outside a run). */
-function recordFailedWrite(
+export function recordFailedWrite(
   name: string,
   args: Record<string, unknown>,
   text: string,
@@ -292,6 +293,19 @@ function scrubThrown(err: unknown): unknown {
   const replacement = new Error(message);
   replacement.name = err.name;
   return replacement;
+}
+
+/**
+ * The recorded text of a thrown value that is not an Error: `errMsg`'s text,
+ * scrubbed like a thrown string; a fixed sentence when reading that text or
+ * the scrub throws.
+ */
+function thrownText(value: unknown): string {
+  try {
+    return scrubSecrets(errMsg(value));
+  } catch {
+    return "tool failed without a readable error message";
+  }
 }
 
 export class ToolRegistry {
@@ -608,11 +622,12 @@ export class ToolRegistry {
     } catch (err) {
       toolMetrics.record(name, Date.now() - start, false);
       const scrubbed = scrubThrown(err);
-      // Item 10: a THROWN write is a failed write too (recorded scrubbed).
+      // A THROWN write is a failed write too: recorded with the scrubbed
+      // message, or for a value that is not an Error with `thrownText`.
       recordFailedWrite(
         name,
         args,
-        scrubbed instanceof Error ? scrubbed.message : String(scrubbed),
+        scrubbed instanceof Error ? scrubbed.message : thrownText(scrubbed),
       );
       throw scrubbed;
     }
