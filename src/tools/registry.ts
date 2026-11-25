@@ -281,17 +281,45 @@ function scrubResult(result: unknown): string {
 }
 
 /**
+ * The fixed sentence for a thrown value whose message or stack cannot be
+ * read, or whose text cannot be scrubbed.
+ */
+const UNREADABLE_THROWN_TEXT = "tool failed without a readable error message";
+
+/**
  * Ruling 3c: a thrown value scrubbed of stored credentials. The original is
- * rethrown untouched when nothing matched; an Error whose message cannot be
- * assigned (DOMException's is read-only) is replaced by a plain Error with
- * the scrubbed message and the original name.
+ * rethrown untouched when nothing changed; an Error on which an assignment
+ * throws, or that does not keep the scrubbed message (DOMException's is
+ * read-only), is replaced by a plain Error with the scrubbed message and,
+ * when it can be read, the original name. An Error's message or stack that
+ * is not a string, null or undefined is replaced by `thrownText`'s text for
+ * it; an Error whose message or stack cannot be read is replaced by a plain
+ * Error with `thrownText`'s fixed sentence.
  */
 function scrubThrown(err: unknown): unknown {
   if (typeof err === "string") return scrubSecrets(err);
   if (!(err instanceof Error)) return err;
-  const message = scrubSecrets(err.message);
-  const stack = err.stack === undefined ? undefined : scrubSecrets(err.stack);
-  if (message === err.message && stack === err.stack) return err;
+  let rawMessage: string;
+  let rawStack: string | undefined;
+  try {
+    rawMessage = err.message;
+    rawStack = err.stack;
+  } catch {
+    return new Error(UNREADABLE_THROWN_TEXT);
+  }
+  const message =
+    typeof rawMessage === "string"
+      ? scrubSecrets(rawMessage)
+      : rawMessage == null
+        ? rawMessage
+        : thrownText(rawMessage);
+  const stack =
+    typeof rawStack === "string"
+      ? scrubSecrets(rawStack)
+      : rawStack == null
+        ? rawStack
+        : thrownText(rawStack);
+  if (message === rawMessage && stack === rawStack) return err;
   try {
     err.message = message;
     if (stack !== undefined) err.stack = stack;
@@ -300,20 +328,24 @@ function scrubThrown(err: unknown): unknown {
     // read-only message: fall through to a replacement
   }
   const replacement = new Error(message);
-  replacement.name = err.name;
+  try {
+    replacement.name = err.name;
+  } catch {
+    // best-effort: an unreadable name leaves the replacement its default name
+  }
   return replacement;
 }
 
 /**
- * The recorded text of a thrown value that is not an Error: `errMsg`'s text,
- * scrubbed like a thrown string; a fixed sentence when reading that text or
- * the scrub throws.
+ * The text of a thrown value that is not an Error (recorded), or of an
+ * Error's message or stack that is not a string: `errMsg`'s text, scrubbed
+ * like a thrown string; a fixed sentence when the scrub throws.
  */
 function thrownText(value: unknown): string {
   try {
     return scrubSecrets(errMsg(value));
   } catch {
-    return "tool failed without a readable error message";
+    return UNREADABLE_THROWN_TEXT;
   }
 }
 
@@ -631,8 +663,8 @@ export class ToolRegistry {
     } catch (err) {
       toolMetrics.record(name, Date.now() - start, false);
       const scrubbed = scrubThrown(err);
-      // A THROWN write is a failed write too: recorded with the scrubbed
-      // message, or for a value that is not an Error with `thrownText`.
+      // A THROWN write is a failed write too: recorded from the scrubbed
+      // value (an Error's message, or `thrownText` for any other value).
       recordFailedWrite(
         name,
         args,

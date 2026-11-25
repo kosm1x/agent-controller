@@ -1578,4 +1578,185 @@ describe("write-class outcome (queue 2026-10-08 late item 10)", () => {
       outcome: { tool: "file_edit", ok: false, error: "tool failed without a readable error message" },
     });
   });
+
+  it("an Error whose message is a number or a plain object is rethrown as that same Error, its message now that value's text form, and recorded with that text", async () => {
+    const rows: Array<[unknown, string]> = [[42, "42"], [{ code: 7 }, "[object Object]"]];
+    const got: unknown[] = [];
+    for (const [i, [value]] of rows.entries()) {
+      const thrown = new Error("write refused");
+      (thrown as { message: unknown }).message = value;
+      const { call, outcome } = await withScrub(hideSynth, () => throwingEdit(`t-ns-a${i}`, () => thrown));
+      const s = await settled(call);
+      got.push({ outcome, rethrownSame: "rejected" in s && s.rejected === thrown, message: thrown.message });
+    }
+    expect(got).toEqual(
+      rows.map(([, text]) => ({
+        outcome: { tool: "file_edit", ok: false, error: text },
+        rethrownSame: true,
+        message: text,
+      })),
+    );
+  });
+
+  it("an Error whose message is undefined is rethrown as that same Error with that message, and recorded with the fixed sentence", async () => {
+    const thrown = new Error("write refused");
+    (thrown as { message: unknown }).message = undefined;
+    const { call, outcome } = await withScrub(hideSynth, () => throwingEdit("t-ns-u", () => thrown));
+    const s = await settled(call);
+    expect({ outcome, rethrownSame: "rejected" in s && s.rejected === thrown, message: thrown.message }).toEqual({
+      outcome: { tool: "file_edit", ok: false, error: "tool failed without a readable error message" },
+      rethrownSame: true,
+      message: undefined,
+    });
+  });
+
+  it("a stored value in the message of an Error whose stack is null is scrubbed on the record and on the rethrown Error, and the stack stays null", async () => {
+    const thrown = new Error(`write refused for ${SYNTH}`);
+    (thrown as { stack: unknown }).stack = null;
+    const { call, outcome } = await withScrub(hideSynth, () => throwingEdit("t-ns-b", () => thrown));
+    const s = await settled(call);
+    expect({
+      outcome,
+      rethrownSame: "rejected" in s && s.rejected === thrown,
+      message: thrown.message,
+      stack: (thrown as { stack: unknown }).stack,
+    }).toEqual({
+      outcome: { tool: "file_edit", ok: false, error: "write refused for [hidden]" },
+      rethrownSame: true,
+      message: "write refused for [hidden]",
+      stack: null,
+    });
+  });
+
+  it("a frozen Error whose message is an object with a stored value in its text form is replaced by an Error carrying that text scrubbed, and recorded with it", async () => {
+    const thrown = new Error("write refused");
+    (thrown as { message: unknown }).message = { toString: () => `detail ${SYNTH}` };
+    Object.freeze(thrown);
+    const { call, outcome } = await withScrub(hideSynth, () => throwingEdit("t-ns-c", () => thrown));
+    const s = await settled(call);
+    const r = "rejected" in s ? s.rejected : undefined;
+    expect({
+      outcome,
+      replaced: r instanceof Error && r !== thrown,
+      name: (r as Error | undefined)?.name,
+      message: (r as Error | undefined)?.message,
+      stackHolds: String((r as Error | undefined)?.stack).includes(SYNTH),
+    }).toEqual({
+      outcome: { tool: "file_edit", ok: false, error: "detail [hidden]" },
+      replaced: true,
+      name: "Error",
+      message: "detail [hidden]",
+      stackHolds: false,
+    });
+  });
+
+  it("an Error whose message is an object with a stored value in its text form is rethrown as that same Error with that text scrubbed, the value nowhere on it", async () => {
+    const thrown = new Error(`write refused for ${SYNTH}`);
+    (thrown as { message: unknown }).message = { toString: () => `detail ${SYNTH}` };
+    const { call, outcome } = await withScrub(hideSynth, () => throwingEdit("t-ns-d", () => thrown));
+    const s = await settled(call);
+    expect({
+      outcome,
+      rethrownSame: "rejected" in s && s.rejected === thrown,
+      message: thrown.message,
+      holds: [String(thrown.stack), String(thrown)].some((t) => t.includes(SYNTH)),
+    }).toEqual({
+      outcome: { tool: "file_edit", ok: false, error: "detail [hidden]" },
+      rethrownSame: true,
+      message: "detail [hidden]",
+      holds: false,
+    });
+  });
+
+  it("an Error whose stack is an object with a stored value in its text form is rethrown as that same Error, its stack now that text scrubbed", async () => {
+    const thrown = new Error("write refused");
+    (thrown as { stack: unknown }).stack = { toString: () => `detail ${SYNTH}` };
+    const { call, outcome } = await withScrub(hideSynth, () => throwingEdit("t-ns-e", () => thrown));
+    const s = await settled(call);
+    expect({
+      outcome,
+      rethrownSame: "rejected" in s && s.rejected === thrown,
+      message: thrown.message,
+      stack: (thrown as { stack: unknown }).stack,
+    }).toEqual({
+      outcome: { tool: "file_edit", ok: false, error: "write refused" },
+      rethrownSame: true,
+      message: "write refused",
+      stack: "detail [hidden]",
+    });
+  });
+
+  /** What left the registry for `thrown`, and the record, with the stand-in scrub. */
+  async function unreadableOutcome(taskId: string, thrown: Error) {
+    const { call, outcome } = await withScrub(hideSynth, () => throwingEdit(taskId, () => thrown));
+    const s = await settled(call);
+    const r = "rejected" in s ? s.rejected : undefined;
+    let shown: string;
+    try {
+      shown = [String((r as Error | undefined)?.stack), String(r)].join("\n");
+    } catch {
+      shown = "unreadable";
+    }
+    return {
+      outcome,
+      plainError: r instanceof Error && r !== thrown && Object.getPrototypeOf(r) === Error.prototype,
+      message: (r as Error | undefined)?.message,
+      holds: shown.includes(SYNTH) || shown === "unreadable",
+    };
+  }
+  const unreadable = {
+    outcome: { tool: "file_edit", ok: false, error: "tool failed without a readable error message" },
+    plainError: true,
+    message: "tool failed without a readable error message",
+    holds: false,
+  };
+
+  it("an Error whose stack was never read and whose message's text form throws is replaced by a plain Error with the fixed sentence, and recorded with it", async () => {
+    const thrown = new Error("write refused");
+    (thrown as { message: unknown }).message = {
+      toString: () => {
+        throw new Error(`detail ${SYNTH}`);
+      },
+    };
+    expect(await unreadableOutcome("t-ur-w", thrown)).toEqual(unreadable);
+  });
+
+  it("an Error whose message or stack getter throws is replaced by a plain Error with the fixed sentence, and recorded with it", async () => {
+    const got: unknown[] = [];
+    for (const [i, key] of (["message", "stack"] as const).entries()) {
+      const thrown = new Error("write refused");
+      Object.defineProperty(thrown, key, {
+        get() {
+          throw new Error(`detail ${SYNTH}`);
+        },
+      });
+      got.push(await unreadableOutcome(`t-ur-g${i}`, thrown));
+    }
+    expect(got).toEqual([unreadable, unreadable]);
+  });
+
+  it("a frozen Error whose name getter throws is replaced by an Error with the scrubbed message and the default name, and recorded", async () => {
+    const thrown = new Error(`write refused for ${SYNTH}`);
+    void thrown.stack; // formatted now, while the name can still be read
+    Object.defineProperty(thrown, "name", {
+      get() {
+        throw new Error("name unavailable");
+      },
+    });
+    Object.freeze(thrown);
+    const { call, outcome } = await withScrub(hideSynth, () => throwingEdit("t-ur-n", () => thrown));
+    const s = await settled(call);
+    const r = "rejected" in s ? s.rejected : undefined;
+    expect({
+      outcome,
+      replaced: r instanceof Error && r !== thrown,
+      name: (r as Error | undefined)?.name,
+      message: (r as Error | undefined)?.message,
+    }).toEqual({
+      outcome: { tool: "file_edit", ok: false, error: "write refused for [hidden]" },
+      replaced: true,
+      name: "Error",
+      message: "write refused for [hidden]",
+    });
+  });
 });
