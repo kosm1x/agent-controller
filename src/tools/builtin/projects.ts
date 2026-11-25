@@ -36,6 +36,7 @@ import {
 } from "../../projects/projector.js";
 import { MIN_ALIAS_CHARS, aliasChars } from "../../projects/scope-groups.js";
 import {
+  belowScrubLength,
   configSecretLiterals,
   isProjectProseSecret,
   isProjectSecret,
@@ -88,10 +89,12 @@ function resolveProjectRefs(
  * Ruling 3c: the by-name placeholder of each credential-style entry (nested
  * values included, keyed by their dotted path) this call stored (never the value); undefined when there is none, so the
  * result of a call without credentials is unchanged.
+ * `short` collects the paths of those entries below the cleaner's minimum length.
  */
 function savedSecrets(
   slug: string,
   args: Record<string, unknown>,
+  short?: string[],
 ): Record<string, string> | undefined {
   const out: Record<string, string> = {};
   for (const field of ["credentials", "urls", "config"] as const) {
@@ -101,16 +104,27 @@ function savedSecrets(
       // Nested values carry their own names (audit R3 S4).
       if (v && typeof v === "object") {
         for (const leaf of projectEntryLeaves(slug, field, k, v, obj as Record<string, unknown>)) {
-          if (leaf.secret) out[`${field}.${leaf.path.join(".")}`] = leaf.display;
+          if (!leaf.secret) continue;
+          out[`${field}.${leaf.path.join(".")}`] = leaf.display;
+          if (short && belowScrubLength(String(valueAt(v, leaf.path.slice(1))))) {
+            short.push(`${field}.${leaf.path.join(".")}`);
+          }
         }
         continue;
       }
       if (typeof v !== "string" && typeof v !== "number") continue;
       if (v === "" || !isProjectSecret(k, String(v))) continue;
       out[`${field}.${k}`] = projectSecretDisplay(slug, field, k, v);
+      if (short && belowScrubLength(String(v))) short.push(`${field}.${k}`);
     }
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function shortSecretWarning(short: string[]): string | undefined {
+  return short.length > 0
+    ? `Díselo al usuario ahora: lo guardado en ${short.join(", ")} es demasiado corto para ocultarse automáticamente si aparece en la salida de una herramienta; quedó guardado y se usa por nombre como siempre.`
+    : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +361,7 @@ function updateThroughRecord(
   if (!updated) {
     return JSON.stringify({ error: "Update failed" });
   }
+  const short: string[] = [];
   return JSON.stringify({
     action: projected?.action === "created" ? "created" : "updated",
     project: {
@@ -356,7 +371,8 @@ function updateThroughRecord(
       credential_keys: Object.keys(updated.credentials),
     },
     record: rel,
-    saved_secrets: savedSecrets(updated.slug, args),
+    saved_secrets: savedSecrets(updated.slug, args, short),
+    short_secret_warning: shortSecretWarning(short),
   });
 }
 
@@ -726,6 +742,7 @@ CREDENTIAL STORAGE:
         config: args.config as Record<string, unknown> | undefined,
         commit_goal_id: args.commit_goal_id as string | undefined,
       });
+      const short: string[] = [];
       return JSON.stringify({
         action: "created",
         project: {
@@ -734,7 +751,8 @@ CREDENTIAL STORAGE:
           status: project.status,
           credential_keys: Object.keys(project.credentials),
         },
-        saved_secrets: savedSecrets(project.slug, args),
+        saved_secrets: savedSecrets(project.slug, args, short),
+        short_secret_warning: shortSecretWarning(short),
       });
     }
 
@@ -760,6 +778,7 @@ CREDENTIAL STORAGE:
       `Fields: ${Object.keys(updates).join(", ")}`,
     );
 
+    const short: string[] = [];
     return JSON.stringify({
       action: "updated",
       project: {
@@ -768,7 +787,8 @@ CREDENTIAL STORAGE:
         status: updated.status,
         credential_keys: Object.keys(updated.credentials),
       },
-      saved_secrets: savedSecrets(updated.slug, args),
+      saved_secrets: savedSecrets(updated.slug, args, short),
+      short_secret_warning: shortSecretWarning(short),
     });
   },
 };

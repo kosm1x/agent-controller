@@ -37,6 +37,7 @@ vi.mock("./logger.js", () => {
 
 import {
   TEMPLATE_TOOLS,
+  belowScrubLength,
   invalidateSecretRefs,
   resetSecretRefsForTest,
   secretPlaceholder,
@@ -768,6 +769,21 @@ describe("scrubSecrets", () => {
     expect(out.split(secretPlaceholder(N.cookie, "url"))).toHaveLength(2);
     expect(out).toContain(`e=${SHORT}`);
     expect(out).toContain(`f=${GA_ID}`);
+  });
+
+  it("the index skips exactly the values belowScrubLength calls short: just under, at and just above the minimum", () => {
+    const values = ["abcdefg", "hijklmno", "pqrstuvwx"];
+    fact("projects", "alpha_password", values[0]!);
+    fact("projects", "beta_password", values[1]!);
+    fact("projects", "gamma_password", values[2]!);
+    invalidateSecretRefs();
+    expect(
+      values.map((v) => [belowScrubLength(v), scrubSecrets(`x ${v} y`) !== `x ${v} y`]),
+    ).toEqual([
+      [true, false],
+      [false, true],
+      [false, true],
+    ]);
   });
 
   it("catches the JSON-escaped forms (once and twice) of a value with a quote, a backslash and a newline", () => {

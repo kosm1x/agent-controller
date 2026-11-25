@@ -24,7 +24,10 @@ import {
   secretPlaceholder,
 } from "../../lib/secret-refs.js";
 import { projectGetTool, projectListTool, projectUpdateTool } from "./projects.js";
+import { userFactSetTool } from "./user-facts.js";
 import { ToolRegistry } from "../registry.js";
+import { enterRunToolContext } from "../rule-of-two.js";
+import { takeWriteOutcome } from "../../lib/v8-4/numbers.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1133,5 +1136,141 @@ CREDENTIAL STORAGE:
     expect(props.slug.description).toBe(
       "Project slug or ID. Use project_list first, when it is among your tools, if you don't know the slug.",
     );
+  });
+});
+
+// A secret this call saved below the cleaner's minimum length is named in one
+// result field that asks the model to tell the user; the field is absent when
+// there is none, so every other result is unchanged.
+describe("project_update — saved secrets below the cleaner's minimum length", () => {
+  const WARN = (paths: string) =>
+    `Díselo al usuario ahora: lo guardado en ${paths} es demasiado corto para ocultarse automáticamente si aparece en la salida de una herramienta; quedó guardado y se usa por nombre como siempre.`;
+  const FIELD = "short_secret_warning";
+  let kbDir: string;
+  let prevMirror: string | undefined;
+  const REL = projectRecordRelPath("acme-radar");
+  const RECORD =
+    "# Acme Radar\n\n```json\n" +
+    JSON.stringify({ slug: "acme-radar", name: "Acme Radar", status: "active" }, null, 2) +
+    "\n```\n\nSynthetic lead paragraph.\n";
+
+  beforeEach(() => {
+    kbDir = mkdtempSync(join(tmpdir(), "mc-proj-short-"));
+    prevMirror = process.env.JARVIS_KB_MIRROR_DIR;
+    process.env.JARVIS_KB_MIRROR_DIR = kbDir;
+    upsertFromDiskWrite(REL, RECORD);
+  });
+  afterEach(() => {
+    rmSync(kbDir, { recursive: true, force: true });
+    if (prevMirror === undefined) delete process.env.JARVIS_KB_MIRROR_DIR;
+    else process.env.JARVIS_KB_MIRROR_DIR = prevMirror;
+  });
+
+  // The three result sites (new row, row without a record, row with a record), each saving `credentials`.
+  const SITES: Array<[string, (credentials: Record<string, unknown>, tag: string) => Promise<string>]> = [
+    ["create", (credentials, tag) => projectUpdateTool.execute({ slug: `sw-new-${tag}`, name: "Sw New", credentials })],
+    [
+      "update",
+      (credentials, tag) => {
+        createProject(`sw-old-${tag}`, "Sw Old", { config: { phase: "live" } });
+        return projectUpdateTool.execute({ slug: `sw-old-${tag}`, credentials });
+      },
+    ],
+    ["record", (credentials) => projectUpdateTool.execute({ slug: "acme-radar", credentials })],
+  ];
+  const view = (out: Record<string, unknown>) => [
+    "error" in out,
+    out.action,
+    FIELD in out ? out[FIELD] : "absent",
+  ];
+
+  it("each result site: a saved secret below the minimum is named; at and above the minimum the field is absent", async () => {
+    const got: unknown[] = [];
+    for (const [site, run] of SITES) {
+      for (const [tag, value] of [["a", "abcdefg"], ["b", "abcdefgh"], ["c", "abcdefghi"]] as const) {
+        got.push([site, ...view(JSON.parse(await run({ password: value }, tag)))]);
+      }
+    }
+    const action = (site: string) => (site === "create" ? "created" : "updated");
+    expect(got).toEqual(
+      SITES.flatMap(([site]) => [
+        [site, false, action(site), WARN("credentials.password")],
+        [site, false, action(site), "absent"],
+        [site, false, action(site), "absent"],
+      ]),
+    );
+  });
+
+  it("several short secrets, one nested: every path is named in the order sent", async () => {
+    const out = JSON.parse(
+      await projectUpdateTool.execute({
+        slug: "sw-two",
+        name: "Sw Two",
+        credentials: { ftp: { host: "ftp.example.test", password: "abc" }, password: "abcd" },
+      }),
+    );
+    expect(view(out)).toEqual([false, "created", WARN("credentials.ftp.password, credentials.password")]);
+  });
+
+  it("a short value the classifier does not call a secret, beside a short secret: only the secret is named", async () => {
+    const out = JSON.parse(
+      await projectUpdateTool.execute({
+        slug: "sw-pair",
+        name: "Sw Pair",
+        credentials: { user: "abc", password: "abc", ftp: { user: "abc", password: "abc" } },
+      }),
+    );
+    expect(view(out)).toEqual([false, "created", WARN("credentials.password, credentials.ftp.password")]);
+  });
+
+  it("the warned result adds no value and no digit to the same result without the field, at each site", async () => {
+    const digits = (s: string): string[] => s.match(/\d/g) ?? [];
+    const rows: unknown[] = [];
+    for (const [site, run] of SITES) {
+      for (const [tag, value] of [["d", "qzj"], ["e", "qzjxvwk"]] as const) {
+        const out = await run({ password: value, ftp: { pass: value } }, tag);
+        const rest = JSON.parse(out) as Record<string, unknown>;
+        const warned = FIELD in rest;
+        delete rest[FIELD];
+        const base = JSON.stringify(rest);
+        rows.push([site, warned, out.includes(value), digits(out).filter((d) => !digits(base).includes(d))]);
+      }
+    }
+    expect(rows).toEqual(SITES.flatMap(([site]) => [[site, true, false, []], [site, true, false, []]]));
+  });
+
+  it("a refused save carries no field and stores nothing", async () => {
+    createProject("sw-refused", "Sw Refused", { config: { phase: "live" } });
+    const out = JSON.parse(
+      await projectUpdateTool.execute({
+        slug: "sw-refused",
+        credentials: { password: "abc" },
+        config: { aliases: ["a".repeat(MIN_ALIAS_CHARS - 1)] },
+      }),
+    );
+    expect([typeof out.error, FIELD in out, getProject("sw-refused")!.credentials]).toEqual(["string", false, {}]);
+  });
+
+  it("through the registry inside a run: both tools' warned saves are not errors and record no write outcome", async () => {
+    const reg = new ToolRegistry();
+    reg.register(projectUpdateTool);
+    reg.register(userFactSetTool);
+    const taskId = "task-short-secret";
+    const [fact, project] = await enterRunToolContext(taskId, async () => [
+      await reg.execute("user_fact_set", { category: "projects", key: "blog_password", value: "abc" }),
+      await reg.execute("project_update", { slug: "sw-reg", name: "Sw Reg", credentials: { password: "abc" } }),
+    ]);
+    const parsed = JSON.parse(project!) as Record<string, unknown>;
+    expect({
+      outcome: takeWriteOutcome(taskId),
+      factHead: fact!.startsWith("Fact stored: [projects] blog_password = "),
+      factWarned: fact!.includes("Tell the user now:"),
+      project: view(parsed),
+    }).toEqual({
+      outcome: undefined,
+      factHead: true,
+      factWarned: true,
+      project: [false, "created", WARN("credentials.password")],
+    });
   });
 });

@@ -16,6 +16,7 @@ import {
 } from "../../db/user-facts.js";
 import { toMexTime } from "../../lib/timezone.js";
 import {
+  belowScrubLength,
   resolveStoredReference,
   visibleDestinationError,
 } from "../../lib/secret-refs.js";
@@ -23,6 +24,10 @@ import {
 /** user_fact_set result when the value holds a mailbox password (store rule). */
 const MAILBOX_PASSWORD_NOT_A_FACT =
   "No guardo contraseñas de buzón como dato del usuario: la contraseña vigente sale solo de la herramienta del buzón (stalwart-inbox vía shell_exec). Ejecútala para obtenerla.";
+
+/** Appended to the success line when a non-empty credential is below the cleaner's minimum length. */
+const SHORT_SECRET_NOTE =
+  " Tell the user now: this value is too short to be hidden automatically if it shows up in tool output; it was saved and works by name as usual.";
 
 // ---------------------------------------------------------------------------
 // user_fact_set
@@ -124,7 +129,8 @@ BOUNDARY: user_fact_set is for SHORT, permanent facts (name, age, API keys, cred
     }
 
     // Ruling 3c: a credential is confirmed by its by-name placeholder, never echoed.
-    return `Fact stored: [${category}] ${key} = ${factDisplayValue({ category, key, value })}. This will be included in all future conversations.`;
+    const short = value !== "" && isCredentialFact(category, key, value) && belowScrubLength(value);
+    return `Fact stored: [${category}] ${key} = ${factDisplayValue({ category, key, value })}. This will be included in all future conversations.${short ? SHORT_SECRET_NOTE : ""}`;
   },
 };
 

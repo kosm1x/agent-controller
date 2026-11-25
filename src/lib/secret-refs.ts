@@ -45,6 +45,15 @@ export const TEMPLATE_TOOLS: ReadonlySet<string> = new Set([
 /** Values shorter than this are not scrubbed (too likely to hit prose). */
 export const MIN_SCRUB_LENGTH = 8;
 
+/**
+ * Whether a stored secret value is below the cleaner's minimum length. The
+ * index build skips such a value when scrubbing, and the save-time warnings
+ * of user_fact_set and project_update use the same test.
+ */
+export function belowScrubLength(value: string): boolean {
+  return value.length < MIN_SCRUB_LENGTH;
+}
+
 /** Index rebuilt at most this often even without a write (external sqlite edits). */
 const INDEX_TTL_MS = 60_000;
 
@@ -607,7 +616,7 @@ function buildIndex(): SecretIndex | null {
         : e.base;
     nameOf.set(e.identity, name);
     valueOf.set(name, e.value);
-    if (e.value.length < MIN_SCRUB_LENGTH) continue;
+    if (belowScrubLength(e.value)) continue;
     exact.set(e.value, secretPlaceholder(name));
     // The value as it appears raw, URL-encoded, and inside a JSON string
     // (escaped once, and twice for JSON nested in a JSON string). Each

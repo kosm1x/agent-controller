@@ -312,6 +312,84 @@ describe("user_fact_set — mailbox password", () => {
   });
 });
 
+// A credential below the cleaner's minimum length is stored as usual; the
+// success line then asks the model to tell the user it is not hidden in tool
+// output. No value, part of a value or length is in that sentence.
+describe("user_fact_set — a credential below the cleaner's minimum length", () => {
+  const NOTE =
+    " Tell the user now: this value is too short to be hidden automatically if it shows up in tool output; it was saved and works by name as usual.";
+  const VALUES = ["", "a", "ab", "abc", "abcd", "abcde", "abcdef", "abcdefg", "abcdefgh", "abcdefghi"];
+
+  afterEach(() => {
+    invalidateSecretRefs();
+    vi.restoreAllMocks();
+  });
+
+  // A fresh fake user_facts table per call: INSERT appends, SELECT returns the rows.
+  async function save(key: string, value: string) {
+    const rows: Array<Record<string, string>> = [];
+    const run = vi.fn((category: string, k: string, v: string) => {
+      rows.push({ category, key: k, value: v, source: "conversation", updated_at: "2026-10-01 12:00:00" });
+    });
+    mockDb.prepare.mockImplementation(() => ({ run, all: () => rows }));
+    invalidateSecretRefs();
+    const out = await userFactSetTool.execute({ category: "projects", key, value });
+    return { out, stored: run.mock.calls.map((c) => c[2]) };
+  }
+
+  it("a credential key: the note follows the success line exactly for a non-empty value below the minimum", async () => {
+    const warned: boolean[] = [];
+    for (const v of VALUES) warned.push((await save("blog_password", v)).out.endsWith(NOTE));
+    expect(warned).toEqual([false, true, true, true, true, true, true, true, false, false]);
+  });
+
+  it("a key the classifier does not call a credential: no note at any length", async () => {
+    const warned: boolean[] = [];
+    for (const v of VALUES) warned.push((await save("blog_motto", v)).out.includes(NOTE));
+    expect(warned).toEqual(VALUES.map(() => false));
+  });
+
+  it("every value is still stored as given, warned or not", async () => {
+    const stored: unknown[] = [];
+    for (const key of ["blog_password", "blog_motto"]) {
+      for (const v of VALUES) stored.push(...(await save(key, v)).stored);
+    }
+    expect(stored).toEqual([...VALUES, ...VALUES]);
+  });
+
+  it("the warned result adds no value and no digit to the unwarned result for the same key", async () => {
+    const digits = (s: string): string[] => s.match(/\d/g) ?? [];
+    // Unwarned: the same key at the minimum (a credential is shown by its name, never its value).
+    const base = (await save("blog_password", "qzjxvwkp")).out;
+    const rows: unknown[] = [];
+    for (const v of ["qzj", "qzjx", "qzjxv", "qzjxvw", "qzjxvwk"]) {
+      const { out } = await save("blog_password", v);
+      const extra = out.startsWith(base) ? out.slice(base.length) : out;
+      rows.push({
+        extendsUnwarned: out.startsWith(base) && extra !== "",
+        hasValue: out.includes(v),
+        newDigits: digits(out).filter((d) => !digits(base).includes(d)),
+      });
+    }
+    expect(rows).toEqual(
+      Array.from({ length: 5 }, () => ({ extendsUnwarned: true, hasValue: false, newDigits: [] })),
+    );
+  });
+
+  it("a save whose store write throws returns no text at all (so no note)", async () => {
+    mockDb.prepare.mockImplementation(() => ({
+      run: () => {
+        throw new Error("synthetic write failure");
+      },
+      all: () => [],
+    }));
+    invalidateSecretRefs();
+    await expect(
+      userFactSetTool.execute({ category: "projects", key: "blog_password", value: "abc" }),
+    ).rejects.toThrow("synthetic write failure");
+  });
+});
+
 // Whole-text pins: these descriptions are what the model reads when it
 // chooses a tool. No handler is called.
 describe("user_fact_list and user_fact_delete — description text", () => {
