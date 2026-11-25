@@ -34,7 +34,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z, type ZodType } from "zod";
-import { toolRegistry } from "../tools/registry.js";
+import { toolRegistry, recordFailedWrite } from "../tools/registry.js";
 import { isToolOfferedToCurrentRun } from "../projects/capabilities.js";
 import { getToolAnnotations, type Tool } from "../tools/types.js";
 import { MCP_NAMESPACE_SEP } from "../mcp/types.js";
@@ -392,6 +392,9 @@ function gateSdkToolCall(
     if (refused !== null) {
       // Visible like every other gated decision; no abort (qa R1 W5).
       ctx.recordGatedCall(name);
+      // Recorded as a failed write of the run, as on the tool-loop path (the
+      // recorder does nothing outside a run or for a non-write-class tool).
+      recordFailedWrite(name, args, refused);
       trace("refused_placeholder", ctx.taskId);
       return refused;
     }
@@ -439,6 +442,8 @@ function gateSdkToolCall(
       // list it among the tools already executed (resume prompt, output,
       // telemetry — fast-runner `withoutGated`).
       ctx.recordGatedCall(name);
+      // A failed write of the run, as above.
+      recordFailedWrite(name, args, refused);
       return refused;
     }
   }

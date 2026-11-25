@@ -21,7 +21,11 @@ const reg = vi.hoisted(() => ({
   tiers: {} as Record<string, "low" | "medium" | "high">,
   execute: vi.fn(async (name: string) => JSON.stringify({ ok: true, name })),
 }));
-vi.mock("../tools/registry.js", () => ({
+vi.mock("../tools/registry.js", async (importOriginal) => ({
+  // The real failed-write recorder; its record is read back with takeWriteOutcome.
+  recordFailedWrite: (
+    await importOriginal<typeof import("../tools/registry.js")>()
+  ).recordFailedWrite,
   toolRegistry: {
     get: () => undefined,
     has: (name: string) => name in reg.tiers,
@@ -84,7 +88,13 @@ import {
   NO_CONFIRM_A2A_ERROR,
   noConfirmBackgroundScheduleError,
   undeclaredToolError,
+  placeholderRefusalBeforeGate,
 } from "../tools/task-executor.js";
+import {
+  takeWriteOutcome,
+  recordWriteOutcome,
+  takeHiddenWriteFailures,
+} from "../lib/v8-4/numbers.js";
 import type { Tool } from "../tools/types.js";
 
 const OPERATOR: RunOrigin = { source: "operator", threadId: "telegram:1" };
@@ -168,6 +178,7 @@ beforeEach(() => {
     gmail_send: "high",
     google_workspace_cli: "high",
     web_search: "low",
+    kb_ingest_pdf_structured: "high",
   };
 });
 
@@ -692,6 +703,184 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
       error: noConfirmBackgroundScheduleError(["gmail_send"]),
     });
     expect(reg.execute).not.toHaveBeenCalled();
+  });
+});
+
+// A write-class call's placeholder refusal before the card is recorded as a
+// failed write of the run on this path too, as the executor records it.
+describe("wrapTool early placeholder refusal: failed-write record", () => {
+  const KB = "kb_ingest_pdf_structured";
+  const PH =
+    "[oculto · úsalo por nombre: $SECRET_DEMO_X en shell_exec, {{SECRET_DEMO_X}} en http_fetch/navegador]";
+  const KB_PH_ARGS = { namespace: "demo-notes", pdf_path: `/tmp/${PH}.pdf` };
+  /** `fn` in run `runId` with `ctx` entered; the run id differs from the context id on purpose. */
+  const inRunAs = <T>(
+    runId: string,
+    ctx: TaskExecutionContext,
+    fn: () => Promise<T>,
+  ): Promise<T> =>
+    enterRunToolContext(runId, () => runWithExecutionContext(ctx, fn), OPERATOR);
+  /** What the store keeps: the refusal's decoded `error`, cut at 300 chars. */
+  const recordedError = (refusal: string): string =>
+    (JSON.parse(refusal).error as string).slice(0, 300);
+
+  it("site 2 (no card yet): a write-class call refused for a rendered placeholder is recorded as a failed write of the run with its target keys, the returned text unchanged", async () => {
+    // No stored values exist in this file's process (no database is opened),
+    // so the recorder's clean leaves the decoded refusal text as it is.
+    const refusal = placeholderRefusalBeforeGate(KB, KB_PH_ARGS)!;
+    const ctx = fastChatRoot("ctx-sp2");
+    const text = await inRunAs("run-sp2", ctx, () => call(KB, KB_PH_ARGS));
+    const outcome = takeWriteOutcome("run-sp2");
+    const byCtx = takeWriteOutcome("ctx-sp2");
+    // A later successful write on a shared target key repairs it.
+    await inRunAs("run-sp2b", fastChatRoot("ctx-sp2b"), () =>
+      call(KB, KB_PH_ARGS),
+    );
+    recordWriteOutcome("run-sp2b", "file_write", true, undefined, ["demo-notes"]);
+    expect({
+      text,
+      executed: reg.execute.mock.calls.length,
+      pending: ctx.getPendingConfirmation(),
+      gated: ctx.getGatedCalls(),
+      outcome,
+      byCtx,
+      hidden: takeHiddenWriteFailures("run-sp2b"),
+      repaired: takeWriteOutcome("run-sp2b"),
+    }).toEqual({
+      text: refusal,
+      executed: 0,
+      pending: null,
+      gated: [KB],
+      outcome: { tool: KB, ok: false, error: recordedError(refusal) },
+      byCtx: undefined,
+      hidden: undefined,
+      repaired: { tool: "file_write", ok: true },
+    });
+  });
+
+  it("site 1 (card held): a write-class call refused for a rendered placeholder is recorded as a failed write of the run with its target keys; the card and the returned text unchanged", async () => {
+    const refusal = placeholderRefusalBeforeGate(KB, KB_PH_ARGS)!;
+    const ctx = fastChatRoot("ctx-sp1");
+    await inRunAs("run-sp1", ctx, () => call("wp_delete", { id: 7 }));
+    const text = await inRunAs("run-sp1", ctx, () => call(KB, KB_PH_ARGS));
+    const outcome = takeWriteOutcome("run-sp1");
+    const byCtx = takeWriteOutcome("ctx-sp1");
+    const ctxB = fastChatRoot("ctx-sp1b");
+    await inRunAs("run-sp1b", ctxB, () => call("wp_delete", { id: 7 }));
+    await inRunAs("run-sp1b", ctxB, () => call(KB, KB_PH_ARGS));
+    recordWriteOutcome("run-sp1b", "file_write", true, undefined, ["demo-notes"]);
+    expect({
+      text,
+      executed: reg.execute.mock.calls.length,
+      pending: ctx.getPendingConfirmation(),
+      gated: ctx.getGatedCalls(),
+      outcome,
+      byCtx,
+      hidden: takeHiddenWriteFailures("run-sp1b"),
+      repaired: takeWriteOutcome("run-sp1b"),
+    }).toEqual({
+      text: refusal,
+      executed: 0,
+      pending: WP_DELETE_CARD,
+      gated: ["wp_delete", KB],
+      outcome: { tool: KB, ok: false, error: recordedError(refusal) },
+      byCtx: undefined,
+      hidden: undefined,
+      repaired: { tool: "file_write", ok: true },
+    });
+  });
+
+  it("a placeholder refusal of a tool that is not write-class (gmail_send) leaves no write outcome at either site", async () => {
+    const args = { to: "user27@example.com", body: `clave: ${PH}` };
+    const refusal = placeholderRefusalBeforeGate("gmail_send", args)!;
+    const site2 = await inRunAs("run-sp3a", fastChatRoot("ctx-sp3a"), () =>
+      call("gmail_send", args),
+    );
+    const ctx = fastChatRoot("ctx-sp3b");
+    await inRunAs("run-sp3b", ctx, () => call("wp_delete", { id: 7 }));
+    const site1 = await inRunAs("run-sp3b", ctx, () => call("gmail_send", args));
+    expect({
+      site2,
+      site1,
+      outcome2: takeWriteOutcome("run-sp3a"),
+      outcome1: takeWriteOutcome("run-sp3b"),
+    }).toEqual({
+      site2: refusal,
+      site1: refusal,
+      outcome2: undefined,
+      outcome1: undefined,
+    });
+  });
+
+  it("a write-class call that opens the card, and one queued onto it, leave no write outcome", async () => {
+    const ctx = fastChatRoot("ctx-sp4");
+    const first = await inRunAs("run-sp4", ctx, () =>
+      call(KB, { namespace: "demo-notes", pdf_path: "/tmp/demo.pdf" }),
+    );
+    const second = await inRunAs("run-sp4", ctx, () =>
+      call(KB, { namespace: "demo-notes", pdf_path: "/tmp/demo-2.pdf" }),
+    );
+    expect({
+      first: JSON.parse(first).error,
+      second: JSON.parse(second).error,
+      items: ctx.getPendingConfirmation()?.items.length,
+      outcome: takeWriteOutcome("run-sp4"),
+    }).toEqual({
+      first: "CONFIRMATION_REQUIRED",
+      second: "CONFIRMATION_REQUIRED",
+      items: 2,
+      outcome: undefined,
+    });
+  });
+
+  it("site 1, card held by the same write-class tool: the refused placeholder call is recorded under its own name; the card keeps the one clean call", async () => {
+    const refusal = placeholderRefusalBeforeGate(KB, KB_PH_ARGS)!;
+    const ctx = fastChatRoot("ctx-sp5");
+    const clean = { namespace: "demo-notes", pdf_path: "/tmp/demo.pdf" };
+    await inRunAs("run-sp5", ctx, () => call(KB, clean));
+    const text = await inRunAs("run-sp5", ctx, () => call(KB, KB_PH_ARGS));
+    expect({
+      text,
+      items: ctx.getPendingConfirmation()?.items,
+      outcome: takeWriteOutcome("run-sp5"),
+    }).toEqual({
+      text: refusal,
+      items: [{ toolName: KB, args: clean }],
+      outcome: { tool: KB, ok: false, error: recordedError(refusal) },
+    });
+  });
+
+  it("site 2: a second placeholder refusal of the same call after a successful write in the same run is the run's last write outcome again", async () => {
+    const refusal = placeholderRefusalBeforeGate(KB, KB_PH_ARGS)!;
+    const ctx = fastChatRoot("ctx-sp6");
+    await inRunAs("run-sp6", ctx, () => call(KB, KB_PH_ARGS));
+    recordWriteOutcome("run-sp6", "file_write", true, undefined, ["/tmp/other-notes.md"]);
+    const text = await inRunAs("run-sp6", ctx, () => call(KB, KB_PH_ARGS));
+    expect({ text, outcome: takeWriteOutcome("run-sp6") }).toEqual({
+      text: refusal,
+      outcome: { tool: KB, ok: false, error: recordedError(refusal) },
+    });
+  });
+
+  it("site 1, card held by another write-class tool: the record names the refused tool, not the card's", async () => {
+    reg.tiers.file_write = "high"; // the top-level beforeEach replaces reg.tiers
+    const refusal = placeholderRefusalBeforeGate(KB, KB_PH_ARGS)!;
+    const ctx = fastChatRoot("ctx-sp7");
+    const first = await inRunAs("run-sp7", ctx, () =>
+      call("file_write", { path: "/tmp/demo-notes.md", content: "x" }),
+    );
+    await inRunAs("run-sp7", ctx, () => call(KB, KB_PH_ARGS));
+    expect({
+      first: JSON.parse(first).error,
+      card: ctx.getPendingConfirmation()?.toolName,
+      executed: reg.execute.mock.calls.length,
+      outcome: takeWriteOutcome("run-sp7"),
+    }).toEqual({
+      first: "CONFIRMATION_REQUIRED",
+      card: "file_write",
+      executed: 0,
+      outcome: { tool: KB, ok: false, error: recordedError(refusal) },
+    });
   });
 });
 

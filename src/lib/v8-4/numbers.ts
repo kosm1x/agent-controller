@@ -158,9 +158,10 @@ export const UNRESOLVED_TARGET_TOOL_RE = /^(grep|glob|code_search|list_dir)$/;
  * field and the last-write trace row at completion (last wins: a failed
  * write followed by a successful one is not a failed run). `error` = the
  * first 300 chars of the failure text, by source: an error result, a
- * thrown value, or a refusal (the registry's own, or the executor's
+ * thrown value, or a refusal (the registry's own, the executor's
  * placeholder refusal before the confirmation card or its memory_store
- * limit refusal) gives its
+ * limit refusal, or the same placeholder refusal at the SDK path's
+ * confirmation gate) gives its
  * `error` field when the text is JSON with a string `error`, else the text
  * itself, scrubbed of stored values after that decode (a fixed sentence when
  * the scrub throws); a write's `success: false` envelope gives a short text built from
