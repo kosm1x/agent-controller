@@ -57,8 +57,9 @@ const STEP5_SENTENCES = [
 const STEP6_SENTENCES = [
   "Call market_signals with lookback=3 to surface any technical firings triggered today.",
   `Each firing line starts with the date of the bar it fired on: call a firing today's only if that date is ${DATE}, and give the date of any other firing you report.`,
-  // No marker does not mean fresh: the data layer reuses a fetch for a day
-  // and answers a stored set under a day old without it.
+  // No marker does not mean fresh: the data layer reuses a marked answer ten
+  // minutes, an unmarked one a day, or an hour if its newest bar is before the
+  // previous trading day, and answers a full stored set under a day old without it.
   'The reply\'s second line, "Newest bar: <SYM> <DATE>, …", gives the newest bar each symbol\'s signals are computed on; judge age by that DATE alone, not by the "(fallback)" marker, since a symbol without it can still be old.',
   `A newest bar dated ${DATE} or prev_trading is the normal state at this hour, not a concern.`,
   // The status line that carries a concern is stripped from the broadcast,
