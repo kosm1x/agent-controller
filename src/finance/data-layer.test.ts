@@ -39,7 +39,7 @@ import { DataLayer } from "./data-layer.js";
 import { AlphaVantageAdapter } from "./adapters/alpha-vantage.js";
 import { PolygonAdapter } from "./adapters/polygon.js";
 import { FredAdapter } from "./adapters/fred.js";
-import { __resetForTests } from "./rate-limit.js";
+import { __resetForTests, canCall, recordCall } from "./rate-limit.js";
 import { DataUnavailableError, RateLimitedError } from "./types.js";
 import type { MarketBar } from "./types.js";
 
@@ -832,5 +832,342 @@ describe("market_data.provider — the stored-bar type and the schema rule agree
     expect(db.prepare("SELECT COUNT(*) AS n FROM market_data").get()).toEqual({
       n: 0,
     });
+  });
+});
+
+// A daily request when our limiter refuses Polygon: AV first, then a bounded
+// wait for a Polygon slot, then the stored rows. Also how long an answer is
+// reused from memory. Fake clock and timers; the stubs ask our limiter and
+// record the call before answering, as the adapters do.
+describe("DataLayer.getDaily — the Polygon slot wait and memory reuse", () => {
+  // Wed 2026-04-22 11:00 New York → the previous trading day is Tue 04-21.
+  const NOW = Date.parse("2026-04-22T15:00:00Z");
+  const MINUTE = 60_000;
+  const SYMBOLS = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG", "HHH", "III", "JJJ"];
+  type DailyProvider = "polygon" | "alpha_vantage";
+  let calls: { provider: DailyProvider; at: number }[] = [];
+
+  /** Puts `n` calls into our limiter at time `at`, as another caller would. */
+  const seedCalls = (provider: DailyProvider, at: number, n = 1) => {
+    const back = Date.now();
+    vi.setSystemTime(at);
+    for (let i = 0; i < n; i++) {
+      recordCall(provider);
+      calls.push({ provider, at });
+    }
+    vi.setSystemTime(back);
+  };
+  const freshBar = (symbol: string, provider: DailyProvider) =>
+    makeBar({ symbol, provider, timestamp: new Date(Date.now()).toISOString() });
+  const stub = (
+    provider: DailyProvider,
+    answer: (symbol: string) => MarketBar[] | Error = (symbol) => [
+      freshBar(symbol, provider),
+    ],
+  ) => {
+    const a = Object.create(
+      provider === "polygon"
+        ? PolygonAdapter.prototype
+        : AlphaVantageAdapter.prototype,
+    );
+    a.provider = provider;
+    a.fetchDaily = vi.fn((symbol: string) => {
+      if (!canCall(provider)) {
+        return Promise.reject(new RateLimitedError(provider));
+      }
+      recordCall(provider);
+      calls.push({ provider, at: Date.now() });
+      const out = answer(symbol);
+      return out instanceof Error ? Promise.reject(out) : Promise.resolve(out);
+    });
+    return a;
+  };
+  /** Most calls to `provider` inside any closed 60-second span. */
+  const maxPerMinute = (provider: DailyProvider) => {
+    const ts = calls.filter((c) => c.provider === provider).map((c) => c.at);
+    return Math.max(
+      0,
+      ...ts.map((t) => ts.filter((u) => u >= t - MINUTE && u <= t).length),
+    );
+  };
+  const seedOldRow = (symbol: string) =>
+    db
+      .prepare(
+        `INSERT INTO market_data (symbol, provider, interval, timestamp, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(symbol, "alpha_vantage", "daily", "2020-01-01T16:00:00-05:00", 100, 110, 95, 105, 1000);
+  /** Settles in the background, so a case can look at it while timers are held. */
+  function track<T>(p: Promise<T>) {
+    const s: { done: boolean; value?: T; error?: unknown; at?: number } = {
+      done: false,
+    };
+    p.then(
+      (value) => Object.assign(s, { done: true, value, at: Date.now() }),
+      (error) => Object.assign(s, { done: true, error, at: Date.now() }),
+    );
+    return s;
+  }
+  const walk = async (layer: DataLayer) => {
+    const out: Awaited<ReturnType<DataLayer["getDaily"]>>[] = [];
+    for (const s of SYMBOLS) out.push(await layer.getDaily(s, { lookback: 1 }));
+    return out;
+  };
+
+  beforeEach(() => {
+    __resetForTests();
+    db = freshDb();
+    calls = [];
+    vi.useFakeTimers({
+      toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+    });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("a walk of ten with both providers free ends in ten fresh answers, no minute above either ceiling", async () => {
+    const layer = new DataLayer(stub("alpha_vantage"), stub("polygon"), null);
+    const run = track(walk(layer));
+    await vi.advanceTimersByTimeAsync(5 * MINUTE);
+    expect(run.error).toBeUndefined();
+    expect(
+      run.value!.map((r) => [r.bars[0]?.symbol, r.bars.length, r.stale]),
+    ).toEqual(SYMBOLS.map((s) => [s, 1, undefined]));
+    expect(maxPerMinute("polygon")).toBeLessThanOrEqual(4);
+    expect(maxPerMinute("alpha_vantage")).toBeLessThanOrEqual(4);
+    expect(run.at! - NOW).toBe(MINUTE + 1);
+  });
+
+  it("with AV's daily ceiling full, Polygon alone serves the walk of ten, AV is never called, two waits", async () => {
+    for (let i = 0; i < 22; i++) {
+      seedCalls("alpha_vantage", NOW - (22 - i) * 5 * MINUTE);
+    }
+    const av = stub("alpha_vantage");
+    const layer = new DataLayer(av, stub("polygon"), null);
+    const run = track(walk(layer));
+    await vi.advanceTimersByTimeAsync(5 * MINUTE);
+    expect(run.error).toBeUndefined();
+    expect(
+      run.value!.map((r) => [r.bars[0]?.symbol, r.provider, r.stale]),
+    ).toEqual(SYMBOLS.map((s) => [s, "polygon", undefined]));
+    expect(av.fetchDaily).not.toHaveBeenCalled();
+    expect(maxPerMinute("polygon")).toBeLessThanOrEqual(4);
+    expect(maxPerMinute("alpha_vantage")).toBeLessThanOrEqual(4);
+    // Two waits for a window to free; a call leaves the window 60 001 ms after it.
+    expect(run.at! - NOW).toBe(2 * MINUTE + 2);
+  });
+
+  it("two callers waiting for one freed slot: the second waits again, both get Polygon answers, no fifth call in a minute", async () => {
+    seedCalls("polygon", NOW - 30_000);
+    seedCalls("polygon", NOW, 3);
+    const poly = stub("polygon");
+    const layer = new DataLayer(null, poly, null);
+    const a = track(layer.getDaily("AAA", { lookback: 1 }));
+    const b = track(layer.getDaily("BBB", { lookback: 1 }));
+    await vi.advanceTimersByTimeAsync(2 * MINUTE);
+    expect([a.error, b.error]).toEqual([undefined, undefined]);
+    expect([a.value?.provider, a.value?.stale, b.value?.provider, b.value?.stale]).toEqual(
+      ["polygon", undefined, "polygon", undefined],
+    );
+    expect(poly.fetchDaily).toHaveBeenCalledTimes(2);
+    expect(maxPerMinute("polygon")).toBeLessThanOrEqual(4);
+  });
+
+  it("a Polygon window that never frees ends within 65 seconds in the stored rows, flagged, Polygon not called", async () => {
+    seedOldRow("AAA");
+    seedCalls("polygon", NOW, 4);
+    // Another caller takes every slot the moment it frees (created first, so
+    // at an equal time it runs before the wait's timer).
+    const filler = setInterval(() => {
+      while (canCall("polygon")) recordCall("polygon");
+    }, MINUTE + 1);
+    const poly = stub("polygon");
+    const run = track(new DataLayer(null, poly, null).getDaily("AAA", { lookback: 1 }));
+    await vi.advanceTimersByTimeAsync(65_000);
+    clearInterval(filler);
+    expect(run.done).toBe(true);
+    expect(run.at! - NOW).toBeGreaterThan(60_001);
+    expect(run.at! - NOW).toBeLessThanOrEqual(65_000);
+    expect(run.value?.stale).toBe(true);
+    expect(run.value?.bars.map((b) => b.close)).toEqual([105]);
+    expect(poly.fetchDaily).not.toHaveBeenCalled();
+  });
+
+  it("AV free while Polygon's window is full: AV answers at once, no wait", async () => {
+    seedCalls("polygon", NOW, 4);
+    const poly = stub("polygon");
+    const run = track(
+      new DataLayer(stub("alpha_vantage"), poly, null).getDaily("AAA", { lookback: 1 }),
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(run.at).toBe(NOW);
+    expect([run.value?.provider, run.value?.stale]).toEqual(["alpha_vantage", undefined]);
+    expect(poly.fetchDaily).not.toHaveBeenCalled();
+  });
+
+  it("a Polygon call that was made and failed is neither waited for nor made twice", async () => {
+    seedOldRow("AAA");
+    const poly = stub("polygon", () => new Error("Polygon 503: service unavailable"));
+    const run = track(new DataLayer(null, poly, null).getDaily("AAA", { lookback: 1 }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(run.at).toBe(NOW);
+    expect(run.value?.stale).toBe(true);
+    expect(poly.fetchDaily).toHaveBeenCalledTimes(1);
+  });
+
+  it("AV refuses a call our limiter allowed: the request waits, then Polygon answers", async () => {
+    seedCalls("polygon", NOW, 4);
+    const av = stub("alpha_vantage", () => new RateLimitedError("alpha_vantage"));
+    const poly = stub("polygon");
+    const run = track(new DataLayer(av, poly, null).getDaily("AAA", { lookback: 1 }));
+    await vi.advanceTimersByTimeAsync(2 * MINUTE);
+    expect(run.error).toBeUndefined();
+    expect([run.value?.provider, run.value?.stale]).toEqual(["polygon", undefined]);
+    expect(run.at! - NOW).toBe(MINUTE + 1);
+    expect(av.fetchDaily).toHaveBeenCalledTimes(1);
+    expect(poly.fetchDaily).toHaveBeenCalledTimes(1);
+  });
+
+  it("Polygon fails after the wait: the stored rows come back, flagged", async () => {
+    seedOldRow("AAA");
+    seedCalls("polygon", NOW, 4);
+    const poly = stub("polygon", () => new Error("Polygon 503: service unavailable"));
+    const run = track(new DataLayer(null, poly, null).getDaily("AAA", { lookback: 1 }));
+    await vi.advanceTimersByTimeAsync(2 * MINUTE);
+    expect(run.at! - NOW).toBe(MINUTE + 1);
+    expect(run.value?.stale).toBe(true);
+    expect(run.value?.bars.map((b) => b.close)).toEqual([105]);
+    expect(poly.fetchDaily).toHaveBeenCalledTimes(1);
+  });
+
+  it("Polygon fails after the wait with nothing stored: the existing error, its attempts naming both providers", async () => {
+    seedCalls("polygon", NOW, 4);
+    const poly = stub("polygon", () => new Error("Polygon 503: service unavailable"));
+    const run = track(new DataLayer(null, poly, null).getDaily("AAA", { lookback: 1 }));
+    await vi.advanceTimersByTimeAsync(2 * MINUTE);
+    expect(run.error).toBeInstanceOf(DataUnavailableError);
+    expect((run.error as DataUnavailableError).attempts).toEqual([
+      { provider: "polygon", reason: "rate limited" },
+      { provider: "alpha_vantage", reason: "not configured" },
+      { provider: "polygon", reason: "Polygon 503: service unavailable" },
+    ]);
+  });
+
+  it("no Polygon configured: no wait, even with our limiter's Polygon window full", async () => {
+    seedOldRow("AAA");
+    seedCalls("polygon", NOW, 4);
+    const run = track(new DataLayer(null, null, null).getDaily("AAA", { lookback: 1 }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(run.at).toBe(NOW);
+    expect(run.value?.stale).toBe(true);
+  });
+
+  it("an answer made of stored rows is reused for 10 minutes, then asked again", async () => {
+    seedOldRow("AAA");
+    const av = stub("alpha_vantage", () => new Error("AV down"));
+    const layer = new DataLayer(av, null, null);
+    expect((await layer.getDaily("AAA", { lookback: 1 })).stale).toBe(true);
+    vi.setSystemTime(NOW + 10 * MINUTE);
+    expect((await layer.getDaily("AAA", { lookback: 1 })).stale).toBe(true);
+    expect(av.fetchDaily).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(NOW + 10 * MINUTE + 1);
+    expect((await layer.getDaily("AAA", { lookback: 1 })).stale).toBe(true);
+    expect(av.fetchDaily).toHaveBeenCalledTimes(2);
+  });
+
+  // Polygon stamps a daily bar 00:00 New York on its session date. Bars of
+  // 04-21 and 04-22 are current on 04-22; 04-17 is behind.
+  const sessionBar = (symbol: string, day: string) =>
+    makeBar({ symbol, provider: "polygon", timestamp: `${day}T00:00:00-04:00` });
+
+  it("a current answer is reused from memory, no call made: six hours later for a bar dated the previous trading day or today, and up to a day for a bar dated today, then fetched again", async () => {
+    const poly = stub("polygon", (symbol) => [
+      sessionBar(symbol, symbol === "AAA" ? "2026-04-21" : "2026-04-22"),
+    ]);
+    const layer = new DataLayer(null, poly, null);
+    await layer.getDaily("AAA", { lookback: 1 });
+    await layer.getDaily("BBB", { lookback: 1 });
+    vi.setSystemTime(NOW + 6 * 60 * MINUTE);
+    await layer.getDaily("AAA", { lookback: 1 });
+    await layer.getDaily("BBB", { lookback: 1 });
+    expect(poly.fetchDaily).toHaveBeenCalledTimes(2);
+    expect(layer.stats().l1Hits).toBe(2);
+    // Thu 04-23 11:00 New York: 04-22 is still the previous trading day.
+    vi.setSystemTime(NOW + 24 * 60 * MINUTE);
+    await layer.getDaily("BBB", { lookback: 1 });
+    expect(poly.fetchDaily).toHaveBeenCalledTimes(2);
+    vi.setSystemTime(NOW + 24 * 60 * MINUTE + 1);
+    await layer.getDaily("BBB", { lookback: 1 });
+    expect(poly.fetchDaily).toHaveBeenCalledTimes(3);
+  });
+
+  it("a behind answer (newest bar before the previous trading day) is reused inside the hour and fetched again after it", async () => {
+    const poly = stub("polygon", (symbol) => [sessionBar(symbol, "2026-04-17")]);
+    const layer = new DataLayer(null, poly, null);
+    await layer.getDaily("AAA", { lookback: 1 });
+    vi.setSystemTime(NOW + 60 * MINUTE);
+    await layer.getDaily("AAA", { lookback: 1 });
+    expect(poly.fetchDaily).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(NOW + 60 * MINUTE + 1);
+    const again = await layer.getDaily("AAA", { lookback: 1 });
+    expect(poly.fetchDaily).toHaveBeenCalledTimes(2);
+    expect(again.stale).toBeUndefined();
+  });
+
+  it("the choice follows the clock: an answer current on 04-22 is behind on 04-23 and is fetched again", async () => {
+    const poly = stub("polygon", (symbol) => [sessionBar(symbol, "2026-04-21")]);
+    const layer = new DataLayer(null, poly, null);
+    await layer.getDaily("AAA", { lookback: 1 });
+    // Thu 04-23 10:00 New York, 23 hours later: the previous trading day is 04-22.
+    vi.setSystemTime(Date.parse("2026-04-23T14:00:00Z"));
+    await layer.getDaily("AAA", { lookback: 1 });
+    expect(poly.fetchDaily).toHaveBeenCalledTimes(2);
+  });
+
+  it("a newest bar whose date cannot be read counts as behind: no throw, reused inside the hour, fetched again after it", async () => {
+    const poly = stub("polygon", (symbol) => [
+      makeBar({ symbol, provider: "polygon", timestamp: "unreadable" }),
+    ]);
+    const layer = new DataLayer(null, poly, null);
+    await layer.getDaily("AAA", { lookback: 1 });
+    vi.setSystemTime(NOW + 60 * MINUTE);
+    await expect(layer.getDaily("AAA", { lookback: 1 })).resolves.toBeDefined();
+    expect(poly.fetchDaily).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(NOW + 60 * MINUTE + 1);
+    await layer.getDaily("AAA", { lookback: 1 });
+    expect(poly.fetchDaily).toHaveBeenCalledTimes(2);
+  });
+
+  it("an empty Polygon answer in leg one is a failed attempt: stored rows come back flagged; with none, the reason is 'no bars'", async () => {
+    seedOldRow("AAA");
+    const poly = stub("polygon", () => []);
+    const layer = new DataLayer(null, poly, null);
+    const r = await layer.getDaily("AAA", { lookback: 1 });
+    expect([r.stale, r.bars.map((b) => b.close)]).toEqual([true, [105]]);
+    await expect(layer.getDaily("BBB", { lookback: 1 })).rejects.toMatchObject({
+      attempts: [
+        { provider: "polygon", reason: "no bars" },
+        { provider: "alpha_vantage", reason: "not configured" },
+      ],
+    });
+    expect(poly.fetchDaily).toHaveBeenCalledTimes(2);
+  });
+
+  it("an empty AV answer in leg two is a failed attempt: stored rows come back flagged", async () => {
+    seedOldRow("AAA");
+    const av = stub("alpha_vantage", () => []);
+    const r = await new DataLayer(av, null, null).getDaily("AAA", { lookback: 1 });
+    expect([r.stale, r.bars.map((b) => b.close)]).toEqual([true, [105]]);
+    expect(av.fetchDaily).toHaveBeenCalledTimes(1);
+  });
+
+  it("an empty Polygon answer after the wait is a failed attempt: stored rows come back flagged", async () => {
+    seedOldRow("AAA");
+    seedCalls("polygon", NOW, 4);
+    const poly = stub("polygon", () => []);
+    const run = track(new DataLayer(null, poly, null).getDaily("AAA", { lookback: 1 }));
+    await vi.advanceTimersByTimeAsync(2 * MINUTE);
+    expect(run.at! - NOW).toBe(MINUTE + 1);
+    expect([run.value?.stale, run.value?.bars.map((b) => b.close)]).toEqual([true, [105]]);
+    expect(poly.fetchDaily).toHaveBeenCalledTimes(1);
   });
 });

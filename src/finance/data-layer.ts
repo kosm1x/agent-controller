@@ -32,7 +32,8 @@ import { AlphaVantageAdapter } from "./adapters/alpha-vantage.js";
 import { PolygonAdapter, POLYGON_WEEKLY_MAX_BARS } from "./adapters/polygon.js";
 import { FredAdapter } from "./adapters/fred.js";
 import { validateMarketBar } from "./validation.js";
-import { canCall } from "./rate-limit.js";
+import { canCall, msUntilAvailable } from "./rate-limit.js";
+import { prevTradingDay, toNyDate } from "./market-calendar.js";
 import {
   isCompletedWeekClose,
   lastCompletedWeekKey,
@@ -61,6 +62,12 @@ interface Fetched {
 }
 
 const DAILY_TTL_MS = 24 * 60 * 60 * 1000;
+/** A daily answer from a provider that is behind (see `isBehind`) is reused from memory this long. */
+const DAILY_BEHIND_TTL_MS = 60 * 60 * 1000;
+/** A daily answer of stored rows handed back because no provider answered (flagged stale) is reused from memory this long. */
+const DAILY_STALE_TTL_MS = 10 * 60 * 1000;
+/** Longest wait for a Polygon slot before a daily request gives up on Polygon. */
+const POLYGON_SLOT_WAIT_MS = 65_000;
 // Weekly bars refresh Friday after close. A 5-day TTL guarantees the cache
 // expires before the next Friday no matter when it was populated (audit W4).
 const WEEKLY_TTL_MS = 5 * 24 * 60 * 60 * 1000;
@@ -165,7 +172,15 @@ export class DataLayer {
   ): Promise<FetchResult<MarketBar>> {
     const symbol = normalizeSymbol(rawSymbol, "equity");
     const key = `daily:${symbol}:${opts.lookback}`;
-    const cached = this.l1Lookup(key, DAILY_TTL_MS);
+    const entry = this.l1.get(key);
+    const cached = this.l1Lookup(
+      key,
+      entry?.stale
+        ? DAILY_STALE_TTL_MS
+        : isBehind(entry?.bars ?? [])
+          ? DAILY_BEHIND_TTL_MS
+          : DAILY_TTL_MS,
+    );
     if (cached) {
       this.cacheStats.l1Hits++;
       return {
@@ -218,14 +233,19 @@ export class DataLayer {
     dbFallback: MarketBar[],
   ): Promise<MarketBar[]> {
     const attempts: { provider: Provider; reason: string }[] = [];
+    // Set when our own limiter skipped Polygon (not when Polygon was tried).
+    let polygonLimited = false;
 
     // Polygon first — AV is on the free tier (25 req/day) since 2026-07-14,
     // so the daily workhorse must be Polygon; AV is a scarce fallback.
     if (this.polygon && canCall("polygon")) {
       try {
         const bars = await this.polygon.fetchDaily(symbol, { lookback });
-        this.persistBars(bars);
-        return bars;
+        if (bars.length > 0) {
+          this.persistBars(bars);
+          return bars;
+        }
+        attempts.push({ provider: "polygon", reason: "no bars" });
       } catch (err) {
         attempts.push({
           provider: "polygon",
@@ -233,6 +253,7 @@ export class DataLayer {
         });
       }
     } else if (this.polygon) {
+      polygonLimited = true;
       attempts.push({ provider: "polygon", reason: "rate limited" });
     } else {
       attempts.push({ provider: "polygon", reason: "not configured" });
@@ -241,8 +262,11 @@ export class DataLayer {
     if (this.av && canCall("alpha_vantage")) {
       try {
         const bars = await this.av.fetchDaily(symbol, { lookback });
-        this.persistBars(bars);
-        return bars;
+        if (bars.length > 0) {
+          this.persistBars(bars);
+          return bars;
+        }
+        attempts.push({ provider: "alpha_vantage", reason: "no bars" });
       } catch (err) {
         attempts.push({
           provider: "alpha_vantage",
@@ -253,6 +277,25 @@ export class DataLayer {
       attempts.push({ provider: "alpha_vantage", reason: "rate limited" });
     } else {
       attempts.push({ provider: "alpha_vantage", reason: "not configured" });
+    }
+
+    // Our limiter skipped Polygon and no provider has answered: wait (bounded)
+    // for a Polygon slot before the stored rows or the error. The wait can end
+    // at its bound with no slot, so the limiter is asked again before the call.
+    if (polygonLimited) {
+      await waitForPolygonSlot();
+      if (this.polygon && canCall("polygon")) {
+        try {
+          const bars = await this.polygon.fetchDaily(symbol, { lookback });
+          if (bars.length > 0) {
+            this.persistBars(bars);
+            return bars;
+          }
+          attempts.push({ provider: "polygon", reason: "no bars" });
+        } catch (err) {
+          attempts.push({ provider: "polygon", reason: errMsg(err) });
+        }
+      }
     }
 
     // Last resort: stale DB rows
@@ -817,6 +860,30 @@ export class DataLayer {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * True when there is no newest bar, its date (the first ten characters of its
+ * timestamp) cannot be read, or that date is before the previous NYSE trading
+ * day.
+ */
+function isBehind(bars: MarketBar[]): boolean {
+  const newest = bars[bars.length - 1];
+  if (!newest) return true;
+  try {
+    return toNyDate(newest.timestamp) < prevTradingDay(toNyDate(new Date()));
+  } catch {
+    return true;
+  }
+}
+
+/** Sleep until our limiter allows a Polygon call, at most POLYGON_SLOT_WAIT_MS. */
+async function waitForPolygonSlot(): Promise<void> {
+  const deadline = Date.now() + POLYGON_SLOT_WAIT_MS;
+  while (!canCall("polygon") && Date.now() < deadline) {
+    const ms = Math.min(msUntilAvailable("polygon"), deadline - Date.now());
+    await new Promise((resolve) => setTimeout(resolve, Math.max(1, ms)));
+  }
+}
 
 /** The fallback flag: the dispatch handed back the stored rows it was given. */
 function fetched(bars: MarketBar[], dbRows: MarketBar[]): Fetched {
