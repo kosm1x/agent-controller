@@ -386,7 +386,7 @@ describe("createMcpTool", () => {
       .mockRejectedValue(Object.assign(new Error("x"), { message: undefined }));
     const tool = createMcpTool("w", { name: "t" }, callFn);
 
-    expect(JSON.parse(await tool.execute({}))).toEqual({ error: NO_MESSAGE });
+    expect(JSON.parse(await tool.execute({}))).toEqual({ error: THROWN_NO_MESSAGE });
   });
 
   it("a failed call whose text is spaces keeps that text", async () => {

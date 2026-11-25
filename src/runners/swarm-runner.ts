@@ -1164,8 +1164,11 @@ export const swarmRunner: Runner = {
 
     return {
       success: reflectionResult.success,
-      ...(abandonedNote &&
-        !reflectionResult.success && { error: abandonedNote }),
+      // A run judged unsuccessful carries an error text: the abandoned-children
+      // note when there is one, else a fixed sentence.
+      ...(!reflectionResult.success && {
+        error: abandonedNote ?? "Swarm run judged unsuccessful",
+      }),
       // Audit W2: a success verdict with abandoned children is a qualified
       // success — surface the note structurally, not only inside content.
       ...(abandonedNote &&

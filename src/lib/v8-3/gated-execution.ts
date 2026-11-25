@@ -232,11 +232,19 @@ export async function recordGatedExecution(
         } catch (e) {
           thunkThrew = true;
           thunkError = e;
-          // An empty `error` reads as a success to readers that test the field
-          // by truth; errMsg covers an empty message, the fallback a non-string
-          // message that reads as false.
+          // The error text: errMsg's, unless reading it throws or it is not
+          // a non-blank string; then the fixed sentence below.
+          let text: unknown;
+          try {
+            text = errMsg(e);
+          } catch {
+            text = undefined;
+          }
           output = JSON.stringify({
-            error: errMsg(e) || "tool failed without an error message",
+            error:
+              typeof text === "string" && text.trim()
+                ? text
+                : "tool failed without an error message",
           });
           return { ok: false, output };
         }

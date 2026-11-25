@@ -13,6 +13,9 @@ describe("errMsg", () => {
     ["a thrown empty string", ""],
     ["an empty array", []],
     ["an object whose text form is empty", { toString: (): string => "" }],
+    ["an Error whose message is undefined", Object.assign(new Error("x"), { message: undefined })],
+    ["an Error whose message is a number", Object.assign(new Error("x"), { message: 5 })],
+    ["an Error whose message is a symbol", Object.assign(new Error("x"), { message: Symbol("s") })],
   ])("%s gives the fixed sentence", (_label, value) => {
     expect(errMsg(value)).toBe(NO_MESSAGE);
   });

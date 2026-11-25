@@ -1849,6 +1849,73 @@ describe("swarm parent books its planner + reflector spend (cost_ledger)", () =>
   });
 });
 
+describe("a swarm run judged unsuccessful carries an error text", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const SENTENCE = "Swarm run judged unsuccessful";
+
+  async function runFanOut() {
+    const g = new GoalGraph();
+    g.addGoal({ id: "e-1", description: "item A" });
+    g.addGoal({ id: "e-2", description: "item B" });
+    mockPlan.mockResolvedValue({
+      graph: g,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    // Submissions fail fast: every child ends failed, none is left running.
+    mockSubmitTask.mockRejectedValue(new Error("no capacity"));
+    return executeWithFakePolls({
+      taskId: "err-parent",
+      runId: "run-err",
+      title: "fan-out",
+      description: "process items A and B independently",
+    });
+  }
+
+  it("unsuccessful by the reflection result → the fixed sentence", async () => {
+    mockReflect.mockResolvedValue({
+      result: { success: false, score: 0, learnings: [], summary: "x" },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+
+    const result = await runFanOut();
+    expect(result.success).toBe(false);
+    expect(result.error).toBe(SENTENCE);
+  }, 15_000);
+
+  it("unsuccessful with a high score → the fixed sentence", async () => {
+    mockReflect.mockResolvedValue({
+      result: { success: false, score: 0.7, learnings: [], summary: "x" },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+
+    const result = await runFanOut();
+    expect(result.success).toBe(false);
+    expect(result.error).toBe(SENTENCE);
+  }, 15_000);
+
+  it("reflection throws and the fallback judges it unsuccessful → the fixed sentence", async () => {
+    mockReflect.mockRejectedValue(new Error("reflector down"));
+
+    const result = await runFanOut();
+    expect(result.success).toBe(false);
+    expect(result.error).toBe(SENTENCE);
+  }, 15_000);
+
+  it("successful → no error field", async () => {
+    mockReflect.mockResolvedValue({
+      result: { success: true, score: 1, learnings: [], summary: "x" },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+
+    const result = await runFanOut();
+    expect(result.success).toBe(true);
+    expect(result).not.toHaveProperty("error");
+  }, 15_000);
+});
+
 describe("queue 4s-1 (c): ungated swarm children are visible at completion", () => {
   afterEach(() => {
     vi.clearAllMocks();

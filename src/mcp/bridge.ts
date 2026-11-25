@@ -284,8 +284,8 @@ export function createMcpTool(
         const text = renderResult(result);
         // An empty `error` reads as a success to a reader that tests the
         // field by truth, so a failed call with an empty text gets a fixed
-        // sentence here, and errMsg does the same for a thrown empty message;
-        // a thrown non-string message that reads as false gets this sentence.
+        // sentence here, and errMsg gives its own fixed sentence for a thrown
+        // empty message or an Error message that is not a string.
         if (result.isError) {
           return JSON.stringify({
             error: text || "tool failed without an error message",

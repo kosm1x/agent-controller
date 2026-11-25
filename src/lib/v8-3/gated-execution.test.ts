@@ -11,6 +11,7 @@ import { ToolRegistry } from "../../tools/registry.js";
 import type { Tool } from "../../tools/types.js";
 import type { GateConfig } from "./types.js";
 import { recordGatedExecution } from "./gated-execution.js";
+import { confirmedActionFailure } from "../../messaging/confirmation-format.js";
 import {
   enterRunToolContext,
   outsideRunToolContext,
@@ -325,8 +326,34 @@ describe("recordGatedExecution — shared wrapper contract", () => {
       },
       { source: "interactive", threadId: "t1" },
     );
-    expect(JSON.parse(out)).toEqual({ error: "tool failed without an error message" });
+    expect(JSON.parse(out)).toEqual({ error: "unknown error (no message given)" });
     expect(decisionRows().map((r) => r.status)).toEqual(["pending"]);
+  });
+
+  // The router reads the interactive output with confirmedActionFailure: a
+  // thrown call reads as a failure whose text is not blank, and runs once.
+  it.each([
+    ["an Error without a message", () => new Error()],
+    ["an Error whose message is spaces", () => new Error("   ")],
+    ["an Error whose message is a symbol", () => Object.assign(new Error("x"), { message: Symbol("s") })],
+    ["an Error whose message is a bigint", () => Object.assign(new Error("x"), { message: 5n })],
+    ["a thrown value whose text form throws", () => Object.create(null)],
+  ])("interactive: %s reads as a failure with a text to the confirmed-action reader", async (_label, thrown) => {
+    process.env.V83_ENABLED = "true";
+    process.env.V83_GATED_CAPABILITIES = "gmail_send";
+    let ran = 0;
+    const out: unknown = await recordGatedExecution(
+      "gmail_send",
+      { to: "a@b.c" },
+      async () => {
+        ran++;
+        throw thrown();
+      },
+      { source: "interactive", threadId: "t1" },
+    ).catch((e: unknown) => e);
+    expect(ran).toBe(1);
+    expect(typeof out).toBe("string");
+    expect(confirmedActionFailure("gmail_send", out as string)?.trim()).toBeTruthy();
   });
 
   it.each(["background", "operator"] as const)(
