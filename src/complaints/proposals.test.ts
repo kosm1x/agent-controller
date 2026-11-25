@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TaskRow } from "./digest.js";
 import { parseLedger, type Prediction } from "./ledger.js";
-import { guardCandidates, instructionText, PREDICTION, proposalTypes, renderPackets, SELF_KEY, type NewestRun } from "./proposals.js";
+import { guardCandidates, instructionText, PREDICTION, proposalTypes, renderPackets, SELF_KEY, NOT_A_GUARD, type NewestRun } from "./proposals.js";
 
 const NOW = "2026-11-25T12:00:00.000Z";
 const STATUS: Record<string, string> = { ".": "completed", C: "completed_with_concerns", F: "failed", R: "running" };
@@ -113,6 +113,13 @@ describe("guard candidates", () => {
     expect(g.runs).toBe(10);
   });
 
+  it("ToolSearch is never a candidate, even when called in every run; its calls still show in the ranges", () => {
+    expect(NOT_A_GUARD).toBe("ToolSearch");
+    const g = guardCandidates(runs("alpha", "CCCCC", ten({ ToolSearch: 1, tool_a: 1 })), "ritual:alpha", NOW);
+    expect(g.guards).toEqual([{ tool: "tool_a", min: 1, maxBelow: 0 }]);
+    expect(g.ranges).toEqual([{ tool: "ToolSearch", min: 1, max: 1 }, { tool: "tool_a", min: 1, max: 1 }]);
+  });
+
   it("the read pair is one set guard when neither tool is in every run but their sum is", () => {
     const counts = Array.from({ length: 6 }, (_, i): Record<string, number> => (i % 2 ? { file_read: 1 } : { jarvis_file_read: 2 }));
     expect(guardCandidates(runs("alpha", "CCCCCC", counts), "ritual:alpha", NOW).guards).toEqual([
@@ -171,7 +178,7 @@ describe("packets", () => {
       "== tools the task is given\ntool_a, tool_b\n",
       "== calls per run: fewest-most over the last 8 finished run(s) with counts (calls with no did-not-run gate row)\ntool_a 1-3\ntool_b 0-2\n",
       `== computed prediction (copy unchanged)\nprediction: ${PREDICTION}\nbaseline: 6 of 8 runs ended with concerns and 1 failed in the 30 days to 2026-11-25; last 7: 7 of 7 ended with concerns or failed\n`,
-      '== guard candidates (computed; copy unchanged)\n{"tool":"tool_a","min":1,"maxBelow":0}\n',
+      '== guard candidates (computed; a ledger row takes 1 to 3 guards: copy the chosen ones unchanged)\n{"tool":"tool_a","min":1,"maxBelow":0}\n',
     ].map((s) => p.text.indexOf(s));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);

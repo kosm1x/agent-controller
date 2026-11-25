@@ -26,6 +26,10 @@ const GUARD_RUNS = 10;
 const GUARD_MIN_RUNS = 5;
 /** Two tools that read the same files: a one-name guard over either broke a real prediction. */
 const READ_PAIR = ["file_read", "jarvis_file_read"];
+/** A meta tool: whether a run calls it depends on the build (deferred tool loading), not on the task's work. */
+export const NOT_A_GUARD = "ToolSearch";
+/** What src/complaints/ledger.ts accepts per row; the packet says so, the model chooses. */
+const GUARDS_PER_ROW = "1 to 3";
 export const PREDICTION = `at most 2 of the next ${LAST} runs end as a complaint`;
 const FINISHED = new Set(["completed", "completed_with_concerns", "failed"]);
 /** The ritual these packets are for never proposes on itself; its complaints stay in the ordinary digest. */
@@ -87,6 +91,7 @@ export interface GuardCandidates {
  * ledger judges them: completed_at a second before `now`, `guard_tools`
  * present): every tool with at least one call in each run is a candidate;
  * the read pair as a set when neither qualifies alone but their sum does.
+ * NOT_A_GUARD is never one. All candidates are returned; the row takes a few.
  */
 export function guardCandidates(rows: TaskRow[], key: string, now: string): GuardCandidates {
   const nowKey = now.slice(0, 19).replace("T", " ");
@@ -103,7 +108,7 @@ export function guardCandidates(rows: TaskRow[], key: string, now: string): Guar
   });
   const guards: Guard[] = [];
   if (counts.length >= GUARD_MIN_RUNS) {
-    for (const r of ranges) if (r.min >= 1) guards.push({ tool: r.tool, min: 1, maxBelow: 0 });
+    for (const r of ranges) if (r.min >= 1 && r.tool !== NOT_A_GUARD) guards.push({ tool: r.tool, min: 1, maxBelow: 0 });
     const alone = READ_PAIR.some((t) => ranges.some((r) => r.tool === t && r.min >= 1));
     if (!alone && counts.every((c) => READ_PAIR.reduce((n, t) => n + calls(c, t), 0) >= 1)) {
       guards.push({ tools: [...READ_PAIR], min: 1, maxBelow: 0 });
@@ -155,7 +160,7 @@ export function renderPackets(
     const lastN = `last ${LAST}: ${t.complaintsLastN} of ${Math.min(t.runs, LAST)}${t.failed > 0 ? " ended with concerns or failed" : ""}`;
     out.push("", "== computed prediction (copy unchanged)", `prediction: ${PREDICTION}`, `baseline: ${ended} in the ${DAYS} days to ${now.slice(0, 10)}; ${lastN}`);
 
-    out.push("", "== guard candidates (computed; copy unchanged)");
+    out.push("", `== guard candidates (computed; a ledger row takes ${GUARDS_PER_ROW} guards: copy the chosen ones unchanged)`);
     if (g.runs < GUARD_MIN_RUNS) out.push(`no guard candidates: fewer than ${GUARD_MIN_RUNS} runs with counts`);
     else if (g.guards.length === 0) out.push("no guard candidates: no tool was called in every one of these runs");
     for (const guard of g.guards) out.push(JSON.stringify(guard));
