@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-25 16:29 UTC — LIVE build `485298cf` since 2026-11-25 16:00 UTC (the repair of the stale daily prices is deployed; live proof owed); one code commit waits for a deploy (queue 4jh): `5662a427`, the old-rows marks in the watchlist scan and the chart, a follow-up of that repair outside this review's list. The other session landed `485298cf`, `fd3254ce` and `bd206a2e` in its own files. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: the two ruled batch-3 leftover pieces (error texts; the write record), then the Code re-score.**
+
 **Status 2026-11-25 06:17 UTC — LIVE build `88946e03` unchanged; one code commit waits for a deploy (queue 4jg): `6d321ed4`, the repair of the stale daily prices, a live defect outside this review's list. The other session landed `ee97857c` and `ecf40c3e` in its own files. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: the old-rows marker follow-up, then the two ruled batch-3 leftover pieces (error texts; the write record), then the Code re-score.**
 
 **Status 2026-11-25 04:58 UTC — LIVE build `88946e03` unchanged; no code change (queue 4jf). The removal of the April 2026 group conversation is closed; the three not-established places were counted. Open live defect outside this review's list: three watched market symbols with old daily prices. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: the two ruled batch-3 leftover pieces (error texts; the write record), then the Code re-score.**
