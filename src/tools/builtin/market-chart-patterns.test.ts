@@ -312,8 +312,8 @@ describe("market_chart_patterns execute — bitmap check", () => {
     renderExecuteMock.mockResolvedValue(
       JSON.stringify({
         error: "png_convert_failed",
-        message: "synthetic",
-        hint: "synthetic",
+        message: "synthetic message",
+        hint: "synthetic hint",
       }),
     );
     const { marketChartPatternsTool } =
@@ -323,9 +323,34 @@ describe("market_chart_patterns execute — bitmap check", () => {
       result: JSON.parse(raw),
       visionCalls: describeImageMock.mock.calls.length,
     }).toEqual({
-      result: { error: "render failed: png_convert_failed" },
+      result: {
+        error: "render failed: png_convert_failed",
+        message: "synthetic message",
+        hint: "synthetic hint",
+      },
       visionCalls: 0,
     });
+  });
+
+  it("a render failure passes on its message and its hint only when each is text", async () => {
+    renderExecuteMock
+      .mockResolvedValueOnce(
+        JSON.stringify({ error: "data_fetch_failed", message: "synthetic message" }),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({ error: "render_failed", message: 5, hint: 7 }),
+      );
+    const { marketChartPatternsTool } =
+      await import("./market-chart-patterns.js");
+    const first = await marketChartPatternsTool.execute({ symbol: "QQQ" });
+    const second = await marketChartPatternsTool.execute({ symbol: "QQQ" });
+    expect([JSON.parse(first), JSON.parse(second)]).toEqual([
+      {
+        error: "render failed: data_fetch_failed",
+        message: "synthetic message",
+      },
+      { error: "render failed: render_failed" },
+    ]);
   });
 });
 

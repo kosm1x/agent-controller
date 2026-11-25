@@ -147,7 +147,7 @@ async function renderIfNeeded(args: {
   lookback_bars?: number;
 }): Promise<
   | { ok: true; png_path: string; symbol: string; interval: ChartInterval }
-  | { ok: false; error: string }
+  | { ok: false; error: string; message?: string; hint?: string }
 > {
   if (args.chart_png_path) {
     const sourceCheck = validateSourcePath(args.chart_png_path);
@@ -185,6 +185,8 @@ async function renderIfNeeded(args: {
         typeof render.error === "string"
           ? `render failed: ${render.error}`
           : "render failed",
+      message: typeof render.message === "string" ? render.message : undefined,
+      hint: typeof render.hint === "string" ? render.hint : undefined,
     };
   }
   return {
@@ -269,7 +271,12 @@ Persists to chart_patterns table for later retrieval / RRF fusion.`,
           ? args.lookback_bars
           : undefined,
     });
-    if (!resolved.ok) return JSON.stringify({ error: resolved.error });
+    if (!resolved.ok)
+      return JSON.stringify({
+        error: resolved.error,
+        message: resolved.message,
+        hint: resolved.hint,
+      });
 
     // Read the file, refuse it unless it starts with the PNG signature, then
     // build the base64 data URL

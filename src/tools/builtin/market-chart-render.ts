@@ -24,6 +24,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { Tool } from "../types.js";
 import { realResolve } from "./write-guard.js";
+import { errMsg } from "../../lib/err-msg.js";
 import { getDataLayer } from "../../finance/data-layer.js";
 import { chartSvg } from "../../finance/chart-svg.js";
 import { sma, ema, bollingerBands, vwap } from "../../finance/indicators.js";
@@ -374,10 +375,9 @@ Output: file path under /tmp/ or /workspace/. Default /tmp/chart-<uuid>.{svg|png
       close: b.close,
     }));
 
-    const overlays = computeOverlays(bars, indicators);
-
     let svg: string;
     try {
+      const overlays = computeOverlays(bars, indicators);
       svg = chartSvg({
         symbol: symbol.toUpperCase(),
         bars: chartBars,
@@ -460,8 +460,17 @@ Output: file path under /tmp/ or /workspace/. Default /tmp/chart-<uuid>.{svg|png
     let sizeBytes = 0;
     try {
       sizeBytes = statSync(outputCheck.abs).size;
-    } catch {
-      /* ignore */
+    } catch (err) {
+      return JSON.stringify({
+        error: "render_failed",
+        message: errMsg(err),
+      });
+    }
+    if (sizeBytes === 0) {
+      return JSON.stringify({
+        error: "render_failed",
+        message: "the chart file is empty",
+      });
     }
 
     return JSON.stringify({

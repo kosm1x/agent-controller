@@ -114,7 +114,7 @@
     "src/tools/builtin/jarvis-dev.ts": 2,
     "src/tools/builtin/jarvis-files.ts": 1,
     "src/tools/builtin/jarvis-self-repair.ts": 1,
-    "src/tools/builtin/market-chart-render.ts": 4,
+    "src/tools/builtin/market-chart-render.ts": 3,
     "src/tools/builtin/market.ts": 1,
     "src/tools/builtin/screenshot.ts": 2,
     "src/tools/builtin/seo-content-brief.ts": 1,
