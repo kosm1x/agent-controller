@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { getToolAnnotations } from "./types.js";
 import type { Tool } from "./types.js";
+import { wpPublishTool } from "./builtin/wordpress.js";
 
 const baseTool = (overrides: Partial<Tool> = {}): Tool => ({
   name: "test_tool",
@@ -263,5 +264,15 @@ describe("Annotation invariants on annotated tools", () => {
         expect(annotations.riskTier).not.toBe("high");
       }
     }
+  });
+});
+
+describe("site publish tool — resolved profile", () => {
+  it("is medium tier, not a trifecta, and does not require confirmation", () => {
+    expect(getToolAnnotations(wpPublishTool)).toMatchObject({
+      riskTier: "medium",
+      ruleOfTwoTrifecta: false,
+      requiresConfirmation: false,
+    });
   });
 });

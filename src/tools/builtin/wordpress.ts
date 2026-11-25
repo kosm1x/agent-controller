@@ -334,7 +334,6 @@ export const wpPublishTool: Tool = {
   destructiveHint: true,
   idempotentHint: false,
   openWorldHint: true,
-  requiresConfirmation: true,
   riskTier: "medium",
   definition: {
     type: "function",

@@ -12,6 +12,8 @@ import {
   NO_CONFIRM_A2A_ERROR,
 } from "./task-executor.js";
 import { TaskExecutionContext } from "../inference/execution-context.js";
+import { ToolRegistry } from "./registry.js";
+import { wpPublishTool } from "./builtin/wordpress.js";
 
 // Ruling 2026-10-03: the undeclared-tool refusal is a trace event.
 const traceMock = vi.hoisted(() => ({ emitTraceEvent: vi.fn() }));
@@ -295,6 +297,15 @@ describe("confirmationGate", () => {
         confirmationGate(reg(tier), interactive, "web_search", {}),
       ).toEqual({ action: "proceed" });
     }
+  });
+
+  it("lets the registered site publish tool run without asking: its resolved tier is medium", () => {
+    const registry = new ToolRegistry();
+    registry.register(wpPublishTool);
+    expect(registry.getEffectiveRiskTier("wp_publish")).toBe("medium");
+    expect(confirmationGate(registry, interactive, "wp_publish", {})).toEqual({
+      action: "proceed",
+    });
   });
 
   it("asks for a high-risk tool when the context can ask (router-tracked operator root)", () => {
