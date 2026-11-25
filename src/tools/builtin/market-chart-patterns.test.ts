@@ -47,7 +47,9 @@ function primeCommon() {
     isFile: () => true,
   });
   realpathSyncMock.mockReturnValue("/tmp/chart-abc.png");
-  readFileSyncMock.mockReturnValue(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  readFileSyncMock.mockReturnValue(
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  );
   persistChartPatternMock.mockReturnValue(42);
 }
 
@@ -175,6 +177,155 @@ describe("market_chart_patterns execute — auto-render input", () => {
       await import("./market-chart-patterns.js");
     const raw = await marketChartPatternsTool.execute({ symbol: "XYZ" });
     expect(JSON.parse(raw).error).toMatch(/render failed/);
+  });
+});
+
+describe("market_chart_patterns execute — bitmap check", () => {
+  const VALID_REPLY =
+    '{"pattern":"bull_flag","confidence":0.6,"candle_start":null,"candle_end":null,"rationale":"synthetic"}';
+  const NOT_A_PNG = {
+    error: "not_a_png",
+    message:
+      "the chart file is not a PNG image: render the chart with format png first, or pass a symbol instead of chart_png_path",
+  };
+  const VECTOR_TEXT = Buffer.from('<?xml version="1.0"?><svg></svg>');
+
+  it("auto-render asks the chart tool for a PNG", async () => {
+    renderExecuteMock.mockResolvedValue(
+      JSON.stringify({ ok: true, path: "/tmp/chart-xyz.png" }),
+    );
+    primeCommon();
+    describeImageMock.mockResolvedValue(VALID_REPLY);
+    const { marketChartPatternsTool } =
+      await import("./market-chart-patterns.js");
+    await marketChartPatternsTool.execute({ symbol: "QQQ" });
+    expect(renderExecuteMock.mock.calls[0][0]).toEqual({
+      symbol: "QQQ",
+      interval: "daily",
+      lookback_bars: undefined,
+      format: "png",
+    });
+  });
+
+  it("a given chart file holding vector text is refused with no vision call and no stored row", async () => {
+    primeCommon();
+    readFileSyncMock.mockReturnValue(VECTOR_TEXT);
+    describeImageMock.mockResolvedValue(VALID_REPLY);
+    const { marketChartPatternsTool } =
+      await import("./market-chart-patterns.js");
+    const raw = await marketChartPatternsTool.execute({
+      chart_png_path: "/tmp/chart-abc.png",
+      symbol: "SPY",
+    });
+    expect({
+      result: JSON.parse(raw),
+      visionCalls: describeImageMock.mock.calls.length,
+      persistCalls: persistChartPatternMock.mock.calls.length,
+    }).toEqual({ result: NOT_A_PNG, visionCalls: 0, persistCalls: 0 });
+  });
+
+  it("an auto-rendered file holding vector text is refused with no vision call and no stored row", async () => {
+    renderExecuteMock.mockResolvedValue(
+      JSON.stringify({ ok: true, path: "/tmp/chart-xyz.png" }),
+    );
+    primeCommon();
+    readFileSyncMock.mockReturnValue(VECTOR_TEXT);
+    describeImageMock.mockResolvedValue(VALID_REPLY);
+    const { marketChartPatternsTool } =
+      await import("./market-chart-patterns.js");
+    const raw = await marketChartPatternsTool.execute({ symbol: "QQQ" });
+    expect({
+      result: JSON.parse(raw),
+      visionCalls: describeImageMock.mock.calls.length,
+      persistCalls: persistChartPatternMock.mock.calls.length,
+    }).toEqual({ result: NOT_A_PNG, visionCalls: 0, persistCalls: 0 });
+  });
+
+  it("a file matching only the first four signature bytes is refused", async () => {
+    primeCommon();
+    readFileSyncMock.mockReturnValue(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x00, 0x00]),
+    );
+    describeImageMock.mockResolvedValue(VALID_REPLY);
+    const { marketChartPatternsTool } =
+      await import("./market-chart-patterns.js");
+    const raw = await marketChartPatternsTool.execute({
+      chart_png_path: "/tmp/chart-abc.png",
+    });
+    expect({
+      result: JSON.parse(raw),
+      visionCalls: describeImageMock.mock.calls.length,
+    }).toEqual({ result: NOT_A_PNG, visionCalls: 0 });
+  });
+
+  it("a file matching the first seven signature bytes but not the eighth is refused", async () => {
+    primeCommon();
+    readFileSyncMock.mockReturnValue(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x00]),
+    );
+    describeImageMock.mockResolvedValue(VALID_REPLY);
+    const { marketChartPatternsTool } =
+      await import("./market-chart-patterns.js");
+    const raw = await marketChartPatternsTool.execute({
+      chart_png_path: "/tmp/chart-abc.png",
+    });
+    expect({
+      result: JSON.parse(raw),
+      visionCalls: describeImageMock.mock.calls.length,
+    }).toEqual({ result: NOT_A_PNG, visionCalls: 0 });
+  });
+
+  it("a file shorter than eight bytes is refused", async () => {
+    primeCommon();
+    readFileSyncMock.mockReturnValue(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    describeImageMock.mockResolvedValue(VALID_REPLY);
+    const { marketChartPatternsTool } =
+      await import("./market-chart-patterns.js");
+    const raw = await marketChartPatternsTool.execute({
+      chart_png_path: "/tmp/chart-abc.png",
+    });
+    expect({
+      result: JSON.parse(raw),
+      visionCalls: describeImageMock.mock.calls.length,
+    }).toEqual({ result: NOT_A_PNG, visionCalls: 0 });
+  });
+
+  it("a PNG reaches the vision call labelled as a PNG and the stored row keeps the rendered path", async () => {
+    renderExecuteMock.mockResolvedValue(
+      JSON.stringify({ ok: true, path: "/tmp/chart-xyz.png" }),
+    );
+    primeCommon();
+    describeImageMock.mockResolvedValue(VALID_REPLY);
+    const { marketChartPatternsTool } =
+      await import("./market-chart-patterns.js");
+    await marketChartPatternsTool.execute({ symbol: "QQQ" });
+    expect({
+      visionImage: describeImageMock.mock.calls[0]?.[0],
+      storedPath: persistChartPatternMock.mock.calls[0]?.[0]?.png_path,
+    }).toEqual({
+      visionImage: "data:image/png;base64,iVBORw0KGgo=",
+      storedPath: "/tmp/chart-xyz.png",
+    });
+  });
+
+  it("a failed conversion comes back as a render failure with no vision call", async () => {
+    renderExecuteMock.mockResolvedValue(
+      JSON.stringify({
+        error: "png_convert_failed",
+        message: "synthetic",
+        hint: "synthetic",
+      }),
+    );
+    const { marketChartPatternsTool } =
+      await import("./market-chart-patterns.js");
+    const raw = await marketChartPatternsTool.execute({ symbol: "QQQ" });
+    expect({
+      result: JSON.parse(raw),
+      visionCalls: describeImageMock.mock.calls.length,
+    }).toEqual({
+      result: { error: "render failed: png_convert_failed" },
+      visionCalls: 0,
+    });
   });
 });
 

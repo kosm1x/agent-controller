@@ -7,8 +7,11 @@
  *
  * Two input modes:
  *   - `chart_png_path` provided → classify the existing PNG
- *   - `symbol` + `interval` + `lookback_bars` → auto-render via
+ *   - `symbol` + `interval` + `lookback_bars` → auto-render a PNG via
  *     market_chart_render, then classify (reuses the render handler)
+ *
+ * Either way, a file whose first eight bytes are not the PNG signature is
+ * refused before the vision call.
  *
  * Pattern-agent prompt adopts QuantAgent's methodology (piece #2 in
  * `reference_quantagent.md`): plain-language pattern identification with
@@ -31,6 +34,10 @@ import { marketChartRenderTool } from "./market-chart-render.js";
 
 const SOURCE_ALLOW_PREFIXES = ["/tmp/", "/workspace/"];
 const INTERVALS = ["daily", "weekly"] as const;
+// The eight-byte PNG file signature.
+const PNG_SIGNATURE = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
 
 const PATTERN_PROMPT = `You are a technical-analysis chart reader. Examine this financial price chart (candlestick + optional indicator overlays) and identify the strongest formation present. Choose ONE pattern label from:
 - head_and_shoulders, inverse_head_and_shoulders
@@ -163,6 +170,7 @@ async function renderIfNeeded(args: {
     symbol: args.symbol,
     interval,
     lookback_bars: args.lookback_bars,
+    format: "png",
   });
   let render: Record<string, unknown>;
   try {
@@ -263,10 +271,18 @@ Persists to chart_patterns table for later retrieval / RRF fusion.`,
     });
     if (!resolved.ok) return JSON.stringify({ error: resolved.error });
 
-    // Read PNG → base64 data URL
+    // Read the file, refuse it unless it starts with the PNG signature, then
+    // build the base64 data URL
     let dataUrl: string;
     try {
       const bytes = readFileSync(resolved.png_path);
+      if (!bytes.subarray(0, 8).equals(PNG_SIGNATURE)) {
+        return JSON.stringify({
+          error: "not_a_png",
+          message:
+            "the chart file is not a PNG image: render the chart with format png first, or pass a symbol instead of chart_png_path",
+        });
+      }
       dataUrl = `data:image/png;base64,${bytes.toString("base64")}`;
     } catch (err) {
       return JSON.stringify({
