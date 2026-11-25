@@ -933,8 +933,10 @@ Output: pre-formatted match list with cache-hit summary.`,
       return `market_scan: no watchlist symbols match tags ${JSON.stringify(tagsFilter)}.`;
     }
 
-    const matches: { symbol: string; value: number }[] = [];
+    const matches: { symbol: string; value: number; stale: boolean }[] = [];
     const skipped: { symbol: string; reason: string }[] = [];
+    // Scanned symbols answered with stored rows (flagged stale), in walk order.
+    const stale: string[] = [];
 
     for (const entry of filtered) {
       try {
@@ -942,6 +944,7 @@ Output: pre-formatted match list with cache-hit summary.`,
           interval === "daily"
             ? await layer.getDaily(entry.symbol, { lookback })
             : await layer.getIntraday(entry.symbol, "60min", { lookback });
+        if (result.stale) stale.push(entry.symbol);
         if (result.bars.length < 20) {
           skipped.push({ symbol: entry.symbol, reason: "insufficient bars" });
           continue;
@@ -952,7 +955,11 @@ Output: pre-formatted match list with cache-hit summary.`,
           continue;
         }
         if (matchesOp(value, operator, threshold)) {
-          matches.push({ symbol: entry.symbol, value });
+          matches.push({
+            symbol: entry.symbol,
+            value,
+            stale: result.stale === true,
+          });
         }
       } catch (err) {
         skipped.push({
@@ -969,6 +976,7 @@ Output: pre-formatted match list with cache-hit summary.`,
       filtered.length,
       matches,
       skipped,
+      stale,
     );
   },
 };
@@ -1020,8 +1028,9 @@ function formatScanResult(
   operator: string,
   threshold: number,
   scanned: number,
-  matches: { symbol: string; value: number }[],
+  matches: { symbol: string; value: number; stale: boolean }[],
   skipped: { symbol: string; reason: string }[],
+  stale: string[],
 ): string {
   const lines: string[] = [
     `market_scan: indicator=${indicator} operator=${operator} threshold=${threshold} (scanned ${scanned})`,
@@ -1044,7 +1053,9 @@ function formatScanResult(
       matches.sort((a, b) => a.value - b.value);
     }
     for (const m of matches) {
-      lines.push(`    ${m.symbol}: ${m.value.toFixed(2)}`);
+      lines.push(
+        `    ${m.symbol}: ${m.value.toFixed(2)}${m.stale ? " [STALE]" : ""}`,
+      );
     }
   }
   if (skipped.length > 0) {
@@ -1054,6 +1065,9 @@ function formatScanResult(
     }
     if (skipped.length > 5)
       lines.push(`    ... and ${skipped.length - 5} more`);
+  }
+  if (stale.length > 0) {
+    lines.push(`STALE (providers unreachable): ${stale.join(", ")}`);
   }
   return lines.join("\n");
 }

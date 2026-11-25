@@ -344,6 +344,7 @@ Output: file path under /tmp/ or /workspace/. Default /tmp/chart-<uuid>.{svg|png
 
     // Fetch bars
     let bars: MarketBar[];
+    let stale = false;
     try {
       const dl = getDataLayer();
       const res =
@@ -351,6 +352,7 @@ Output: file path under /tmp/ or /workspace/. Default /tmp/chart-<uuid>.{svg|png
           ? await dl.getDaily(symbol, { lookback })
           : await dl.getWeekly(symbol, { lookback });
       bars = res.bars;
+      stale = res.stale === true;
     } catch (err) {
       return JSON.stringify({
         error: "data_fetch_failed",
@@ -384,7 +386,7 @@ Output: file path under /tmp/ or /workspace/. Default /tmp/chart-<uuid>.{svg|png
         width,
         height,
         theme,
-        title: `${symbol.toUpperCase()} · ${interval} · ${bars.length} bars`,
+        title: `${symbol.toUpperCase()} · ${interval} · ${bars.length} bars${stale ? " · STALE (providers unreachable)" : ""}`,
       });
     } catch (err) {
       return JSON.stringify({
@@ -470,6 +472,7 @@ Output: file path under /tmp/ or /workspace/. Default /tmp/chart-<uuid>.{svg|png
       size_bytes: sizeBytes,
       symbol: symbol.toUpperCase(),
       interval,
+      ...(stale ? { stale: true } : {}),
       bars_rendered: bars.length,
       indicators,
       signals_rendered: filteredSignals.length,

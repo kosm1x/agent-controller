@@ -547,6 +547,165 @@ describe("marketScanTool", () => {
   });
 });
 
+describe("marketScanTool — answers of stored rows (flagged stale)", () => {
+  /** `n` daily bars that all close at `close`, so SMA(20) is exactly `close`. */
+  function flatBars(symbol: string, n: number, close: number): MarketBar[] {
+    return Array.from({ length: n }, (_, i) => ({
+      symbol,
+      timestamp: `2026-05-${String(i + 1).padStart(2, "0")}T00:00:00-04:00`,
+      open: close,
+      high: close,
+      low: close,
+      close,
+      volume: 1000,
+      provider: "polygon" as const,
+      interval: "daily" as const,
+    }));
+  }
+  const entry = (symbol: string) => ({
+    symbol,
+    assetClass: "equity",
+    tags: [],
+    active: true,
+    addedAt: "x",
+  });
+  /** Watchlist in walk order; each symbol's answer: a close, a flagged close, too few bars, or a throw. */
+  function prime(
+    answers: Record<string, { close: number; stale?: true; n?: number } | "throw">,
+  ) {
+    mockLayer.listWatchlist.mockReturnValue(Object.keys(answers).map(entry));
+    mockLayer.getDaily.mockImplementation(async (symbol: string) => {
+      const a = answers[symbol];
+      if (!a || a === "throw") throw new Error("provider down");
+      return {
+        bars: flatBars(symbol, a.n ?? 40, a.close),
+        provider: "polygon",
+        ...(a.stale ? { stale: true } : {}),
+      };
+    });
+  }
+  const scan = async () =>
+    (await marketScanTool.execute({
+      indicator: "sma",
+      operator: "gt",
+      threshold: 100,
+    })) as string;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("marks only the match computed from stored rows with [STALE] and names it on a last line", async () => {
+    prime({
+      AAA: { close: 150 },
+      BBB: { close: 140, stale: true },
+      CCC: { close: 130 },
+    });
+    expect(await scan()).toBe(
+      [
+        "market_scan: indicator=sma operator=gt threshold=100 (scanned 3)",
+        "  Matches (3):",
+        "    AAA: 150.00",
+        "    BBB: 140.00 [STALE]",
+        "    CCC: 130.00",
+        "STALE (providers unreachable): BBB",
+      ].join("\n"),
+    );
+  });
+
+  it("names a flagged symbol that does not match on the last line, with no match line for it", async () => {
+    prime({ AAA: { close: 150 }, BBB: { close: 50, stale: true } });
+    expect(await scan()).toBe(
+      [
+        "market_scan: indicator=sma operator=gt threshold=100 (scanned 2)",
+        "  Matches (1):",
+        "    AAA: 150.00",
+        "STALE (providers unreachable): BBB",
+      ].join("\n"),
+    );
+  });
+
+  it("with no flagged answer the reply has no [STALE] mark and no STALE line", async () => {
+    prime({ AAA: { close: 150 }, NEW: { close: 150, n: 10 }, ERR: "throw" });
+    expect(await scan()).toBe(
+      [
+        "market_scan: indicator=sma operator=gt threshold=100 (scanned 3)",
+        "  Matches (1):",
+        "    AAA: 150.00",
+        "  Skipped (2):",
+        "    NEW: insufficient bars",
+        "    ERR: provider down",
+      ].join("\n"),
+    );
+  });
+
+  it("does not name a symbol whose fetch threw on the STALE line", async () => {
+    prime({ ERR: "throw", BBB: { close: 50, stale: true } });
+    expect(await scan()).toBe(
+      [
+        "market_scan: indicator=sma operator=gt threshold=100 (scanned 2)",
+        "  Matches (0):",
+        "    (none)",
+        "  Skipped (1):",
+        "    ERR: provider down",
+        "STALE (providers unreachable): BBB",
+      ].join("\n"),
+    );
+  });
+
+  it("a flagged symbol skipped for too few bars keeps its Skipped reason and is named on the STALE line", async () => {
+    prime({ AAA: { close: 150 }, THIN: { close: 150, stale: true, n: 10 } });
+    expect(await scan()).toBe(
+      [
+        "market_scan: indicator=sma operator=gt threshold=100 (scanned 2)",
+        "  Matches (1):",
+        "    AAA: 150.00",
+        "  Skipped (1):",
+        "    THIN: insufficient bars",
+        "STALE (providers unreachable): THIN",
+      ].join("\n"),
+    );
+  });
+
+  it("names several flagged symbols on the last line in walk order, not match order", async () => {
+    prime({
+      AAA: { close: 120, stale: true },
+      BBB: { close: 150 },
+      CCC: { close: 140, stale: true },
+    });
+    expect(await scan()).toBe(
+      [
+        "market_scan: indicator=sma operator=gt threshold=100 (scanned 3)",
+        "  Matches (3):",
+        "    BBB: 150.00",
+        "    CCC: 140.00 [STALE]",
+        "    AAA: 120.00 [STALE]",
+        "STALE (providers unreachable): AAA, CCC",
+      ].join("\n"),
+    );
+  });
+
+  it("a flagged symbol skipped for a null indicator keeps its Skipped reason and is named on the STALE line", async () => {
+    prime({ THIN: { close: 150, stale: true, n: 25 } });
+    expect(
+      (await marketScanTool.execute({
+        indicator: "macd_hist",
+        operator: "gt",
+        threshold: 0,
+      })) as string,
+    ).toBe(
+      [
+        "market_scan: indicator=macd_hist operator=gt threshold=0 (scanned 1)",
+        "  Matches (0):",
+        "    (none)",
+        "  Skipped (1):",
+        "    THIN: indicator null",
+        "STALE (providers unreachable): THIN",
+      ].join("\n"),
+    );
+  });
+});
+
 describe("macroRegimeTool", () => {
   beforeEach(() => {
     vi.clearAllMocks();
