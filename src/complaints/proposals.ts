@@ -35,10 +35,12 @@ const FINISHED = new Set(["completed", "completed_with_concerns", "failed"]);
 /** The ritual these packets are for never proposes on itself; its complaints stay in the ordinary digest. */
 export const SELF_KEY = "ritual:complaints-proposals";
 
-/** The newest run of a covered type: its description and the tool list in its metadata (null: none declared). */
+/** The newest run of a covered type: its instruction text and the tool list in its metadata (null: none declared). */
 export interface NewestRun {
   description: string;
   tools: string[] | null;
+  /** True: `description` is the schedule's stored task text; false: the newest run's assembled description. */
+  stored: boolean;
 }
 
 export interface ProposalTypes {
@@ -117,16 +119,20 @@ export function guardCandidates(rows: TaskRow[], key: string, now: string): Guar
   return { runs: counts.length, ranges, guards };
 }
 
-/** One packet per covered type, in the covered order. `ledgerSrc` is the text `predictions` was parsed from. */
+/**
+ * One packet per covered type, in the covered order. `ledgerSrc` is the text
+ * `predictions` was parsed from; `types` is proposalTypes of the same inputs.
+ */
 export function renderPackets(
   rows: TaskRow[],
   predictions: Prediction[],
   ledgerSrc: string,
   newest: Record<string, NewestRun>,
   now: string,
+  types: ProposalTypes = proposalTypes(rows, predictions, now),
 ): { key: string; text: string }[] {
   const ledgerLines = ledgerSrc.split("\n");
-  return proposalTypes(rows, predictions, now).covered.map(({ key, newestTaskId }) => {
+  return types.covered.map(({ key, newestTaskId }) => {
     const digest = buildDigest(rows, digestOpts(now, key));
     const t = digest.types[0];
     const out = [`type ${key}  name ${t.name}`, "", "== complaints digest (code output)", renderDigest(digest).trimEnd()];
@@ -142,7 +148,7 @@ export function renderPackets(
     }
 
     const run = newest[key];
-    out.push("", `== instruction text the task receives on every run (newest run ${newestTaskId.slice(0, 8)})`);
+    out.push("", run?.stored ? "== stored instruction text of the task" : `== instruction text of the newest run (${newestTaskId.slice(0, 8)}); parts of it are data computed for that run`);
     out.push(run ? instructionText(run.description) : "not available");
 
     out.push("", "== tools the task is given");

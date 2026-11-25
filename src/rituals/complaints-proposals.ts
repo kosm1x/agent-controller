@@ -110,13 +110,17 @@ const PHASE_REASON = {
   ledger: "el archivo no se pudo leer",
   tasks: "la consulta de las tareas falló",
   runs: "la lectura de la última ejecución falló",
+  render: "el armado de los bloques falló",
   tools: "la lista de herramientas falló",
 } as const;
 
 /**
  * The ritual's input, read at task creation. Reads only: the predictions file
  * (relative to the working directory), the ledger SQL over the 30 days to
- * `now` and, per covered type, its newest run's description and tool list.
+ * `now` and, per covered type, its newest run's tool list and its
+ * instruction text: for a schedule the stored task text (what a change
+ * edits; a run's description also carries a date line and past outputs),
+ * else, or when no stored row exists, the newest run's description.
  * Never throws: any error gives the input that renders the "could not be
  * read" sentence and is recorded as a ritual failure.
  */
@@ -150,16 +154,23 @@ export function loadComplaintsProposalsInput(now: Date): ComplaintsProposalsInpu
          THEN json_extract(metadata, '$.tools') END AS tools
        FROM tasks WHERE task_id = ? LIMIT 1`,
     );
+    const storedSql = db.prepare("SELECT description FROM scheduled_tasks WHERE schedule_id = ? LIMIT 1");
     for (const { key, newestTaskId } of types.covered) {
       const run = runSql.get(newestTaskId) as { description: string | null; tools: string | null } | undefined;
       if (!run) continue;
       const tools = run.tools === null ? null : (JSON.parse(run.tools) as unknown[]).filter((t): t is string => typeof t === "string");
-      newest[key] = { description: run.description ?? "", tools };
+      const stored = key.startsWith("schedule:")
+        ? (storedSql.get(key.slice("schedule:".length)) as { description: string } | undefined)
+        : undefined;
+      newest[key] = stored ? { description: stored.description, tools, stored: true } : { description: run.description ?? "", tools, stored: false };
     }
+
+    phase = "render";
+    const packets = renderPackets(rows, predictions, src, newest, nowIso, types);
 
     phase = "tools";
     const toolNames = toolRegistry.list().sort();
-    return { packets: renderPackets(rows, predictions, src, newest, nowIso), notCovered: types.notCovered, toolNames };
+    return { packets, notCovered: types.notCovered, toolNames };
   } catch (err) {
     console.error(`[rituals] complaints-proposals: input not loaded (${phase}): ${errMsg(err)}`);
     recordRitualFailure("complaints-proposals", err, "execute");

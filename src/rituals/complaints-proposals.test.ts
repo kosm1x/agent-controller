@@ -4,13 +4,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TaskRow } from "../complaints/digest.js";
 
-const { mockPrepare, mockRecordFailure } = vi.hoisted(() => ({
+const { mockPrepare, mockRecordFailure, renderFails } = vi.hoisted(() => ({
   mockPrepare: vi.fn(),
   mockRecordFailure: vi.fn(),
+  renderFails: { on: false },
 }));
 vi.mock("../db/index.js", () => ({ getDatabase: () => ({ prepare: mockPrepare }) }));
 vi.mock("./ritual-failure.js", () => ({ recordRitualFailure: mockRecordFailure }));
 vi.mock("../tools/registry.js", () => ({ toolRegistry: { list: () => ["tool_b", "tool_a", "tool_c"] } }));
+vi.mock("../complaints/proposals.js", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("../complaints/proposals.js")>();
+  return {
+    ...orig,
+    renderPackets: (...args: Parameters<typeof orig.renderPackets>) => {
+      if (renderFails.on) throw new Error("render broke");
+      return orig.renderPackets(...args);
+    },
+  };
+});
 
 import { declaredToolSetForRun } from "../inference/adapter-openai.js";
 import { runWithExecutionContext, TaskExecutionContext } from "../inference/execution-context.js";
@@ -42,9 +53,16 @@ function sevenConcerns(ritual: string): TaskRow[] {
   }));
 }
 
+/** The same seven runs as a schedule's. */
+const asSchedule = (r: TaskRow[]): TaskRow[] =>
+  r.map((x, i) => ({ ...x, task_id: `s-one-${i}`, ritual_id: null, schedule_id: "s-one", schedule_name: "one" }));
+/** A run's assembled description: a date line before the task text and past outputs after it. */
+const RUN_TEXT = "[date line]\nRun the check.\nReport it.\n\n## PAST OUTPUTS\nold output";
+
 let dir: string;
 let rows: TaskRow[];
 let bound: unknown;
+let storedText: Record<string, string>;
 function fakeDb(): void {
   mockPrepare.mockImplementation((sql: string) => {
     if (sql.includes("sqlite_master")) return { get: () => ({ n: 0 }) };
@@ -56,11 +74,16 @@ function fakeDb(): void {
         },
       };
     }
+    if (sql.includes("FROM scheduled_tasks")) {
+      return { get: (id: string) => (id in storedText ? { description: storedText[id] } : undefined) };
+    }
     return {
       get: (id: string) =>
         id === "alpha-6"
           ? { description: "Run the check.\nReport it.\n\n⟦BEGIN DATA — x — 1 chars, complete⟧\nz\n⟦END DATA⟧", tools: '["tool_a","tool_b"]' }
-          : undefined,
+          : id === "s-one-6"
+            ? { description: RUN_TEXT, tools: '["tool_a"]' }
+            : undefined,
     };
   });
 }
@@ -71,6 +94,8 @@ beforeEach(() => {
   vi.spyOn(process, "cwd").mockReturnValue(dir);
   rows = sevenConcerns("alpha");
   bound = undefined;
+  storedText = {};
+  renderFails.on = false;
   mockPrepare.mockReset();
   mockRecordFailure.mockReset();
   fakeDb();
@@ -203,10 +228,40 @@ describe("loadComplaintsProposalsInput", () => {
     expect(input.toolNames).toEqual(["tool_a", "tool_b", "tool_c"]);
     expect(input.packets.map((p) => p.key)).toEqual(["ritual:alpha"]);
     const text = input.packets[0].text;
-    expect(text).toContain("(newest run alpha-6)\nRun the check.\nReport it.\n");
+    expect(text).toContain("== instruction text of the newest run (alpha-6); parts of it are data computed for that run\nRun the check.\nReport it.\n");
     expect(text).not.toContain("⟦");
     expect(text).toContain("== tools the task is given\ntool_a, tool_b\n");
     expect(mockRecordFailure).not.toHaveBeenCalled();
+  });
+
+  it("a schedule's instruction text is its stored task text, not the run's assembled description", () => {
+    writeLedger("");
+    rows = asSchedule(rows);
+    storedText = { "s-one": "Stored task text.\nSecond line." };
+    const text = loadComplaintsProposalsInput(NOW).packets[0].text;
+    expect(text).toContain("== stored instruction text of the task\nStored task text.\nSecond line.\n\n== tools the task is given\ntool_a\n");
+    expect(text).not.toContain("[date line]");
+    expect(text).not.toContain("PAST OUTPUTS");
+  });
+
+  it("a schedule with no stored row falls back to its newest run's description", () => {
+    writeLedger("");
+    rows = asSchedule(rows);
+    const text = loadComplaintsProposalsInput(NOW).packets[0].text;
+    expect(text).toContain(`== instruction text of the newest run (s-one-6); parts of it are data computed for that run\n${RUN_TEXT}\n`);
+  });
+
+  it("a ritual never reads a stored task text", () => {
+    writeLedger("");
+    storedText = { alpha: "must not be used" };
+    expect(loadComplaintsProposalsInput(NOW).packets[0].text).not.toContain("must not be used");
+  });
+
+  it("a throw while building the packets is reported as that, not as the tool list", () => {
+    writeLedger("");
+    renderFails.on = true;
+    expect(loadComplaintsProposalsInput(NOW)).toEqual({ packets: [], notCovered: [], ledgerProblem: "el armado de los bloques falló", toolNames: [] });
+    expect(mockRecordFailure).toHaveBeenCalledWith("complaints-proposals", expect.any(Error), "execute");
   });
 
   it("an open ledger row on the type leaves no packet", () => {

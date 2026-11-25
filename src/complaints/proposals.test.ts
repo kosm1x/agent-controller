@@ -49,7 +49,7 @@ const ledgerOf = (...objs: object[]): { src: string; predictions: Prediction[] }
   expect(problems).toEqual([]);
   return { src, predictions };
 };
-const NEWEST: NewestRun = { description: "Do the thing.\nThen report.", tools: ["tool_b", "tool_a"] };
+const NEWEST: NewestRun = { description: "Do the thing.\nThen report.", tools: ["tool_b", "tool_a"], stored: false };
 
 describe("eligible types", () => {
   it("a triggered type with an open ledger row is not eligible", () => {
@@ -174,7 +174,7 @@ describe("packets", () => {
       "type ritual:alpha  name alpha",
       "== complaints digest (code output)\nComplaints digest: 30 days to 2026-11-25T12:00:00.000Z",
       "== earlier predictions on this type",
-      "== instruction text the task receives on every run (newest run alpha-07)\nDo the thing.\nThen report.\n",
+      "== instruction text of the newest run (alpha-07); parts of it are data computed for that run\nDo the thing.\nThen report.\n",
       "== tools the task is given\ntool_a, tool_b\n",
       "== calls per run: fewest-most over the last 8 finished run(s) with counts (calls with no did-not-run gate row)\ntool_a 1-3\ntool_b 0-2\n",
       `== computed prediction (copy unchanged)\nprediction: ${PREDICTION}\nbaseline: 6 of 8 runs ended with concerns and 1 failed in the 30 days to 2026-11-25; last 7: 7 of 7 ended with concerns or failed\n`,
@@ -187,10 +187,19 @@ describe("packets", () => {
 
   it("states the baseline without failed runs in the ledger's wording, and a run with no declared list", () => {
     const only = runs("gamma", "CCCCCCC");
-    const [p] = renderPackets(only, [], "", { "ritual:gamma": { description: "x", tools: null } }, NOW);
+    const [p] = renderPackets(only, [], "", { "ritual:gamma": { description: "x", tools: null, stored: false } }, NOW);
     expect(p.text).toContain("baseline: 7 of 7 runs ended with concerns in the 30 days to 2026-11-25; last 7: 7 of 7\n");
     expect(p.text).toContain("== tools the task is given\nno list declared: the run is offered every tool that exists\n");
     expect(p.text).toContain("== earlier predictions on this type\nnone\n");
+  });
+
+  it("names a stored task text as such", () => {
+    const sched = Array.from({ length: 7 }, (_, i) =>
+      row({ task_id: `s-${i}`, ritual_id: null, schedule_id: "s-one", schedule_name: "one", status: "completed_with_concerns", created_at: `2026-11-1${i} 12:00:00`, completed_at: `2026-11-1${i} 12:01:00` }),
+    );
+    const [p] = renderPackets(sched, [], "", { "schedule:s-one": { description: "Stored text.", tools: [], stored: true } }, NOW);
+    expect(p.text).toContain("\n== stored instruction text of the task\nStored text.\n\n== tools the task is given\nnone\n");
+    expect(p.text).not.toContain("newest run");
   });
 
   it("is byte-identical under shuffled rows", () => {
