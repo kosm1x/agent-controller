@@ -142,8 +142,13 @@ function createdKeys(name: string, result: unknown): string[] {
   }
 }
 
-/** Item 10 (W2): the readable error — `{"error":"…"}` gives its field; anything else its raw text. */
+/**
+ * Item 10 (W2): the readable error (`{"error":"…"}` gives its field, anything
+ * else the text itself), scrubbed of stored values after that decode, as that
+ * is what is recorded; a fixed sentence when the scrub throws.
+ */
 function writeErrorText(text: string): string {
+  let readable = text;
   try {
     const parsed: unknown = JSON.parse(text);
     if (
@@ -151,11 +156,15 @@ function writeErrorText(text: string): string {
       typeof parsed === "object" &&
       typeof (parsed as { error?: unknown }).error === "string"
     )
-      return (parsed as { error: string }).error;
+      readable = (parsed as { error: string }).error;
   } catch {
     // not JSON: the raw text
   }
-  return text;
+  try {
+    return scrubResultText(readable);
+  } catch {
+    return "tool failed without a readable error message";
+  }
 }
 
 /**

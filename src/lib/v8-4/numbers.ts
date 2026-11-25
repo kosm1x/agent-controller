@@ -162,7 +162,8 @@ export const UNRESOLVED_TARGET_TOOL_RE = /^(grep|glob|code_search|list_dir)$/;
  * placeholder refusal before the confirmation card or its memory_store
  * limit refusal) gives its
  * `error` field when the text is JSON with a string `error`, else the text
- * itself; a write's `success: false` envelope gives a short text built from
+ * itself, scrubbed of stored values after that decode (a fixed sentence when
+ * the scrub throws); a write's `success: false` envelope gives a short text built from
  * it; else a write's top-level `error` field that is not the first key gives
  * that field when it is a non-empty string, or, when it is an object (not
  * null or an array), its `message` when that is a non-empty string, else the

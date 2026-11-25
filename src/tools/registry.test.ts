@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { ToolRegistry } from "./registry.js";
-import { resolveSecretRefs, scrubSecrets } from "../lib/secret-refs.js";
+import { resolveSecretRefs, scrubJsonText, scrubSecrets } from "../lib/secret-refs.js";
 import { getToolAnnotations } from "./types.js";
 import type { Tool } from "./types.js";
 import {
@@ -66,6 +66,7 @@ vi.mock("../lib/secret-refs.js", async (importOriginal) => {
     ...actual,
     resolveSecretRefs: vi.fn(actual.resolveSecretRefs),
     scrubSecrets: vi.fn(actual.scrubSecrets),
+    scrubJsonText: vi.fn(actual.scrubJsonText),
   };
 });
 // Chat scope universe — for the deferred-tool reachability invariant.
@@ -1451,5 +1452,136 @@ describe("write-class outcome (queue 2026-10-08 late item 10)", () => {
       error: "unknown error (no message given)",
     });
     await expect(call).rejects.toBe(thrown);
+  });
+
+  // A synthetic stored value inside a JSON error text: the stand-in scrub
+  // matches the value as written, which the JSON text holds escaped, so only
+  // a scrub of the decoded text replaces it.
+  const SYNTH = 'synth"value42';
+  const hideSynth = (s: string) => s.split(SYNTH).join("[hidden]");
+  const settled = (p: Promise<unknown>) =>
+    p.then(
+      (v) => ({ resolved: v }),
+      (e: unknown) => ({ rejected: e }),
+    );
+
+  it("a stored value inside a JSON error text of a thrown Error is recorded scrubbed, and that Error is rethrown", async () => {
+    const thrown = new Error(JSON.stringify({ error: `write refused for ${SYNTH}` }));
+    const { call, outcome } = await withScrub(hideSynth, () =>
+      throwingEdit("t-sd-a", () => thrown),
+    );
+    const s = await settled(call);
+    expect({ outcome, rethrownSame: "rejected" in s && s.rejected === thrown }).toEqual({
+      outcome: { tool: "file_edit", ok: false, error: "write refused for [hidden]" },
+      rethrownSame: true,
+    });
+  });
+
+  it("a stored value inside a JSON error text of a thrown string is recorded scrubbed, and that string is rethrown", async () => {
+    const thrown = JSON.stringify({ error: `write refused for ${SYNTH}` });
+    const { call, outcome } = await withScrub(hideSynth, () =>
+      throwingEdit("t-sd-b", () => thrown),
+    );
+    expect({ outcome, s: await settled(call) }).toEqual({
+      outcome: { tool: "file_edit", ok: false, error: "write refused for [hidden]" },
+      s: { rejected: thrown },
+    });
+  });
+
+  it("a stored value inside a JSON refusal text is recorded scrubbed, and the refusal is returned unchanged", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    let ran = 0;
+    add("file_edit", () => (ran++, '{"success":true}'));
+    const refusal = JSON.stringify({ error: `no stored secret ${SYNTH}` });
+    vi.mocked(resolveSecretRefs).mockReturnValueOnce({ error: refusal, reason: "unknown_name" });
+    const s = await withScrub(hideSynth, () =>
+      settled(enterRunToolContext("t-sd-c", () => reg.execute("file_edit", { path: "/tmp/a.md" }))),
+    );
+    expect({ s, ran, outcome: takeWriteOutcome("t-sd-c") }).toEqual({
+      s: { resolved: refusal },
+      ran: 0,
+      outcome: { tool: "file_edit", ok: false, error: "no stored secret [hidden]" },
+    });
+  });
+
+  it("a stored value inside a JSON error result is recorded scrubbed, and the result is returned unchanged", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const result = JSON.stringify({ error: `write refused for ${SYNTH}` });
+    add("gdocs_write", () => result);
+    const s = await withScrub(hideSynth, () =>
+      settled(enterRunToolContext("t-sd-d", () => reg.execute("gdocs_write", { document_id: "DOC12345678" }))),
+    );
+    expect({ s, outcome: takeWriteOutcome("t-sd-d") }).toEqual({
+      s: { resolved: result },
+      outcome: { tool: "gdocs_write", ok: false, error: "write refused for [hidden]" },
+    });
+  });
+
+  it("a refusal whose recorded text cannot be scrubbed is recorded with the fixed sentence, and the refusal is still returned", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    let ran = 0;
+    add("file_edit", () => (ran++, '{"success":true}'));
+    const refusal = JSON.stringify({ error: `no stored secret ${SYNTH}` });
+    vi.mocked(resolveSecretRefs).mockReturnValueOnce({ error: refusal, reason: "unknown_name" });
+    const s = await withScrub(
+      () => {
+        throw new Error("scrub unavailable");
+      },
+      () => settled(enterRunToolContext("t-sd-e", () => reg.execute("file_edit", { path: "/tmp/a.md" }))),
+    );
+    expect({ s, ran, outcome: takeWriteOutcome("t-sd-e") }).toEqual({
+      s: { resolved: refusal },
+      ran: 0,
+      outcome: { tool: "file_edit", ok: false, error: "tool failed without a readable error message" },
+    });
+  });
+
+  it("a stored value inside a JSON error text without a string error field is recorded scrubbed, and that Error is rethrown", async () => {
+    const actual = await vi.importActual<typeof import("../lib/secret-refs.js")>("../lib/secret-refs.js");
+    const thrown = new Error(JSON.stringify({ error: { message: `write refused for ${SYNTH}` } }));
+    vi.mocked(scrubJsonText).mockImplementation((t) =>
+      JSON.stringify(JSON.parse(t), (_k, v: unknown) => (typeof v === "string" ? hideSynth(v) : v)),
+    );
+    try {
+      const { call, outcome } = await withScrub(hideSynth, () => throwingEdit("t-sd-f", () => thrown));
+      const s = await settled(call);
+      expect({ outcome, rethrownSame: "rejected" in s && s.rejected === thrown }).toEqual({
+        outcome: { tool: "file_edit", ok: false, error: JSON.stringify({ error: { message: "write refused for [hidden]" } }) },
+        rethrownSame: true,
+      });
+    } finally {
+      vi.mocked(scrubJsonText).mockImplementation(actual.scrubJsonText);
+    }
+  });
+
+  it("a stored value inside a refusal text that is not JSON is recorded scrubbed, and the refusal is returned unchanged", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    add("file_edit", () => '{"success":true}');
+    const refusal = `no stored secret ${SYNTH}`;
+    vi.mocked(resolveSecretRefs).mockReturnValueOnce({ error: refusal, reason: "unknown_name" });
+    const s = await withScrub(hideSynth, () =>
+      settled(enterRunToolContext("t-sd-g", () => reg.execute("file_edit", { path: "/tmp/a.md" }))),
+    );
+    expect({ s, outcome: takeWriteOutcome("t-sd-g") }).toEqual({
+      s: { resolved: refusal },
+      outcome: { tool: "file_edit", ok: false, error: "no stored secret [hidden]" },
+    });
+  });
+
+  it("a refusal text that is not JSON and cannot be scrubbed is recorded with the fixed sentence, and the refusal is still returned", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    add("file_edit", () => '{"success":true}');
+    const refusal = `no stored secret ${SYNTH}`;
+    vi.mocked(resolveSecretRefs).mockReturnValueOnce({ error: refusal, reason: "unknown_name" });
+    const s = await withScrub(
+      () => {
+        throw new Error("scrub unavailable");
+      },
+      () => settled(enterRunToolContext("t-sd-h", () => reg.execute("file_edit", { path: "/tmp/a.md" }))),
+    );
+    expect({ s, outcome: takeWriteOutcome("t-sd-h") }).toEqual({
+      s: { resolved: refusal },
+      outcome: { tool: "file_edit", ok: false, error: "tool failed without a readable error message" },
+    });
   });
 });
