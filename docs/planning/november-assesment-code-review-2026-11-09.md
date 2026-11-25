@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-25 02:46 UTC — LIVE build `b3d1eb5e` unchanged; no code change (queue 4jb). The delete of the seventeen backup copies is confirmed by a separate count; nothing in the repository changed. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: the two ruled batch-3 leftover pieces (error texts; the write record), then the Code re-score.**
+
 **Status 2026-11-25 02:42 UTC — LIVE build `b3d1eb5e` unchanged; no code change (queue 4ja). An operator-run script deletes seventeen backup copies outside the repository (run reported, count owed); the other session landed two docs-only commits on its prediction ledger. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: the two ruled batch-3 leftover pieces (error texts; the write record), then the Code re-score.**
 
 **Status 2026-11-25 02:16 UTC — LIVE build `b3d1eb5e` unchanged; no code change (queue 4iz). An operator-run script removed the group lines from two search-database copies; nothing in the repository changed. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: the two ruled batch-3 leftover pieces (error texts; the write record), then the Code re-score.**
