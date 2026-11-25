@@ -157,14 +157,22 @@ describe("createComplaintsProposals", () => {
     expect(kept).toEqual([]);
   });
 
-  it("the rules forbid success marks, action claims, computed figures and the guard's trigger words; at most 3 guards are chosen", () => {
+  it("the rules forbid success marks, action claims, computed figures and the guard's trigger words, outside quotes", () => {
     const t = createComplaintsProposals("2026-11-30", input);
     const rules = t.description.slice(t.description.indexOf("## Rules"), t.description.indexOf("## Output"));
     expect(rules).toContain("- Quote every figure exactly as it appears in the data. Do not compute new totals, differences or percentages.\n");
     expect(rules).toContain('- No success marks (✅, ✔, "completado", "listo") and no first-person action claims ("envié", "apliqué", "registré", "I sent", "I applied"): this run proposes, it does nothing.\n');
     expect(rules).toContain('- Never use the words "propuesta", "directiva" or "cooldown" in your output; say "ajuste" or "cambio sugerido". A guard reads those words next to a time figure as an unverified claim.\n');
     expect(rules).toContain("- Never write a prediction, a limit or a guard of your own: copy the computed prediction, and the guard candidates you choose, unchanged.\n");
-    expect(t.description).toContain("From the guard candidates choose at most 3:");
+    expect(rules).toContain("- Quotes keep their own language and exact words. The two word bans below are about your own words; inside a quote, write […] in place of a banned word or mark.\n- No success marks (");
+  });
+
+  it("the job: the cause's place, the two computed lines and 1 to 3 chosen guards, and the valid non-answers", () => {
+    const d = createComplaintsProposals("2026-11-30", input).description;
+    expect(d).toContain("2. DÓNDE VIVE — where the CAUSE is, not where a workaround could go; exactly one of: ");
+    expect(d).toContain('6. PREDICCIÓN Y GUARDAS — only when point 3 holds a change: copy the two computed lines ("prediction:" and "baseline:") unchanged, then choose 1 to 3 of the guard candidates: the ones that would catch the task going quiet by doing less of the work your change touches. Copy each chosen candidate unchanged; never write one of your own. If the block has no guard candidates, write "sin guardas calculadas". When point 3 holds no change, write "no aplica" here.\nThis task is complete when every block has its section with points 1 to 6. "causa no visible aquí", "sin cambio de texto", "no aplica" and "(supuesto)" are valid answers that stay visible in your output; they are not unfinished work.\n\n## Rules\n');
+    expect(d).toContain(". = clean, ? = not finished or cancelled (queued, running, waiting for context, cancelled),");
+    expect(d).toContain("After the blocks: the names of all tools that exist. Most can be given to a task; some need a setup this material does not show.\n");
   });
 
   it("a proposal in the required format is not taken for invented execution by the tool-loop guard", () => {
