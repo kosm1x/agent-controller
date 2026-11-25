@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-25 00:22 UTC — LIVE build `b3d1eb5e` unchanged; one comment-only commit `b0231258` (queue 4iw). The comments about the per-message effort rating are corrected in four files; found on the way: the tier-derived effort reaches no request today, and one test case depends on a setting being absent from the environment of the test process (recorded, not fixed). Still to build from the rulings of 2026-11-24: the status count and the publish tool's ask-first flag. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: these two small pieces, the two ruled batch-3 leftover pieces (error texts; the write record), then the Code re-score.**
+
 **Status 2026-11-24 23:49 UTC — LIVE build `b3d1eb5e` unchanged; no code changed (queue 4iv). Operator rulings of 2026-11-24 that touch code: the per-message effort rating is not built on the other model path (two comments to correct); the site publish tool's ask-first flag has no effect and is to be removed; the status screen is to count completed with concerns as completed. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: these three small pieces, the two ruled batch-3 leftover pieces (error texts; the write record), then the Code re-score.**
 
 **Status 2026-11-24 19:02 UTC — build `b3d1eb5e` is LIVE since 2026-11-24 18:59 UTC (queue 4iu); everything committed is deployed: the evaluation batch and the non-owner turn piece. Batch 7 wait list unchanged: A2, A4, B3, C1, F1, D1. Next: the two ruled batch-3 leftover pieces (error texts; the write record), then the Code re-score.**
