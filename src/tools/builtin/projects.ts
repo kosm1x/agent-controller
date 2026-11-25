@@ -123,7 +123,7 @@ function savedSecrets(
 
 function shortSecretWarning(short: string[]): string | undefined {
   return short.length > 0
-    ? `Díselo al usuario ahora: lo guardado en ${short.join(", ")} es demasiado corto para ocultarse automáticamente si aparece en la salida de una herramienta; quedó guardado y se usa por nombre como siempre.`
+    ? `Díselo al usuario ahora: lo guardado en ${[...new Set(short)].join(", ")} es demasiado corto para ocultarse automáticamente si aparece en la salida de una herramienta; quedó guardado y se usa por nombre como siempre.`
     : undefined;
 }
 

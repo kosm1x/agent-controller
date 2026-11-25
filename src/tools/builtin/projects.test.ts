@@ -1212,6 +1212,39 @@ describe("project_update — saved secrets below the cleaner's minimum length", 
     expect(view(out)).toEqual([false, "created", WARN("credentials.ftp.password, credentials.password")]);
   });
 
+  it("one path text reached by a dotted key and by a nested value is named once, at each result site", async () => {
+    const inputs: Array<[string, Record<string, unknown>]> = [
+      ["f", { "db.password": "qzj", db: { password: "qzk" } }],
+      ["g", { ftp: { "a.password": "qzj", a: { password: "qzk" } } }],
+      ["h", { password: ["qzj"], "password.0": "qzk" }],
+    ];
+    const got: unknown[] = [];
+    for (const [site, run] of SITES) {
+      for (const [tag, credentials] of inputs) {
+        got.push([site, ...view(JSON.parse(await run(credentials, tag)))]);
+      }
+    }
+    const action = (site: string) => (site === "create" ? "created" : "updated");
+    expect(got).toEqual(
+      SITES.flatMap(([site]) => [
+        [site, false, action(site), WARN("credentials.db.password")],
+        [site, false, action(site), WARN("credentials.ftp.a.password")],
+        [site, false, action(site), WARN("credentials.password.0")],
+      ]),
+    );
+  });
+
+  it("a repeated path text keeps its first place among the other paths", async () => {
+    const out = JSON.parse(
+      await projectUpdateTool.execute({
+        slug: "sw-first",
+        name: "Sw First",
+        credentials: { "db.password": "qzj", password: "qzk", db: { password: "qzm" } },
+      }),
+    );
+    expect(view(out)).toEqual([false, "created", WARN("credentials.db.password, credentials.password")]);
+  });
+
   it("a short value the classifier does not call a secret, beside a short secret: only the secret is named", async () => {
     const out = JSON.parse(
       await projectUpdateTool.execute({
