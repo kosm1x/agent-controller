@@ -491,28 +491,42 @@ export class DataLayer {
         const bars = await this.polygon.fetchIntraday(symbol, interval, {
           lookback,
         });
-        this.persistBars(bars);
-        return bars;
+        if (bars.length > 0) {
+          this.persistBars(bars);
+          return bars;
+        }
+        attempts.push({ provider: "polygon", reason: "no bars" });
       } catch (err) {
         attempts.push({
           provider: "polygon",
           reason: errMsg(err),
         });
       }
+    } else if (this.polygon) {
+      attempts.push({ provider: "polygon", reason: "rate limited" });
+    } else {
+      attempts.push({ provider: "polygon", reason: "not configured" });
     }
     if (this.av && canCall("alpha_vantage")) {
       try {
         const bars = await this.av.fetchIntraday(symbol, interval, {
           lookback,
         });
-        this.persistBars(bars);
-        return bars;
+        if (bars.length > 0) {
+          this.persistBars(bars);
+          return bars;
+        }
+        attempts.push({ provider: "alpha_vantage", reason: "no bars" });
       } catch (err) {
         attempts.push({
           provider: "alpha_vantage",
           reason: errMsg(err),
         });
       }
+    } else if (this.av) {
+      attempts.push({ provider: "alpha_vantage", reason: "rate limited" });
+    } else {
+      attempts.push({ provider: "alpha_vantage", reason: "not configured" });
     }
     throw new DataUnavailableError(attempts);
   }
@@ -718,8 +732,8 @@ export class DataLayer {
 
   /**
    * Generalized L2 read. Caller picks the interval; SQL filter matches.
-   * Used by getDaily / getWeekly; getIntraday goes through a separate path
-   * because intraday bars are never persisted to L2 (TTL too short).
+   * Used by getDaily / getWeekly; getIntraday does not call it, and the
+   * interval type leaves out the intraday intervals.
    *
    * Ordering invariant: `ORDER BY timestamp DESC LIMIT ?` + `.reverse()` means
    * the returned slice always ENDS with the newest bar available. Callers

@@ -1171,3 +1171,92 @@ describe("DataLayer.getDaily — the Polygon slot wait and memory reuse", () => 
     expect(poly.fetchDaily).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("DataLayer.getIntraday — an empty answer and our limiter's refusal", () => {
+  const NOW = Date.parse("2026-04-22T15:00:00Z");
+  type IntradayProvider = "polygon" | "alpha_vantage";
+  const stub = (provider: IntradayProvider, answer: MarketBar[]) => {
+    const a = Object.create(
+      provider === "polygon"
+        ? PolygonAdapter.prototype
+        : AlphaVantageAdapter.prototype,
+    );
+    a.provider = provider;
+    a.fetchIntraday = vi.fn().mockResolvedValue(answer);
+    return a;
+  };
+  const bar = (provider: IntradayProvider) =>
+    makeBar({ provider, interval: "60min", timestamp: "2026-04-22T10:00:00-04:00" });
+  /** Takes every slot of our limiter's window for `provider`, as other callers would. */
+  const fill = (provider: IntradayProvider) => {
+    while (canCall(provider)) recordCall(provider);
+  };
+
+  beforeEach(() => {
+    __resetForTests();
+    db = freshDb();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("after an empty answer from the primary provider, the second provider is asked and its bars come back", async () => {
+    const poly = stub("polygon", []);
+    const av = stub("alpha_vantage", [bar("alpha_vantage")]);
+    const r = await new DataLayer(av, poly, null).getIntraday("SPY", "60min", { lookback: 1 });
+    expect([r.provider, r.bars.length]).toEqual(["alpha_vantage", 1]);
+    expect(av.fetchIntraday).toHaveBeenCalledTimes(1);
+  });
+
+  it("empty answers from both providers end in the error, each attempt 'no bars', and a repeat call asks again", async () => {
+    const poly = stub("polygon", []);
+    const av = stub("alpha_vantage", []);
+    const layer = new DataLayer(av, poly, null);
+    const err = await layer.getIntraday("SPY", "60min", { lookback: 1 }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DataUnavailableError);
+    expect((err as DataUnavailableError).attempts).toEqual([
+      { provider: "polygon", reason: "no bars" },
+      { provider: "alpha_vantage", reason: "no bars" },
+    ]);
+    await layer.getIntraday("SPY", "60min", { lookback: 1 }).catch(() => undefined);
+    expect(poly.fetchIntraday).toHaveBeenCalledTimes(2);
+  });
+
+  it("the primary provider refused by our limiter and an empty answer from the second: both attempts are named, the primary provider is not called", async () => {
+    fill("polygon");
+    const poly = stub("polygon", [bar("polygon")]);
+    const av = stub("alpha_vantage", []);
+    const err = await new DataLayer(av, poly, null)
+      .getIntraday("SPY", "60min", { lookback: 1 })
+      .catch((e: unknown) => e);
+    expect((err as DataUnavailableError).attempts).toEqual([
+      { provider: "polygon", reason: "rate limited" },
+      { provider: "alpha_vantage", reason: "no bars" },
+    ]);
+    expect(poly.fetchIntraday).not.toHaveBeenCalled();
+  });
+
+  it("our limiter refusing both providers is an attempt of each, and neither is called", async () => {
+    fill("polygon");
+    fill("alpha_vantage");
+    const poly = stub("polygon", [bar("polygon")]);
+    const av = stub("alpha_vantage", [bar("alpha_vantage")]);
+    const err = await new DataLayer(av, poly, null)
+      .getIntraday("SPY", "60min", { lookback: 1 })
+      .catch((e: unknown) => e);
+    expect((err as DataUnavailableError).attempts).toEqual([
+      { provider: "polygon", reason: "rate limited" },
+      { provider: "alpha_vantage", reason: "rate limited" },
+    ]);
+    expect([poly.fetchIntraday.mock.calls.length, av.fetchIntraday.mock.calls.length]).toEqual([0, 0]);
+  });
+
+  it("with no provider configured the error names both, not an empty list", async () => {
+    const err = await new DataLayer(null, null, null)
+      .getIntraday("SPY", "60min", { lookback: 1 })
+      .catch((e: unknown) => e);
+    expect((err as Error).message).toBe(
+      "All data providers unavailable: polygon(not configured), alpha_vantage(not configured)",
+    );
+  });
+});
