@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TRACE_RETENTION_DAYS } from "../observability/task-trace.js";
 import type { TaskRow } from "./digest.js";
-import { asciiEscape, checkRow, LEDGER_DAYS, parseLedger, renderLedger, type Prediction } from "./ledger.js";
+import { asciiEscape, checkRow, LEDGER_DAYS, parseLedger, renderLedger, taskTextLine, type LedgerRow, type Prediction } from "./ledger.js";
 import { buildVerdict } from "./verdict.js";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -624,5 +624,126 @@ describe("the operator's read: the last word of answer, beside a recorded closur
     const row2 = readFileSync(COMMITTED, "utf8").split("\n").map((l) => (l ? JSON.parse(l) : null)).find((o) => o?.id === "2");
     expect(row2?.closed?.state).toBe("REFUTED");
     expect(pred({ answer: row2.answer }).read).toBe("better");
+  });
+});
+
+describe("task text: which text the counted runs of a schedule row ran", () => {
+  const HEAD = "task text: counted runs";
+  const LEGEND = "(S = the run's text contains the text stored now, x = it does not)";
+  const line = (strip: string, before: string, rest: string) => `${HEAD} [${strip}] ${LEGEND}; run before the window: ${before}; ${rest}`;
+  const CHANGED = (at: string) => `WARNING: the task text most likely changed inside this window (between counted runs ${at})`;
+  const AFTER = "WARNING: no counted run contains the text stored now (most likely it was changed after the last counted run)";
+  const NEWER = "the text stored now is most likely newer than this window; this check cannot tell whether the text changed inside it";
+  const SAME = "every checked run contains the text stored now (an edit that only removed text would not show here)";
+
+  it("a: S and x in the counted runs warn and name the flip, open or closed", () => {
+    for (const open of [true, false]) {
+      expect(taskTextLine("xxxSS", "x", open)).toBe(line("xxxSS", "does not contain it", CHANGED("3 and 4")));
+      expect(taskTextLine("Sx", "S", open)).toBe(line("Sx", "contains the text stored now", CHANGED("1 and 2")));
+    }
+  });
+
+  it("a: every flip is named; a run that cannot be checked is skipped between the two it separates", () => {
+    expect(taskTextLine("SxxS", "S", false)).toBe(line("SxxS", "contains the text stored now", CHANGED("1 and 2, 3 and 4")));
+    expect(taskTextLine("xSxS", null, true)).toBe(line("xSxS", "none in range", CHANGED("1 and 2, 2 and 3, 3 and 4")));
+    expect(taskTextLine("S?x", "S", true)).toBe(line("S?x", "contains the text stored now", `${CHANGED("1 and 3")}; 1 counted run(s) not checkable (?)`));
+  });
+
+  it("b: an open row where no counted run contains the stored text warns", () => {
+    expect(taskTextLine("xx", "x", true)).toBe(line("xx", "does not contain it", AFTER));
+    expect(taskTextLine("x?", "S", true)).toBe(line("x?", "contains the text stored now", `${AFTER}; 1 counted run(s) not checkable (?)`));
+  });
+
+  it("c: a closed row where no counted run contains the stored text gets a plain note, no warning", () => {
+    expect(taskTextLine("xxxxxxx", "x", false)).toBe(line("xxxxxxx", "does not contain it", NEWER));
+    expect(taskTextLine("?x", null, false)).toBe(line("?x", "none in range", `${NEWER}; 1 counted run(s) not checkable (?)`));
+  });
+
+  it("d: all S, or no counted run yet: a plain note, open or closed", () => {
+    for (const open of [true, false]) {
+      expect(taskTextLine("SSSSS", "x", open)).toBe(line("SSSSS", "does not contain it", SAME));
+      expect(taskTextLine("", "S", open)).toBe(line("", "contains the text stored now", "no counted run yet"));
+    }
+  });
+
+  it("e: runs that cannot be checked are counted, and never warn on their own", () => {
+    expect(taskTextLine("S?S", "S", true)).toBe(line("S?S", "contains the text stored now", `${SAME}; 1 counted run(s) not checkable (?)`));
+    for (const open of [true, false]) {
+      expect(taskTextLine("???", "?", open)).toBe(`${HEAD} [???] ${LEGEND}; run before the window: not checkable; 3 counted run(s) not checkable (?)`);
+    }
+  });
+
+  it("the run before the window: the four phrases", () => {
+    expect([["S", "contains the text stored now"], ["x", "does not contain it"], ["?", "not checkable"], [null, "none in range"]].map(([b, phrase]) =>
+      taskTextLine("", b as "S" | "x" | "?" | null, true) === line("", phrase as string, "no counted run yet"))).toEqual([true, true, true, true]);
+  });
+
+  // Schedule runs one hour apart from S on; marks[i]: S ran the stored text (1), x another (0), ? not checkable (NULL).
+  const SCHED = "schedule:sc";
+  const MARK: Record<string, number | null> = { S: 1, x: 0, "?": null };
+  const sched = (letters: string, marks: string, start = 0): LedgerRow[] =>
+    runs(letters).map((r, i) => ({ ...r, task_id: `s${String(i + start).padStart(2, "0")}`, created_at: at(i + start), ritual_id: null, schedule_id: "sc", ran_stored_text: MARK[marks[i]] }));
+  const before = (id: string, created: string, status: string, mark: number | null): LedgerRow =>
+    ({ ...row({ task_id: id, created_at: created, status, ritual_id: null, schedule_id: "sc" }), ran_stored_text: mark });
+  const textNote = (c: { notes: string[] }) => c.notes.filter((n) => n.startsWith(HEAD));
+
+  it("checkRow: the strip is the counted runs' marks in run order; in flight, cancelled and after N are left out", () => {
+    const rows = [...sched(".X.R..", "xSSxSS"), ...sched("..", "xx", 6)];
+    const c = check({ type: SCHED, runs: 4 }, rows);
+    expect(c.verdict?.strip).toBe("..?.");
+    expect(textNote(c)).toEqual([line("xSS", "none in range", CHANGED("1 and 2"))]);
+  });
+
+  it("checkRow: the run before the window is the last finished run of the type queued before since", () => {
+    const rows = [
+      before("b1", "2026-11-14 10:00:00", "completed", 0),
+      before("b2", "2026-11-15 11:00:00", "failed", 1),
+      before("b3", "2026-11-15 11:30:00", "cancelled", 0),
+      before("b4", "2026-11-15 11:59:59", "running", 0),
+      { ...row({ task_id: "b5", created_at: "2026-11-15 11:59:59", ritual_id: null, schedule_id: "other" }), ran_stored_text: 0 },
+      ...sched("..", "SS"),
+    ];
+    expect(textNote(check({ type: SCHED }, rows))).toEqual([line("SS", "contains the text stored now", SAME)]);
+    expect(textNote(check({ type: SCHED }, rows.filter((r) => r.task_id !== "b2")))).toEqual([line("SS", "does not contain it", SAME)]);
+    expect(textNote(check({ type: SCHED }, [before("b6", "2026-11-15 11:00:00", "completed", null)]))).toEqual([line("", "not checkable", "no counted run yet")]);
+    expect(textNote(check({ type: SCHED }, []))).toEqual([line("", "none in range", "no counted run yet")]);
+  });
+
+  it("checkRow: the run before the window is the latest by time then task id, whatever order the rows come in", () => {
+    const late = before("b2", "2026-11-15 11:00:00", "completed", 1);
+    const tie = before("b3", "2026-11-15 11:00:00", "completed", 0);
+    const early = before("b1", "2026-11-14 10:00:00", "completed", 0);
+    for (const rows of [[late, early], [early, late], [late, tie, early], [tie, early, late]]) {
+      const want = rows.includes(tie) ? "does not contain it" : "contains the text stored now";
+      expect([rows.map((r) => r.task_id), textNote(check({ type: SCHED }, rows))]).toEqual([rows.map((r) => r.task_id), [line("", want, "no counted run yet")]]);
+    }
+  });
+
+  it("checkRow: open vs recorded closure on all-x runs; the line comes last, a WARNING never makes a MISMATCH", () => {
+    const rows = sched(".......", "xxxxxxx");
+    const open = check({ type: SCHED }, rows);
+    expect(open.notes).toEqual([`"closed":${JSON.stringify({ state: "CONFIRMED", checkedAt: NOW, line: open.text })}`, ANSWER_NOTE, line("xxxxxxx", "none in range", AFTER)]);
+    const closed = check({ type: SCHED, closed: { state: "CONFIRMED", checkedAt: NOW, line: open.text } }, rows, "2026-11-22T00:00:00.000Z");
+    expect([closed.mismatch, closed.notes]).toEqual([false, [`recorded CONFIRMED at ${NOW}; recheck agrees; operator's read: OWED`, line("xxxxxxx", "none in range", NEWER)]]);
+    const changed = check({ type: SCHED, closed: { state: "CONFIRMED", checkedAt: NOW, line: open.text } }, sched(".......", "xxxSSSS"), "2026-11-22T00:00:00.000Z");
+    expect([changed.mismatch, changed.notes[1]]).toEqual([false, line("xxxSSSS", "none in range", CHANGED("3 and 4"))]);
+    expect(renderLedger("f", NOW, [open], false).split("\n").slice(1)).toEqual([open.text, ...open.notes.map((n) => `  ${n}`), ""]);
+  });
+
+  it("checkRow: rows without the column are not checkable; a ritual row gets no line; outside the window says not checked", () => {
+    const bare = runs("...").map((r) => ({ ...r, ritual_id: null, schedule_id: "sc" }));
+    expect(textNote(check({ type: SCHED }, bare))).toEqual([`${HEAD} [???] ${LEGEND}; run before the window: none in range; 3 counted run(s) not checkable (?)`]);
+    const ritual = runs("...").map((r) => ({ ...r, ran_stored_text: 0 }));
+    expect(textNote(check({}, ritual))).toEqual([]);
+    expect(check({}, runs("..")).notes).toEqual([]);
+    const out = check({ type: SCHED, since: "2026-10-01T00:00:00Z" }, sched("..", "SS"));
+    expect(out.notes).toEqual([`"closed":${JSON.stringify({ state: "EXPIRED", checkedAt: NOW, line: out.text })}`, "task text: not checked (since is outside the 30-day window)"]);
+  });
+
+  it("the line carries only the strip, positions and fixed phrases: no run, task or schedule text", () => {
+    const rows = sched("...", "xSx").map((r) => ({ ...r, schedule_name: "NAME-SECRET", reply_tail: "REPLY-SECRET", concern_detail: "CONCERN-SECRET" }));
+    const c = check({ type: SCHED }, rows);
+    expect(textNote(c)).toEqual([line("xSx", "none in range", CHANGED("1 and 2, 2 and 3"))]);
+    expect(c.notes.join("\n")).not.toMatch(/SECRET|s0\d/);
   });
 });

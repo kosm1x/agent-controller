@@ -394,6 +394,7 @@ describe("task_completion_facts (schema 18 on), and databases without it", () =>
     expect(code.filter((l) => /sqlite_ro/.test(l)).map((l) => l.replace(/<<<".*"\)"/, '<<<"…")"'))).toEqual([
       "sqlite_ro() {",
       'facts="$(sqlite_ro list <<<"…")" || exit 1',
+      'text="$(sqlite_ro list <<<"…")" || exit 1',
       'rows="$(sqlite_ro json <<<"…")" || exit 1',
     ]);
     expect(code).toContain('case "$*" in');
@@ -964,5 +965,115 @@ describe("--ledger, a run finished in the check's second (the same-second finali
     expect(add.status).toBe(0);
     expect(at(plus(900))).toBe(PENDING);
     expect([at(plus(1000)), at(plus(60_000)), at(plus(86_400_000))]).toEqual([BROKEN, BROKEN, BROKEN]);
+  }, 120_000);
+});
+
+describe("--ledger on a schedule row: whether each run ran the schedule's text stored now", () => {
+  // Schedule tx stores "text B"; its runs carry it inside run material, or
+  // carry "text A". tx0 is the last run before since. Every other schedule
+  // gives a run whose check is NULL: no schedule row (gone), empty or blank
+  // stored text, NULL stored text; nd stores "text B" but its run has no text
+  // (0); r1 has no schedule at all.
+  const TSX = join(REPO, "node_modules", ".bin", "tsx");
+  const CLI = join(REPO, "scripts", "complaints-digest.ts");
+  const S = "2026-11-15T12:00:00Z";
+  const SCHEDULES: [string, string | null][] = [["tx", "text B"], ["empty", ""], ["blank", "  "], ["nulltext", null], ["nd", "text B"]];
+  // task_id, status, created_at, metadata, description
+  const RUNS: [string, string, string, string, string | null][] = [
+    ["tx0", "completed", "2026-11-14 12:00:00", '{"tags":["schedule:tx"]}', "date line\ntext A\nsent before"],
+    ["tx1", "completed", "2026-11-15 12:00:00", '{"tags":["schedule:tx"]}', "date line\ntext A\nsent before"],
+    ["tx2", "completed_with_concerns", "2026-11-16 12:00:00", '{"tags":["schedule:tx"]}', "date line\ntext B\nsent before"],
+    ["tx3", "completed", "2026-11-17 12:00:00", '{"tags":["schedule:tx"]}', "text B"],
+    ["g1", "completed", "2026-11-16 12:00:00", '{"tags":["schedule:gone"]}', "text B"],
+    ["e1", "completed", "2026-11-16 12:00:00", '{"tags":["schedule:empty"]}', "text B"],
+    ["b1", "completed", "2026-11-16 12:00:00", '{"tags":["schedule:blank"]}', "text B"],
+    ["n1", "completed", "2026-11-16 12:00:00", '{"tags":["schedule:nulltext"]}', "text B"],
+    ["nd1", "completed", "2026-11-16 12:00:00", '{"tags":["schedule:nd"]}', null],
+    ["r1", "completed", "2026-11-16 12:00:00", '{"ritualId":"rt"}', "text B"],
+  ];
+  const base = { since: S, change: "a change", baseline: "a baseline" };
+  const ROWS = [
+    { id: "tx", type: "schedule:tx", ...base, maxComplaints: 1, runs: 3 },
+    { id: "gone", type: "schedule:gone", ...base, maxComplaints: 0, runs: 1 },
+    { id: "rt", type: "ritual:rt", ...base, maxComplaints: 0, runs: 1 },
+  ];
+  const LEGEND = "(S = the run's text contains the text stored now, x = it does not)";
+  const LINE_TX = "tx CONFIRMED | schedule:tx since 2026-11-15T12:00:00.000Z: counted 3/3, complaints 1 (limit 1), unknown 0 [.C.]; guard: none";
+  const LINE_GONE = "gone CONFIRMED | schedule:gone since 2026-11-15T12:00:00.000Z: counted 1/1, complaints 0 (limit 0), unknown 0 [.]; guard: none";
+  const LINE_RT = "rt CONFIRMED | ritual:rt since 2026-11-15T12:00:00.000Z: counted 1/1, complaints 0 (limit 0), unknown 0 [.]; guard: none";
+  const GONE_TEXT = `  task text: counted runs [?] ${LEGEND}; run before the window: none in range; 1 counted run(s) not checkable (?)`;
+  let f: string;
+  /** both: tasks.description and scheduled_tasks.description; tasks-only: the first; none: neither. */
+  const build = (name: string, columns: "both" | "tasks-only" | "none"): string => {
+    const path = join(dir, name);
+    const runCol = columns !== "none";
+    const schedCol = columns === "both";
+    const sql = [
+      SCHEMA,
+      ...(runCol ? ["ALTER TABLE tasks ADD COLUMN description TEXT;"] : []),
+      ...(schedCol ? ["ALTER TABLE scheduled_tasks ADD COLUMN description TEXT;"] : []),
+      ...SCHEDULES.map(([id, text]) =>
+        `INSERT INTO scheduled_tasks (schedule_id, name${schedCol ? ", description" : ""}) VALUES (${lit(id)}, 'A schedule'${schedCol ? `, ${lit(text)}` : ""});`),
+      ...RUNS.map(([id, status, created, meta, text]) =>
+        `INSERT INTO tasks (task_id, status, created_at, completed_at, metadata${runCol ? ", description" : ""}) VALUES (${[id, status, created].map(lit).join(", ")}, datetime(${lit(created)}, '+60 seconds'), ${lit(meta)}${runCol ? `, ${lit(text)}` : ""});`),
+    ].join("\n");
+    const r = spawnSync("/usr/bin/sqlite3", ["-init", "/dev/null", "-bail", path], { input: sql, encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`fixture sqlite3 failed: ${r.stderr}`);
+    return path;
+  };
+  const run = (path: string) => wrapper(["--db", path, "--now", NOW, "--ledger", f]);
+  beforeAll(() => {
+    f = join(dir, "text.jsonl");
+    writeFileSync(f, ROWS.map((r) => JSON.stringify(r) + "\n").join(""));
+  });
+
+  it("the ledger SQL's ran_stored_text: 1 contained, 0 not (or no run text), NULL with no schedule row, empty or NULL stored text, or no schedule", () => {
+    const path = build("text-sql.db", "both");
+    const q = spawnSync(TSX, [CLI, "--print-sql", "--task-text", "--now", NOW, "--ledger", f], { cwd: REPO, encoding: "utf8", timeout: 60_000 });
+    expect([q.status, q.stderr]).toEqual([0, ""]);
+    const r = spawnSync("/usr/bin/sqlite3", ["-init", "/dev/null", "-safe", "-readonly", "-bail", "-json", path], { input: q.stdout, encoding: "utf8" });
+    expect([r.status, r.stderr]).toEqual([0, ""]);
+    const rows = JSON.parse(r.stdout) as { task_id: string; ran_stored_text: number | null }[];
+    expect(Object.fromEntries(rows.map((x) => [x.task_id, x.ran_stored_text]))).toEqual({
+      tx0: 0, tx1: 0, tx2: 1, tx3: 1, g1: null, e1: null, b1: null, n1: null, nd1: 0, r1: null,
+    });
+  }, 60_000);
+
+  it("--task-text adds the column to the ledger SQL only: the digest, the verdict and the ledger without it never name it", () => {
+    const sql = (args: string[]) => spawnSync(TSX, [CLI, "--print-sql", "--now", NOW, ...args], { cwd: REPO, encoding: "utf8", timeout: 60_000 });
+    const verdict = ["--verdict", "--type", "ritual:rt", "--since", S, "--max-complaints", "0"];
+    for (const args of [["--task-text"], ["--task-text", ...verdict], ["--ledger", f], ["--facts-table", "--ledger", f]]) {
+      const r = sql(args);
+      expect([args, r.status, /description|ran_stored_text/.test(r.stdout)]).toEqual([args, 0, false]);
+    }
+    expect(sql(["--task-text", "--facts-table", "--ledger", f]).stdout).toContain(" AS ran_stored_text");
+  }, 60_000);
+
+  it("the wrapper: one task-text line under each schedule row, none under the ritual row; exit 0 on a WARNING", () => {
+    const r = run(build("text-both.db", "both"));
+    expect([r.status, r.stderr]).toEqual([0, ""]);
+    expect(r.stdout.split("\n").slice(1)).toEqual([
+      LINE_TX,
+      `  task text: counted runs [xSS] ${LEGEND}; run before the window: does not contain it; WARNING: the task text most likely changed inside this window (between counted runs 1 and 2)`,
+      LINE_GONE,
+      GONE_TEXT,
+      LINE_RT,
+      "",
+    ]);
+  }, 60_000);
+
+  it("a database without scheduled_tasks.description, or without either column: every run not checkable, no error, the other lines unchanged", () => {
+    for (const columns of ["tasks-only", "none"] as const) {
+      const r = run(build(`text-${columns}.db`, columns));
+      expect([columns, r.status, r.stderr]).toEqual([columns, 0, ""]);
+      expect(r.stdout.split("\n").slice(1)).toEqual([
+        LINE_TX,
+        `  task text: counted runs [???] ${LEGEND}; run before the window: not checkable; 3 counted run(s) not checkable (?)`,
+        LINE_GONE,
+        GONE_TEXT,
+        LINE_RT,
+        "",
+      ]);
+    }
   }, 120_000);
 });

@@ -58,8 +58,16 @@
  * may have pruned rows that existed at the replayed time, so a replay never
  * rechecks a recorded closure and never offers one to record. A closure
  * recorded after the replayed time is marked so on its row, not refused.
+ *
+ * A schedule row also gets a task-text line (taskTextLine): for each counted
+ * run, whether its text contains the schedule's text stored now (the ledger SQL's
+ * ran_stored_text), and the same for the last finished run of the type
+ * queued before since. A count read across a text change is not the effect
+ * of one text, so a change inside the window, or a stored text no counted
+ * run ran on an open row, is a WARNING. It is a note: it changes no state and
+ * no exit code. A ritual's text lives in code, so ritual rows get no line.
  */
-import { cmp, toolCounts, typeKey, type TaskRow } from "./digest.js";
+import { cmp, stripChar, toolCounts, typeKey, type TaskRow } from "./digest.js";
 import { buildVerdict, closeRule, ISO_TIME, TYPE_PATTERN, windowSince, type Verdict } from "./verdict.js";
 
 /** Days this mode reads; equal to TRACE_RETENTION_DAYS (ledger.test.ts pins the two). */
@@ -217,6 +225,49 @@ export function parseLedger(src: string, latest: string): { predictions: Predict
   return { predictions, problems: problems.sort((a, b) => a.line - b.line) };
 }
 
+/** A ledger SQL row; ran_stored_text is absent when the database cannot tell (see complaintsSql). */
+export type LedgerRow = TaskRow & { ran_stored_text?: number | null };
+
+/** One run against its schedule's text stored now: S its text contains it, x it does not, ? cannot be checked. */
+export type TextMark = "S" | "x" | "?";
+const textMark = (r: LedgerRow | undefined): TextMark => (r?.ran_stored_text === 1 ? "S" : r?.ran_stored_text === 0 ? "x" : "?");
+const BEFORE: Record<TextMark, string> = { S: "contains the text stored now", x: "does not contain it", "?": "not checkable" };
+
+/**
+ * The task-text line of a schedule row. `strip`: one TextMark per counted run,
+ * in run order; `before`: the mark of the last finished run before since, null
+ * when the rows read hold none; `open`: the row has no recorded closure.
+ * Only marks, positions and fixed phrases: no task text reaches it.
+ *
+ * What a mark cannot see. S means "contains", not "equals": an edit that only
+ * removed text, or a new text that also occurs in the material added around a
+ * run, reads S on the older runs. With two older texts, x cannot tell them
+ * apart, so only the flip to the current text is named. A run that did run
+ * the stored text can read x when the stored text holds a value that the
+ * store-time withholding rule did not yet withhold when the schedule's text
+ * was stored but does withhold when a run's text is stored (the run's text
+ * then has a placeholder where the stored text has the value), or holds the
+ * cache marker line, which is removed from the run's text.
+ */
+export function taskTextLine(strip: string, before: TextMark | null, open: boolean): string {
+  const checked = [...strip].flatMap((m, i) => (m === "?" ? [] : [{ m, at: i + 1 }]));
+  const flips = checked.flatMap((c, i) => (i > 0 && c.m !== checked[i - 1].m ? [`${checked[i - 1].at} and ${c.at}`] : []));
+  const unchecked = strip.length - checked.length;
+  const judgement =
+    strip === "" ? "no counted run yet"
+    : flips.length > 0 ? `WARNING: the task text most likely changed inside this window (between counted runs ${flips.join(", ")})`
+    : checked.length === 0 ? null
+    : checked[0].m === "S" ? "every checked run contains the text stored now (an edit that only removed text would not show here)"
+    : open ? "WARNING: no counted run contains the text stored now (most likely it was changed after the last counted run)"
+    : "the text stored now is most likely newer than this window; this check cannot tell whether the text changed inside it";
+  return [
+    `task text: counted runs [${strip}] (S = the run's text contains the text stored now, x = it does not)`,
+    `run before the window: ${before === null ? "none in range" : BEFORE[before]}`,
+    ...(judgement === null ? [] : [judgement]),
+    ...(unchecked > 0 ? [`${unchecked} counted run(s) not checkable (?)`] : []),
+  ].join("; ");
+}
+
 export interface GuardCheck {
   guard: Guard;
   /** Judged runs with fewer than `min` calls with no did-not-run gate row of the guard's tool, or summed over its set (no trace rows: 0). */
@@ -234,7 +285,7 @@ export interface RowCheck {
   guards: GuardCheck[];
   /** The row's line as printed. */
   text: string;
-  /** Printed under the row: the recheck of a recorded closure, or the closure to paste and what goes with it. */
+  /** Printed under the row: the recheck of a recorded closure, or the closure to paste and what goes with it; last, a schedule row's task-text line. */
   notes: string[];
   mismatch: boolean;
 }
@@ -260,7 +311,8 @@ function recordedIn(ms: number, since: string | null, latestMs: number, expired:
 }
 
 /** `replay`: --now was given, so a recorded closure is not rechecked and none is offered. */
-export function checkRow(p: Prediction, rows: TaskRow[], now: string, replay: boolean): RowCheck {
+export function checkRow(p: Prediction, rows: LedgerRow[], now: string, replay: boolean): RowCheck {
+  const schedule = p.type.startsWith("schedule:");
   const head = (state: LedgerState): string => `${p.id} ${state} | ${p.type} since ${p.since}: `;
   const after = p.closed !== null && Date.parse(p.closed.checkedAt) > Date.parse(now);
   const rec = p.closed && `recorded ${p.closed.state} at ${p.closed.checkedAt}${after ? ", after this time" : ""}`;
@@ -272,6 +324,7 @@ export function checkRow(p: Prediction, rows: TaskRow[], now: string, replay: bo
     const why = `since is outside the ${LEDGER_DAYS}-day window`;
     const line = head(state) + (rec ? `${rec}; not rechecked (${why})${read}` : why);
     const notes = p.closed || replay ? [] : [paste(state, now, line)];
+    if (schedule) notes.push(`task text: not checked (${why})`);
     return { prediction: p, state, verdict: null, guards: [], text: line, notes, mismatch: false };
   }
   const v = buildVerdict(rows, { now, type: p.type, since: p.since, maxComplaints: p.maxComplaints, runs: p.runs });
@@ -306,6 +359,15 @@ export function checkRow(p: Prediction, rows: TaskRow[], now: string, replay: bo
   const mismatch = !replay && p.closed !== null && p.closed.state !== state;
   const notes = rec ? [replay ? `${rec}; not rechecked (replay)${read}` : mismatch ? `MISMATCH: ${rec}, recheck says ${state}` : `${rec}; recheck agrees${read}`]
     : !replay && (CLOSED_STATES as readonly string[]).includes(state) ? [paste(state, now, line), ...(p.read ? [] : [ANSWER_NOTE])] : [];
+  if (schedule) {
+    const sinceKey = p.since.slice(0, 19).replace("T", " ");
+    const last = rows
+      .filter((r) => typeKey(r) === p.type && cmp(r.created_at, sinceKey) < 0 && stripChar(r.status) !== "?")
+      .sort((a, b) => cmp(a.created_at, b.created_at) || cmp(a.task_id, b.task_id))
+      .at(-1);
+    const strip = v.runList.map((r) => textMark(byId.get(r.taskId))).join("");
+    notes.push(taskTextLine(strip, last ? textMark(last) : null, p.closed === null));
+  }
   return { prediction: p, state, verdict: v, guards, text: line, notes, mismatch };
 }
 

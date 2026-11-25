@@ -5,7 +5,10 @@
  *   --print-sql [--facts-table] [flags]  print the sqlite3 script (bound
  *                        parameters + SELECT); --facts-table, passed by the
  *                        wrapper when the database has task_completion_facts,
- *                        selects the SQL that reads it
+ *                        selects the SQL that reads it; --task-text, passed
+ *                        when it has tasks.description and
+ *                        scheduled_tasks.description, adds the ledger SQL's
+ *                        ran_stored_text column
  *   [flags] < rows.json  print the digest of the rows on stdin
  *
  * Flags: --days 30  --last 7  --min 5  --type <ritual|schedule>:<id>  --json
@@ -55,6 +58,7 @@ try {
     options: {
       "print-sql": { type: "boolean" },
       "facts-table": { type: "boolean" },
+      "task-text": { type: "boolean" },
       days: { type: "string" },
       last: { type: "string" },
       min: { type: "string" },
@@ -142,7 +146,7 @@ if (parsed["print-sql"]) {
       ".parameter init",
       `.parameter set @since "'${sqlTime(nowMs - days * 86_400_000)}'"`,
       `.parameter set @now "'${sqlTime(nowMs)}'"`,
-      complaintsSql(parsed["facts-table"] === true, ledgerFile !== undefined),
+      complaintsSql(parsed["facts-table"] === true, ledgerFile !== undefined, parsed["task-text"] === true),
       "",
     ].join("\n"),
   );

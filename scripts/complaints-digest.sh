@@ -91,6 +91,12 @@ sqlite_ro() {
 # Databases before schema 18 have no task_completion_facts: ask, and on a
 # newer database print the SQL that reads it.
 facts="$(sqlite_ro list <<<"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'task_completion_facts';")" || exit 1
-if [[ $facts == 1 ]]; then sql="$("$TSX" "$CLI" --print-sql --facts-table "${args[@]}")"; fi
+# The ledger's task-text check needs tasks.description and
+# scheduled_tasks.description; without both its SQL names neither.
+text="$(sqlite_ro list <<<"SELECT (SELECT count(*) FROM pragma_table_info('tasks') WHERE name = 'description') + (SELECT count(*) FROM pragma_table_info('scheduled_tasks') WHERE name = 'description');")" || exit 1
+sqlopts=()
+if [[ $facts == 1 ]]; then sqlopts+=(--facts-table); fi
+if [[ $text == 2 ]]; then sqlopts+=(--task-text); fi
+if ((${#sqlopts[@]})); then sql="$("$TSX" "$CLI" --print-sql "${sqlopts[@]}" "${args[@]}")"; fi
 rows="$(sqlite_ro json <<<"$sql")" || exit 1
 printf '%s' "$rows" | "$TSX" "$CLI" "${args[@]}"
