@@ -3,7 +3,7 @@
  * `runs` row so a partially-failed Prometheus run can be re-executed.
  *
  * The dispatcher persists three Prometheus artifacts per run (the `UPDATE runs`
- * that writes `goal_graph` in `dispatchWithSlot`, src/dispatch/dispatcher.ts):
+ * that writes `goal_graph` in `writeRunRow`, src/dispatch/dispatcher.ts):
  *   runs.goal_graph — JSON.stringify(OrchestratorResult.goalGraph, storeReplacer)
  *                     = { goals }
  *   runs.trace      — stringifyRedacted(OrchestratorResult.trace) = TraceEvent[]

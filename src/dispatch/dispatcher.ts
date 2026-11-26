@@ -545,7 +545,7 @@ export async function submitTask(submission: TaskSubmission): Promise<{
 
   // v8 S1: strip cache-break marker for persistence + classifier + events.
   // The marker is preserved on `submission.description` for the in-memory
-  // `RunnerInput` built in `dispatchWithSlot`, so the fast-runner chat branch
+  // `RunnerInput` built in `beginRun`, so the fast-runner chat branch
   // still splits on it. DB / dashboards / mc-ctl / classifier / event
   // listeners see clean text. Retries fetched from DB will lack the marker —
   // they fall back gracefully (whole description treated as stable, no cache
@@ -925,53 +925,13 @@ async function dispatchWithSlot(
   // build NOW, before anything below can throw or see a cancel, so every way
   // of ending keeps the build it started on. A failed write is counted and
   // never changes what happens to the task.
-  try {
-    recordTaskBuild(taskId, runningBuild());
-  } catch (err) {
-    noteWriteFailure("completion_facts", err);
-  }
-
-  const abortController = submission.abortController ?? new AbortController();
-
-  const input: RunnerInput = {
+  const { abortController, input } = beginRun(
     taskId,
+    agentType,
+    submission,
+    db,
     runId,
-    title: submission.title,
-    description: submission.description,
-    tools: submission.tools,
-    input: submission.input,
-    parentTaskId: submission.parentTaskId,
-    modelTier: getModelTierFromTask(taskId),
-    conversationHistory: submission.conversationHistory,
-    detectionText: submission.detectionText,
-    onTextChunk: submission.onTextChunk,
-    signal: abortController.signal,
-    interactive: submission.interactive,
-    unlimited: submission.unlimited,
-    external: submission.external,
-  };
-
-  // V8.4: freeze the ledger (gates declared so far are the fixed contract for
-  // this run) and show it to the runner. Only tasks WITH gates see the block —
-  // ungated traffic's prompt is byte-for-byte unchanged.
-  const gateRows = listGates(taskId, db);
-  if (gateRows.length > 0) {
-    freezeGates(taskId, db);
-    input.description = `${input.description}${renderGatesBlock(gateRows)}`;
-  }
-
-  taskStarted(agentType);
-  // V8.5 Phase 6: forensic timeline start. Best-effort by contract.
-  emitTraceEvent({
-    taskId,
-    runId,
-    name: "task.started",
-    attrs: {
-      agent_type: agentType,
-      title: redactCredentialsForPersist(submission.title)!.slice(0, 120),
-      ...(input.modelTier && { tier: input.modelTier }),
-    },
-  });
+  );
   // The runner that ultimately ANSWERS this task. Starts as the classified type
   // but is re-stamped to "fast" if the nanoclaw→fast misroute fallback below
   // succeeds, so cost + outcome are attributed to the runner that actually ran
@@ -1236,88 +1196,15 @@ async function dispatchWithSlot(
     // FAILS — never a quiet success — and the schedule it serves gets the
     // existing schedule.run_failed alert. Decided here, on the runner's
     // result, before the one status mapping and the completion ledger.
-    const undeclared = [...new Set(gateContext.undeclaredRefusalSink)];
-    if (undeclared.length > 0) {
-      const refusal = undeclaredRunFailure(undeclared);
-      result = {
-        ...result,
-        success: false,
-        status: undefined,
-        error: result.error ? `${refusal} — ${result.error}` : refusal,
-      };
-      log.warn(
-        { taskId, tools: undeclared, schedule: gateContext.originScheduleId },
-        "background sub-task failed: undeclared high-risk tool refused",
-      );
-      const scheduleId = gateContext.originScheduleId;
-      if (scheduleId) {
-        import("../rituals/scheduler.js")
-          .then(({ recordRitualFailure }) =>
-            recordRitualFailure(scheduleId, refusal, "execute"),
-          )
-          .catch((err) =>
-            log.error(
-              { taskId, err: errMsg(err) },
-              "undeclared-tool failure not recorded as a schedule failure",
-            ),
-          );
-      }
-    }
+    result = applyUndeclaredRefusal(result, gateContext, taskId);
 
     const durationMs = Date.now() - start;
 
     // Update run
-    db.prepare(
-      `
-      UPDATE runs SET
-        status = @status,
-        runner_status = @runnerStatus,
-        output = @output,
-        error = @error,
-        token_usage = @tokenUsage,
-        goal_graph = @goalGraph,
-        trace = @trace,
-        tool_calls = @toolCalls,
-        duration_ms = @durationMs,
-        completed_at = datetime('now')
-      WHERE run_id = @runId
-    `,
-    ).run({
-      runId,
-      status: result.success ? "completed" : "failed",
-      runnerStatus: result.status ?? null,
-      // Credential-redacted: output, error, trace. Raw by design:
-      // output.pendingConfirmation (router executes its args on "sí"; the
-      // hash-bound copy is tool_approvals.args_json), goal_graph (resume
-      // input; the mailbox-password store rule only), token_usage (numbers).
-      output: result.output
-        ? stringifyRedacted(result.output, ["pendingConfirmation"])
-        : null,
-      error: redactCredentialsForPersist(result.error),
-      tokenUsage: result.tokenUsage ? JSON.stringify(result.tokenUsage) : null,
-      goalGraph: result.goalGraph
-        ? JSON.stringify(result.goalGraph, storeReplacer)
-        : null,
-      trace: result.trace ? stringifyRedacted(result.trace) : null,
-      // queue #231: persist bare tool names for the swarm-retry classifier.
-      // Defensive JSON-encode of an empty array if toolCalls is missing —
-      // null distinguishes "no run completed" from "ran but called no tools".
-      toolCalls: result.toolCalls ? JSON.stringify(result.toolCalls) : "[]",
-      durationMs,
-    });
+    writeRunRow(db, runId, result, durationMs);
 
     // Map runner status to task status
-    let taskStatus: string;
-    if (result.success) {
-      taskStatus =
-        result.status === "DONE_WITH_CONCERNS"
-          ? "completed_with_concerns"
-          : "completed";
-    } else {
-      if (result.status === "NEEDS_CONTEXT") taskStatus = "needs_context";
-      else if (result.status === "BLOCKED") taskStatus = "blocked";
-      else taskStatus = "failed";
-    }
+    let taskStatus: string = taskStatusOf(result);
 
     // Required tool validation: check that critical tools were actually called
     if (submission.requiredTools?.length && result.success) {
@@ -1490,146 +1377,24 @@ async function dispatchWithSlot(
       return;
     }
 
-    recordRunCost(result, runId, taskId, agentType, effectiveAgentType);
-
-    // V8.5 Phase 6: terminal trace event. For a failed task the last
-    // tool.called row before this one names the terminal round/tool; here we
-    // carry the aggregate (tokens, cost, wall-clock) and the mapped status.
-    emitTraceEvent({
-      taskId,
+    recordRunOutcome({
+      result,
       runId,
-      name: result.success ? "task.completed" : "task.failed",
-      tokensIn: result.tokenUsage?.promptTokens,
-      tokensOut: result.tokenUsage?.completionTokens,
-      costUsd: result.tokenUsage?.actualCostUsd,
-      latencyMs: durationMs,
-      ...(result.toolCalls?.length && {
-        tool: result.toolCalls[result.toolCalls.length - 1],
-      }),
-      attrs: {
-        status: taskStatus,
-        termination_reason:
-          result.terminationReason ??
-          terminationFromTaskStatus(taskStatus, result.success),
-        agent_type: effectiveAgentType,
-        tool_calls: result.toolCalls?.length ?? 0,
-        // V8.1 gate (ruling 2026-10-06): the reason CODE only, from the same
-        // classifier trackTaskOutcome uses — scheduled tasks get no outcome
-        // row, so this is their only persisted reason. Never free text.
-        concern_reason: classifyConcernReason(
-          taskStatus,
-          result.output == null
-            ? null
-            : typeof result.output === "string"
-              ? result.output
-              : JSON.stringify(result.output),
-          result.error ?? null,
-        ),
-        // Redact BEFORE the cut: a fixed-length key rule misses a split key.
-        ...(result.error && {
-          error: redactCredentialsForPersist(result.error)!.slice(0, 300),
-        }),
-      },
+      taskId,
+      agentType,
+      effectiveAgentType,
+      taskStatus,
+      durationMs,
     });
-
-    // The first runner concern for task_outcomes.concern_detail — storage
-    // only; trackTaskOutcome takes it (see noteConcernDetail). Noted BEFORE
-    // the emit: the tracker runs inside the task.completed handler.
-    try {
-      noteConcernDetail(
-        taskId,
-        result.success ? (result.concerns?.[0] ?? null) : null,
-      );
-    } catch {
-      // Storage only — must never change the task's outcome
-    }
-
-    // The same concern, at rest for every kind of task that ends on this path
-    // (the note above is only taken for tasks the tracker records), added to
-    // the row written when the task was marked running (its build stays as
-    // written then). Written BEFORE the emit so a handler in the same tick
-    // sees it; a failed write is counted and never changes the outcome or
-    // skips the event.
-    try {
-      recordCompletionFacts(taskId, {
-        build: runningBuild(),
-        concernDetail: result.success ? (result.concerns?.[0] ?? null) : null,
-      });
-    } catch (err) {
-      noteWriteFailure("completion_facts", err);
-    }
-
-    // Emit completion event
-    try {
-      if (result.success) {
-        getEventBus().emitEvent("task.completed", {
-          task_id: taskId,
-          agent_id: effectiveAgentType,
-          result: result.output,
-          duration_ms: durationMs,
-        });
-      } else {
-        getEventBus().emitEvent("task.failed", {
-          task_id: taskId,
-          agent_id: agentType,
-          error: result.error ?? "Unknown error",
-          recoverable: false,
-          attempts: 1,
-          // Failed runners often still produced text — NEEDS_CONTEXT/BLOCKED
-          // carry the clarifying question / blocker description, and heavy
-          // graded-down failures carry the partial report — so the router
-          // can deliver it instead of the generic failure message.
-          result: result.output,
-        });
-      }
-    } catch {
-      // Event emission should not block
-    }
   } catch (err) {
-    const errorMsg = errMsg(err);
-    const cancelled = isCancelled();
-    db.prepare(
-      `
-      UPDATE runs SET status = @status, error = @error, completed_at = datetime('now')
-      WHERE run_id = @runId
-    `,
-    ).run({
+    closeThrownRun(
+      err,
+      isCancelled,
+      db,
       runId,
-      // A run whose task was cancelled closes as cancelled, thrown or not.
-      status: cancelled ? "cancelled" : "failed",
-      error: redactCredentialsForPersist(errorMsg),
-    });
-
-    updateTaskStatus(
       taskId,
-      cancelled ? "cancelled" : "failed",
-      undefined,
-      errorMsg,
+      announceCancelUnlessRecorded,
     );
-    emitTraceEvent(
-      cancelled
-        ? {
-            taskId,
-            runId,
-            name: "task.cancelled",
-            attrs: {
-              status: "cancelled",
-              termination_reason: "aborted",
-              thrown: true,
-            },
-          }
-        : {
-            taskId,
-            runId,
-            name: "task.failed",
-            attrs: {
-              termination_reason: "error",
-              error: redactCredentialsForPersist(errorMsg)!.slice(0, 300),
-              thrown: true,
-            },
-          },
-    );
-    if (cancelled) announceCancelUnlessRecorded();
   } finally {
     activeAborts.delete(taskId);
     announcedCancels.delete(taskId);
@@ -1644,6 +1409,333 @@ async function dispatchWithSlot(
       releaseContainerSlot();
     }
   }
+}
+
+/** Prepares a run and marks it started; returns its abort controller and runner input. */
+function beginRun(
+  taskId: string,
+  agentType: AgentType,
+  submission: TaskSubmission,
+  db: ReturnType<typeof getDatabase>,
+  runId: string,
+): { abortController: AbortController; input: RunnerInput } {
+  try {
+    recordTaskBuild(taskId, runningBuild());
+  } catch (err) {
+    noteWriteFailure("completion_facts", err);
+  }
+
+  const abortController = submission.abortController ?? new AbortController();
+
+  const input: RunnerInput = {
+    taskId,
+    runId,
+    title: submission.title,
+    description: submission.description,
+    tools: submission.tools,
+    input: submission.input,
+    parentTaskId: submission.parentTaskId,
+    modelTier: getModelTierFromTask(taskId),
+    conversationHistory: submission.conversationHistory,
+    detectionText: submission.detectionText,
+    onTextChunk: submission.onTextChunk,
+    signal: abortController.signal,
+    interactive: submission.interactive,
+    unlimited: submission.unlimited,
+    external: submission.external,
+  };
+
+  // V8.4: freeze the ledger (gates declared so far are the fixed contract for
+  // this run) and show it to the runner. Only tasks WITH gates see the block —
+  // ungated traffic's prompt is byte-for-byte unchanged.
+  const gateRows = listGates(taskId, db);
+  if (gateRows.length > 0) {
+    freezeGates(taskId, db);
+    input.description = `${input.description}${renderGatesBlock(gateRows)}`;
+  }
+
+  taskStarted(agentType);
+  // V8.5 Phase 6: forensic timeline start. Best-effort by contract.
+  emitTraceEvent({
+    taskId,
+    runId,
+    name: "task.started",
+    attrs: {
+      agent_type: agentType,
+      title: redactCredentialsForPersist(submission.title)!.slice(0, 120),
+      ...(input.modelTier && { tier: input.modelTier }),
+    },
+  });
+  return { abortController, input };
+}
+
+/** Fails the result when the run's gate refused a tool the run did not declare. */
+function applyUndeclaredRefusal(
+  result: RunnerOutput,
+  gateContext: TaskExecutionContext,
+  taskId: string,
+): RunnerOutput {
+  const undeclared = [...new Set(gateContext.undeclaredRefusalSink)];
+  if (undeclared.length > 0) {
+    const refusal = undeclaredRunFailure(undeclared);
+    result = {
+      ...result,
+      success: false,
+      status: undefined,
+      error: result.error ? `${refusal} — ${result.error}` : refusal,
+    };
+    log.warn(
+      { taskId, tools: undeclared, schedule: gateContext.originScheduleId },
+      "background sub-task failed: undeclared high-risk tool refused",
+    );
+    const scheduleId = gateContext.originScheduleId;
+    if (scheduleId) {
+      import("../rituals/scheduler.js")
+        .then(({ recordRitualFailure }) =>
+          recordRitualFailure(scheduleId, refusal, "execute"),
+        )
+        .catch((err) =>
+          log.error(
+            { taskId, err: errMsg(err) },
+            "undeclared-tool failure not recorded as a schedule failure",
+          ),
+        );
+    }
+  }
+  return result;
+}
+
+/** Writes the finished run's outcome to its runs row. */
+function writeRunRow(
+  db: ReturnType<typeof getDatabase>,
+  runId: string,
+  result: RunnerOutput,
+  durationMs: number,
+): void {
+  db.prepare(
+    `
+      UPDATE runs SET
+        status = @status,
+        runner_status = @runnerStatus,
+        output = @output,
+        error = @error,
+        token_usage = @tokenUsage,
+        goal_graph = @goalGraph,
+        trace = @trace,
+        tool_calls = @toolCalls,
+        duration_ms = @durationMs,
+        completed_at = datetime('now')
+      WHERE run_id = @runId
+    `,
+  ).run({
+    runId,
+    status: result.success ? "completed" : "failed",
+    runnerStatus: result.status ?? null,
+    // Credential-redacted: output, error, trace. Raw by design:
+    // output.pendingConfirmation (router executes its args on "sí"; the
+    // hash-bound copy is tool_approvals.args_json), goal_graph (resume
+    // input; the mailbox-password store rule only), token_usage (numbers).
+    output: result.output
+      ? stringifyRedacted(result.output, ["pendingConfirmation"])
+      : null,
+    error: redactCredentialsForPersist(result.error),
+    tokenUsage: result.tokenUsage ? JSON.stringify(result.tokenUsage) : null,
+    goalGraph: result.goalGraph
+      ? JSON.stringify(result.goalGraph, storeReplacer)
+      : null,
+    trace: result.trace ? stringifyRedacted(result.trace) : null,
+    // queue #231: persist bare tool names for the swarm-retry classifier.
+    // Defensive JSON-encode of an empty array if toolCalls is missing —
+    // null distinguishes "no run completed" from "ran but called no tools".
+    toolCalls: result.toolCalls ? JSON.stringify(result.toolCalls) : "[]",
+    durationMs,
+  });
+}
+
+/** Maps the runner's result to the task status. */
+function taskStatusOf(result: RunnerOutput): string {
+  let taskStatus: string;
+  if (result.success) {
+    taskStatus =
+      result.status === "DONE_WITH_CONCERNS"
+        ? "completed_with_concerns"
+        : "completed";
+  } else {
+    if (result.status === "NEEDS_CONTEXT") taskStatus = "needs_context";
+    else if (result.status === "BLOCKED") taskStatus = "blocked";
+    else taskStatus = "failed";
+  }
+  return taskStatus;
+}
+
+/** Records a finished run's cost, terminal trace, concern and completion facts, then emits its bus event. */
+function recordRunOutcome({
+  result,
+  runId,
+  taskId,
+  agentType,
+  effectiveAgentType,
+  taskStatus,
+  durationMs,
+}: {
+  result: RunnerOutput;
+  runId: string;
+  taskId: string;
+  agentType: AgentType;
+  effectiveAgentType: AgentType;
+  taskStatus: string;
+  durationMs: number;
+}): void {
+  recordRunCost(result, runId, taskId, agentType, effectiveAgentType);
+
+  // V8.5 Phase 6: terminal trace event. For a failed task the last
+  // tool.called row before this one names the terminal round/tool; here we
+  // carry the aggregate (tokens, cost, wall-clock) and the mapped status.
+  emitTraceEvent({
+    taskId,
+    runId,
+    name: result.success ? "task.completed" : "task.failed",
+    tokensIn: result.tokenUsage?.promptTokens,
+    tokensOut: result.tokenUsage?.completionTokens,
+    costUsd: result.tokenUsage?.actualCostUsd,
+    latencyMs: durationMs,
+    ...(result.toolCalls?.length && {
+      tool: result.toolCalls[result.toolCalls.length - 1],
+    }),
+    attrs: {
+      status: taskStatus,
+      termination_reason:
+        result.terminationReason ??
+        terminationFromTaskStatus(taskStatus, result.success),
+      agent_type: effectiveAgentType,
+      tool_calls: result.toolCalls?.length ?? 0,
+      // V8.1 gate (ruling 2026-10-06): the reason CODE only, from the same
+      // classifier trackTaskOutcome uses — scheduled tasks get no outcome
+      // row, so this is their only persisted reason. Never free text.
+      concern_reason: classifyConcernReason(
+        taskStatus,
+        result.output == null
+          ? null
+          : typeof result.output === "string"
+            ? result.output
+            : JSON.stringify(result.output),
+        result.error ?? null,
+      ),
+      // Redact BEFORE the cut: a fixed-length key rule misses a split key.
+      ...(result.error && {
+        error: redactCredentialsForPersist(result.error)!.slice(0, 300),
+      }),
+    },
+  });
+
+  // The first runner concern for task_outcomes.concern_detail — storage
+  // only; trackTaskOutcome takes it (see noteConcernDetail). Noted BEFORE
+  // the emit: the tracker runs inside the task.completed handler.
+  try {
+    noteConcernDetail(
+      taskId,
+      result.success ? (result.concerns?.[0] ?? null) : null,
+    );
+  } catch {
+    // Storage only — must never change the task's outcome
+  }
+
+  // The same concern, at rest for every kind of task that ends on this path
+  // (the note above is only taken for tasks the tracker records), added to
+  // the row written when the task was marked running (its build stays as
+  // written then). Written BEFORE the emit so a handler in the same tick
+  // sees it; a failed write is counted and never changes the outcome or
+  // skips the event.
+  try {
+    recordCompletionFacts(taskId, {
+      build: runningBuild(),
+      concernDetail: result.success ? (result.concerns?.[0] ?? null) : null,
+    });
+  } catch (err) {
+    noteWriteFailure("completion_facts", err);
+  }
+
+  // Emit completion event
+  try {
+    if (result.success) {
+      getEventBus().emitEvent("task.completed", {
+        task_id: taskId,
+        agent_id: effectiveAgentType,
+        result: result.output,
+        duration_ms: durationMs,
+      });
+    } else {
+      getEventBus().emitEvent("task.failed", {
+        task_id: taskId,
+        agent_id: agentType,
+        error: result.error ?? "Unknown error",
+        recoverable: false,
+        attempts: 1,
+        // Failed runners often still produced text — NEEDS_CONTEXT/BLOCKED
+        // carry the clarifying question / blocker description, and heavy
+        // graded-down failures carry the partial report — so the router
+        // can deliver it instead of the generic failure message.
+        result: result.output,
+      });
+    }
+  } catch {
+    // Event emission should not block
+  }
+}
+
+/** Closes a run that threw, as cancelled or failed. */
+function closeThrownRun(
+  err: unknown,
+  isCancelled: () => boolean,
+  db: ReturnType<typeof getDatabase>,
+  runId: string,
+  taskId: string,
+  announceCancelUnlessRecorded: () => void,
+): void {
+  const errorMsg = errMsg(err);
+  const cancelled = isCancelled();
+  db.prepare(
+    `
+      UPDATE runs SET status = @status, error = @error, completed_at = datetime('now')
+      WHERE run_id = @runId
+    `,
+  ).run({
+    runId,
+    // A run whose task was cancelled closes as cancelled, thrown or not.
+    status: cancelled ? "cancelled" : "failed",
+    error: redactCredentialsForPersist(errorMsg),
+  });
+
+  updateTaskStatus(
+    taskId,
+    cancelled ? "cancelled" : "failed",
+    undefined,
+    errorMsg,
+  );
+  emitTraceEvent(
+    cancelled
+      ? {
+          taskId,
+          runId,
+          name: "task.cancelled",
+          attrs: {
+            status: "cancelled",
+            termination_reason: "aborted",
+            thrown: true,
+          },
+        }
+      : {
+          taskId,
+          runId,
+          name: "task.failed",
+          attrs: {
+            termination_reason: "error",
+            error: redactCredentialsForPersist(errorMsg)!.slice(0, 300),
+            thrown: true,
+          },
+        },
+  );
+  if (cancelled) announceCancelUnlessRecorded();
 }
 
 // ---------------------------------------------------------------------------
