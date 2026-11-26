@@ -424,7 +424,7 @@ function loadsOwnListUpFront(input: RunnerInput): boolean {
 const fastRunnerBranches = {
   async execute(input: RunnerInput): Promise<RunnerOutput> {
     const start = Date.now();
-    // Get tool definitions for requested tools (or all if none specified).
+    // Get tool definitions for the run's tools.
     // Tool deferral pattern (OpenClaude): deferred tools are NOT included
     // as full schema definitions — only their names + descriptions are sent
     // as a text catalog. This saves significant context tokens when many
@@ -436,7 +436,13 @@ const fastRunnerBranches = {
     // (extra inference round + timeout risk) outweighs token savings (~200
     // tokens per deferred tool). Deferral is designed for scope-triggered
     // sessions with 20-40+ tools.
-    const allDefinitions = toolRegistry.getDefinitions(input.tools);
+    //
+    // A declared EMPTY list is no tools (the run's declared set); no list is
+    // every registered tool.
+    const declaresNone = input.tools?.length === 0;
+    const allDefinitions = declaresNone
+      ? []
+      : toolRegistry.getDefinitions(input.tools);
     const totalTools = allDefinitions.length;
     const skipDeferral = totalTools <= 6;
     const definitions = skipDeferral
@@ -462,7 +468,7 @@ const fastRunnerBranches = {
         `[fast-runner] Deferral skipped: ${totalTools} tools (≤6 threshold)`,
       );
     }
-    if (totalTools === 0) {
+    if (totalTools === 0 && !declaresNone) {
       return {
         success: false,
         error: "No tools available. Register tools before running fast tasks.",

@@ -1185,10 +1185,10 @@ export async function inferWithToolsViaOpenAi(
   // paralysis guard can distinguish "gathering data before acting" from
   // "endlessly exploring without acting".
   const calledToolNames = new Set<string>();
-  // Audit S2: a declared list bounds what reaches the model — a schedule
-  // saved with `tools: []` gets the full registry from `getDefinitions([])`
-  // upstream; here it gets none. Copied only when something is dropped, so
-  // an undeclared run keeps today's array identity.
+  // Audit S2: a declared list bounds what reaches the model — a caller may
+  // hand in definitions outside it (`getDefinitions([])` returns the whole
+  // registry); a run that declared `[]` gets none here. Copied only when
+  // something is dropped, so an undeclared run keeps today's array identity.
   const declaredTools = declaredToolSetForRun();
   if (declaredTools && tools.some((t) => !declaredTools.has(t.function.name))) {
     const handedIn = tools.length;

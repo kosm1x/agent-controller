@@ -385,8 +385,8 @@ for (const r of rows) {
   const origTools = (out.toolCalls ?? []).filter((n) => !NEUTRAL_TOOLS.has(n));
   if (origTools.some((n) => !READ_ONLY_ALLOW.includes(n))) { skip("used-non-read-only-tool"); continue; }
   const tools = (meta.tools ?? []).filter((n) => READ_ONLY_ALLOW.includes(n));
-  // Empty ∩ would hand the runner no scope (getDefinitions([]) = whole registry
-  // on the non-SDK path) — never replay without an explicit read-only scope.
+  // Empty ∩ would hand the runner a declared `[]`, which gets none of the
+  // registry's tools — not a read-only part of the original scope; skipped.
   if (tools.length === 0) { skip("no-read-only-scope"); continue; }
 
   let history: ConversationTurn[] | undefined;
