@@ -86,6 +86,11 @@ import {
   BudgetExhaustedError,
 } from "../budget/service.js";
 import { getConfig } from "../config.js";
+import { excludeNetworkFromReports, sdkHelperPath } from "./sdk-helper-path.js";
+
+// A diagnostic report (on linux the SDK takes one when it looks up its helper) does
+// synchronous reverse name lookups for open sockets on the main thread.
+excludeNetworkFromReports();
 
 // ---------------------------------------------------------------------------
 // JSON Schema → Zod raw shape (for SDK tool() definitions)
@@ -1278,6 +1283,10 @@ export async function queryClaudeSdk(opts: {
   const gatesStopHook = rawGatesStopHook
     ? scrubHookOutput(rawGatesStopHook)
     : null;
+  // Without this option the SDK looks up its helper on each query, taking a
+  // synchronous diagnostic report on linux that blocks the event loop.
+  // Undefined (not linux, or none or both candidates found): the key is left out.
+  const helperPath = sdkHelperPath();
 
   const options: SdkOptions = {
     model: effectiveModel,
@@ -1365,6 +1374,9 @@ export async function queryClaudeSdk(opts: {
     }),
     persistSession: false, // Ephemeral — Jarvis manages its own sessions
     cwd: process.cwd(),
+    ...(helperPath !== undefined && {
+      pathToClaudeCodeExecutable: helperPath,
+    }),
     thinking: benchmarkOverride?.thinking ?? defaultThinkingFor(effectiveModel),
     env: {
       ...process.env,
