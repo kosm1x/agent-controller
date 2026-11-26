@@ -105,7 +105,9 @@ export const nanoclawRunner: Runner = {
         };
       }
 
-      // Build container input — include tools so the worker knows what to register
+      // Build container input — `tools` carries the run's declared tool list,
+      // if it declared one, into the worker (the worker registers its own
+      // fixed set)
       // v8 S1: strip cache-break marker (nanoclaw uses description as a single
       // prompt blob; only fast-runner chat splits for cache-friendly emission).
       // 2026-07-12 (task 7416): chat tasks carry the CURRENT user message as

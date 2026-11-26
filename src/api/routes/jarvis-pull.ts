@@ -406,8 +406,8 @@ jarvisPull.post(
     const abortController = new AbortController();
     try {
       const tools = resolvePullTools();
-      // An empty `tools` list means "every registered tool" to the runner —
-      // never submit one; answer on the tool-less path instead.
+      // With no resolved tools, do not submit a run (an empty `tools` list
+      // declares no tools); answer on the tool-less path instead.
       if (tools.length > 0) {
         const { stable, variable } = buildExternalJarvisSystemPrompt(tools);
         const description =

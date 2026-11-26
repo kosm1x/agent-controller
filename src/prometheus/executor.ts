@@ -468,7 +468,10 @@ export async function executeGoal(
         { role: "user", content: `Execute this goal: ${goal.description}` },
       ];
 
-      const definitions = toolRegistry.getDefinitions(toolNames);
+      // A declared EMPTY list is no tools (the run's declared set); no list is
+      // every registered tool.
+      const definitions =
+        toolNames?.length === 0 ? [] : toolRegistry.getDefinitions(toolNames);
 
       const TOKEN_BUDGET_HEAVY = 80_000;
       const compressionContext = [

@@ -248,7 +248,7 @@ describe("POST /api/jarvis-pull — task path", () => {
     warn.mockRestore();
   });
 
-  it("never submits an empty toolset (the runner reads [] as every tool)", async () => {
+  it("never submits an empty toolset (an empty list declares no tools)", async () => {
     mocks.readOnly.clear();
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const res = await post({ query: QUERY });

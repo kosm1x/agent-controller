@@ -74,6 +74,7 @@ vi.mock("../tools/registry.js", () => ({
 
 import { executeGoal, executeGraph, selfAssess, classifyError } from "./executor.js";
 import { redactSecretText } from "../lib/redact-secrets.js";
+import { toolRegistry } from "../tools/registry.js";
 import { ErrorStrategy } from "./types.js";
 
 describe("classifyError (logic audit F8)", () => {
@@ -1276,5 +1277,86 @@ describe("executeGoal — a KB block that cannot be built", () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+});
+
+describe("executeGoal — the run's declared tool list", () => {
+  const okResult = {
+    content: "ok",
+    messages: [{ role: "assistant" as const, content: "ok" }],
+    toolRepairs: [],
+    exitReason: "natural",
+    roundsCompleted: 1,
+    contextPressure: 0,
+    totalUsage: { prompt_tokens: 5, completion_tokens: 5 },
+  };
+  const verdictJson = (met: boolean) =>
+    JSON.stringify({
+      met,
+      unmetCriteria: met ? [] : ["criterion 1"],
+      reasoning: "r",
+    });
+  const TEST_TOOL = {
+    type: "function",
+    function: { name: "test_tool", description: "test", parameters: {} },
+  };
+  const getDefinitions = vi.mocked(toolRegistry.getDefinitions);
+
+  it("tool-loop path: a run that declares an empty list sends no tool definitions, on the self-assessment retry too", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: verdictJson(false),
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      provider: "mock",
+      latency_ms: 0,
+    });
+    mockInferWithTools
+      .mockResolvedValueOnce(okResult)
+      .mockResolvedValueOnce(okResult);
+    const r = await executeGoal(makeGoal(), "", []);
+    expect(r.ok).toBe(true);
+    expect(mockInferWithTools).toHaveBeenCalledTimes(2);
+    expect(mockInferWithTools.mock.calls[0][1]).toEqual([]);
+    expect(mockInferWithTools.mock.calls[1][1]).toEqual([]);
+    expect(getDefinitions).not.toHaveBeenCalled();
+  });
+
+  it("claude-sdk path: a run that declares an empty list is handed no tool definitions, on the self-assessment retry too", async () => {
+    provider.value = "claude-sdk";
+    try {
+      sdk.asInferWithTools.mockReset();
+      sdk.asInfer.mockReset();
+      sdk.asInferWithTools.mockResolvedValue(okResult);
+      sdk.asInfer
+        .mockResolvedValueOnce({
+          content: verdictJson(false),
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        })
+        .mockResolvedValueOnce({
+          content: verdictJson(true),
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        });
+      const r = await executeGoal(makeGoal(), "", []);
+      expect(r.ok).toBe(true);
+      expect(sdk.asInferWithTools).toHaveBeenCalledTimes(2);
+      expect(sdk.asInferWithTools.mock.calls[0][1]).toEqual([]);
+      expect(sdk.asInferWithTools.mock.calls[1][1]).toEqual([]);
+      expect(getDefinitions).not.toHaveBeenCalled();
+    } finally {
+      provider.value = "openai";
+    }
+  });
+
+  it("a run with no declared list keeps every registered tool", async () => {
+    mockInferWithTools.mockResolvedValueOnce(okResult);
+    await executeGoal(makeGoal(), "");
+    expect(mockInferWithTools.mock.calls[0][1]).toEqual([TEST_TOOL]);
+    expect(getDefinitions).toHaveBeenCalledWith(undefined);
+  });
+
+  it("a declared non-empty list is resolved by the registry and reaches the model", async () => {
+    mockInferWithTools.mockResolvedValueOnce(okResult);
+    await executeGoal(makeGoal(), "", ["test_tool"]);
+    expect(mockInferWithTools.mock.calls[0][1]).toEqual([TEST_TOOL]);
+    expect(getDefinitions).toHaveBeenCalledWith(["test_tool"]);
   });
 });

@@ -309,9 +309,9 @@ const { toolRegistry } = await import("../src/tools/registry.js");
   sm.addSource(new BuiltinToolSource());
   await sm.initAll(toolRegistry);
 }
-// Refuse, never narrow: `getDefinitions([])` hands the model the WHOLE registry
-// (shell_exec included), so a missing/renamed/no-longer-read-only tool must stop
-// the run rather than silently shrink — or empty — the allow-list.
+// Refuse, never narrow: a missing/renamed/no-longer-read-only tool must stop
+// the run rather than silently change the tool set (the registry skips a name
+// it does not hold).
 const missing = READ_ONLY_ALLOW.filter((n) => toolRegistry.get(n)?.readOnlyHint !== true);
 if (missing.length > 0) {
   console.error(`[bench] allow-list tools missing or not readOnlyHint: ${missing.join(", ")} — refusing to run`);
