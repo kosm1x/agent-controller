@@ -15,7 +15,7 @@
 # Origin: 2026-05-06 session that took DENUE query success from 1/12 baseline
 # to 12/12 across 6 iterations. The 12 patterns mirror
 # `/root/claude/jarvis-kb/directives/denue-patterns.md`. Re-run any time the
-# inline routing guard in `src/runners/fast-runner.ts` changes, or when
+# inline routing guard in `src/runners/fast-runner-messages.ts` changes, or when
 # DENUE Analyzer schema/endpoints shift.
 #
 # Companion docs:
@@ -200,6 +200,6 @@ if [ "$pass" -ge $((total * 80 / 100)) ]; then
   echo "✅ Above 80% threshold."
   exit 0
 else
-  echo "❌ Below 80% threshold — investigate failures + iterate the inline guard in src/runners/fast-runner.ts."
+  echo "❌ Below 80% threshold — investigate failures + iterate the inline guard in src/runners/fast-runner-messages.ts."
   exit 1
 fi

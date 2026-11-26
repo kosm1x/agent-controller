@@ -46,6 +46,7 @@ const IMMUTABLE_FILES: string[] = [
   "src/dispatch/dispatcher.ts",
   "src/dispatch/classifier.ts",
   "src/runners/fast-runner.ts",
+  "src/runners/fast-runner-messages.ts", // the fast runner's message assembly and its system texts
   "src/runners/hallucination-guard.ts", // claimed-action guard: write-tool names and the detector
   "src/runners/denue-guard.ts", // when the DENUE guard fires and which variant it gets
   "src/messaging/router.ts",

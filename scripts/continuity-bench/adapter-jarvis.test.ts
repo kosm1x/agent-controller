@@ -142,9 +142,9 @@ describe("assertScratchDbPath", () => {
 });
 
 describe("fidelity pins", () => {
-  const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../src/runners/fast-runner.ts"), "utf8");
+  const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../src/runners/fast-runner-messages.ts"), "utf8");
 
-  it("the JME header and line template are the production strings (fast-runner.ts)", () => {
+  it("the JME header and line template are the production strings (fast-runner-messages.ts)", () => {
     expect(src).toContain("content: `" + JME_HEADER.replaceAll("\n", "\\n") + "${block}`");
     expect(src).toContain(".map((f, i) => `${i + 1}. [${f.category}] ${f.factText}`)");
     expect(src).toContain(`const JME_INJECTION_BUDGET_TOKENS = ${JME_INJECTION_BUDGET_TOKENS};`);

@@ -140,7 +140,7 @@ const NOTES = [
   "Thread: `hydrate` probes read a thread key this process never used (`telegram:p<n>`, same base channel, so the router hydrates the newest 15 rows); C3 `live` pushes the timeline through the router's push seam into an already-held thread; C4 restarts for real (db reopened, router module re-imported, caches and backend reset).",
   "Profile, relevant facts and enrichment pass through the production prompt budget (buildJarvisSystemPrompt with CORE_TOOLS, owner channel); a dropped block is listed under `dropped` and is not in the payload. Production passes CORE_TOOLS plus the scoped groups' tools, whose sections take more room, so the dropped count is a lower bound.",
   "Proactive ms is the sequential sum of the components; production runs enrichment and the scope classifier in parallel.",
-  "JME block text replicates the fast-runner template (the JME memory block of fastRunnerBranches.execute, pinned by a test); the facts come from the real queryMemory/orderForInjection.",
+  "JME block text replicates the fast-runner template (the JME memory block of buildFastRunnerMessages, pinned by a test); the facts come from the real queryMemory/orderForInjection.",
 ];
 
 /** Appended to the notes of an `extracted` run. */

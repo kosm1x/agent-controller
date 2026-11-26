@@ -724,7 +724,7 @@ describe("fastRunner.execute() — integration (R-4)", () => {
           runId: `run-stable-${i}`,
           title: "Test task",
           description: "Identity preamble###CACHE_BREAK###variable suffix",
-          // length=2 → triggers `needsPrecedent` in `fastRunnerBranches.execute`
+          // length=2 → triggers `needsPrecedent` in `buildFastRunnerMessages`
           // and exercises the precedent leg of the Promise.all
           conversationHistory: [
             { role: "user", content: "first turn" },

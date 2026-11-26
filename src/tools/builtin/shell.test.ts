@@ -523,7 +523,7 @@ describe("validateShellCommand", () => {
     });
 
     it("does NOT block project .env reads (DENUE analyzer API-key retrieval)", () => {
-      // fast-runner.ts instructs the agent to read the analyzer's own API key this
+      // fast-runner-messages.ts instructs the agent to read the analyzer's own API key this
       // way — a blanket .env block would break every authenticated DENUE query.
       expect(
         validateShellCommand(
