@@ -483,6 +483,7 @@ Output: file path under /tmp/ or /workspace/. Default /tmp/chart-<uuid>.{svg|png
       interval,
       ...(stale ? { stale: true } : {}),
       bars_rendered: bars.length,
+      newest_bar: bars[bars.length - 1].timestamp.slice(0, 10),
       indicators,
       signals_rendered: filteredSignals.length,
     });

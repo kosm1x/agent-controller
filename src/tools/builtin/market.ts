@@ -8,7 +8,7 @@
 
 import type { Tool } from "../types.js";
 import { getDataLayer } from "../../finance/data-layer.js";
-import type { AssetClass, MacroPoint, MarketBar } from "../../finance/types.js";
+import type { AssetClass, MarketBar } from "../../finance/types.js";
 import { budgetSummary } from "../../finance/budget.js";
 import {
   currentWindow,
@@ -937,13 +937,23 @@ Output: pre-formatted match list with cache-hit summary.`,
     const skipped: { symbol: string; reason: string }[] = [];
     // Scanned symbols answered with stored rows (flagged stale), in walk order.
     const stale: string[] = [];
+    // Each scanned symbol with its newest bar's date, or "none", in walk order.
+    const newest: string[] = [];
 
     for (const entry of filtered) {
+      let newestBar = "none";
       try {
         const result =
           interval === "daily"
             ? await layer.getDaily(entry.symbol, { lookback })
             : await layer.getIntraday(entry.symbol, "60min", { lookback });
+        const last = result.bars[result.bars.length - 1];
+        if (last) {
+          newestBar = last.timestamp.slice(
+            0,
+            interval === "daily" ? 10 : 16,
+          );
+        }
         if (result.stale) stale.push(entry.symbol);
         if (result.bars.length < 20) {
           skipped.push({ symbol: entry.symbol, reason: "insufficient bars" });
@@ -966,6 +976,8 @@ Output: pre-formatted match list with cache-hit summary.`,
           symbol: entry.symbol,
           reason: err instanceof Error ? err.message : String(err),
         });
+      } finally {
+        newest.push(`${entry.symbol} ${newestBar}`);
       }
     }
 
@@ -977,6 +989,7 @@ Output: pre-formatted match list with cache-hit summary.`,
       matches,
       skipped,
       stale,
+      newest,
     );
   },
 };
@@ -1031,6 +1044,7 @@ function formatScanResult(
   matches: { symbol: string; value: number; stale: boolean }[],
   skipped: { symbol: string; reason: string }[],
   stale: string[],
+  newest: string[],
 ): string {
   const lines: string[] = [
     `market_scan: indicator=${indicator} operator=${operator} threshold=${threshold} (scanned ${scanned})`,
@@ -1066,6 +1080,7 @@ function formatScanResult(
     if (skipped.length > 5)
       lines.push(`    ... and ${skipped.length - 5} more`);
   }
+  lines.push(`  Newest bars: ${newest.join(", ")}`);
   if (stale.length > 0) {
     lines.push(`STALE (providers unreachable): ${stale.join(", ")}`);
   }
@@ -1112,6 +1127,9 @@ DataLayer macro cache (6-hour TTL).`,
 
   async execute(): Promise<string> {
     const layer = getDataLayer();
+    const points = await Promise.all(
+      MACRO_SERIES.map((series) => safeMacro(layer, series)),
+    );
     const [
       fedFunds,
       cpi,
@@ -1121,16 +1139,7 @@ DataLayer macro cache (6-hour TTL).`,
       vixcls,
       icsa,
       m2,
-    ] = await Promise.all([
-      safeMacro(layer, "FEDFUNDS"),
-      safeMacro(layer, "CPI"),
-      safeMacro(layer, "UNEMPLOYMENT"),
-      safeMacro(layer, "TREASURY_2Y"),
-      safeMacro(layer, "TREASURY_10Y"),
-      safeMacro(layer, "VIXCLS"),
-      safeMacro(layer, "ICSA"),
-      safeMacro(layer, "M2SL"),
-    ]);
+    ] = points;
     const bundle: MacroSeriesBundle = {
       fedFunds,
       cpi,
@@ -1142,10 +1151,11 @@ DataLayer macro cache (6-hour TTL).`,
       m2,
     };
     // Audit W4: count unavailable series so the user sees when the regime
-    // classification is running on starved inputs.
-    const emptyCount = Object.values(bundle).filter(
-      (s: MacroPoint[]) => s.length === 0,
-    ).length;
+    // classification is running on starved inputs. A series is unavailable
+    // when its fetch threw or answered with no points; the reply names it by
+    // its request name, never by the error text.
+    const unavailable = MACRO_SERIES.filter((_, i) => points[i].length === 0);
+    const emptyCount = unavailable.length;
     const regime = classifyRegime(bundle);
     let header = formatRegime(regime);
     if (emptyCount >= 6) {
@@ -1157,9 +1167,24 @@ DataLayer macro cache (6-hour TTL).`,
         `NOTE: ${emptyCount} of 8 macro series unavailable — treat regime with caution.\n` +
         header;
     }
+    if (unavailable.length > 0) {
+      header += `\n  Unavailable series: ${unavailable.join(", ")}`;
+    }
     return header;
   },
 };
+
+/** The eight macro series the regime tool requests, in request order. */
+const MACRO_SERIES = [
+  "FEDFUNDS",
+  "CPI",
+  "UNEMPLOYMENT",
+  "TREASURY_2Y",
+  "TREASURY_10Y",
+  "VIXCLS",
+  "ICSA",
+  "M2SL",
+] as const;
 
 async function safeMacro(
   layer: ReturnType<typeof getDataLayer>,

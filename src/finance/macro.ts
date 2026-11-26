@@ -177,7 +177,7 @@ interface RuleMatch {
 
 /**
  * Main entrypoint. Consumers pass in the whole bundle; missing series
- * are tolerated (classifier will note in reasons which were unavailable).
+ * are tolerated (reasons do not name them; the macro_regime reply does).
  */
 export function classifyRegime(series: MacroSeriesBundle): MacroRegime {
   const t10 = latestMacroValue(series.treasury10y);

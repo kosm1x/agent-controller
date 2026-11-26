@@ -60,8 +60,9 @@ export function budgetSummary(): {
 }
 
 /**
- * Seed the in-memory rate limiter at boot from the provider's logged calls in
- * the window below, whatever their status (failed calls count too).
+ * Seed the in-memory rate limiter at boot from the provider's logged rows in
+ * the window below, whatever their status (failed calls count too, and so
+ * does each bar that failed validation).
  * Prevents post-restart burst that would exceed the provider ceiling.
  * Providers with a daily quota (alpha_vantage free tier: 25/day) seed from
  * the last 24h so a restart can't reset the daily budget.

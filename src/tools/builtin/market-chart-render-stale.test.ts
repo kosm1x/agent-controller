@@ -90,6 +90,7 @@ describe("market_chart_render — answers of stored rows (flagged stale)", () =>
       "interval",
       "stale",
       "bars_rendered",
+      "newest_bar",
       "indicators",
       "signals_rendered",
     ]);
@@ -114,6 +115,7 @@ describe("market_chart_render — answers of stored rows (flagged stale)", () =>
       "symbol",
       "interval",
       "bars_rendered",
+      "newest_bar",
       "indicators",
       "signals_rendered",
     ]);
@@ -133,6 +135,25 @@ describe("market_chart_render — answers of stored rows (flagged stale)", () =>
     expect(written[0]).toContain(
       ">SYN · weekly · 30 bars · STALE (providers unreachable)</text>",
     );
+  });
+});
+
+describe("market_chart_render — newest_bar", () => {
+  it("newest_bar is the last bar's date, for a daily and for a weekly chart", async () => {
+    for (const interval of ["daily", "weekly"] as const) {
+      primeRender({ bars: bars(30), provider: "polygon" });
+      if (interval === "weekly") {
+        h.fx.getWeekly = h.fx.getDaily;
+        delete h.fx.getDaily;
+      }
+      const out = JSON.parse(
+        await marketChartRenderTool.execute({ symbol: "SYN", interval }),
+      ) as Record<string, unknown>;
+      expect({ interval, newest_bar: out.newest_bar }).toEqual({
+        interval,
+        newest_bar: "2026-03-30",
+      });
+    }
   });
 });
 

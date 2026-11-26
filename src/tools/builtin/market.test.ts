@@ -6,7 +6,7 @@
  * Audit W5: integration checklist row 7 — closes the F4 test-coverage gap.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const mockLayer = {
   getQuote: vi.fn(),
@@ -608,6 +608,7 @@ describe("marketScanTool — answers of stored rows (flagged stale)", () => {
         "    AAA: 150.00",
         "    BBB: 140.00 [STALE]",
         "    CCC: 130.00",
+        "  Newest bars: AAA 2026-05-40, BBB 2026-05-40, CCC 2026-05-40",
         "STALE (providers unreachable): BBB",
       ].join("\n"),
     );
@@ -620,6 +621,7 @@ describe("marketScanTool — answers of stored rows (flagged stale)", () => {
         "market_scan: indicator=sma operator=gt threshold=100 (scanned 2)",
         "  Matches (1):",
         "    AAA: 150.00",
+        "  Newest bars: AAA 2026-05-40, BBB 2026-05-40",
         "STALE (providers unreachable): BBB",
       ].join("\n"),
     );
@@ -635,6 +637,7 @@ describe("marketScanTool — answers of stored rows (flagged stale)", () => {
         "  Skipped (2):",
         "    NEW: insufficient bars",
         "    ERR: provider down",
+        "  Newest bars: AAA 2026-05-40, NEW 2026-05-10, ERR none",
       ].join("\n"),
     );
   });
@@ -648,6 +651,7 @@ describe("marketScanTool — answers of stored rows (flagged stale)", () => {
         "    (none)",
         "  Skipped (1):",
         "    ERR: provider down",
+        "  Newest bars: ERR none, BBB 2026-05-40",
         "STALE (providers unreachable): BBB",
       ].join("\n"),
     );
@@ -662,6 +666,7 @@ describe("marketScanTool — answers of stored rows (flagged stale)", () => {
         "    AAA: 150.00",
         "  Skipped (1):",
         "    THIN: insufficient bars",
+        "  Newest bars: AAA 2026-05-40, THIN 2026-05-10",
         "STALE (providers unreachable): THIN",
       ].join("\n"),
     );
@@ -680,6 +685,7 @@ describe("marketScanTool — answers of stored rows (flagged stale)", () => {
         "    BBB: 150.00",
         "    CCC: 140.00 [STALE]",
         "    AAA: 120.00 [STALE]",
+        "  Newest bars: AAA 2026-05-40, BBB 2026-05-40, CCC 2026-05-40",
         "STALE (providers unreachable): AAA, CCC",
       ].join("\n"),
     );
@@ -700,7 +706,97 @@ describe("marketScanTool — answers of stored rows (flagged stale)", () => {
         "    (none)",
         "  Skipped (1):",
         "    THIN: indicator null",
+        "  Newest bars: THIN 2026-05-25",
         "STALE (providers unreachable): THIN",
+      ].join("\n"),
+    );
+  });
+
+  it("the Newest bars line lists every scanned symbol in walk order with its last bar's date, none for a throw, and is last with no stale answer", async () => {
+    prime({
+      MAT: { close: 150, n: 30 },
+      UNM: { close: 50, n: 35 },
+      THIN: { close: 150, n: 10 },
+      ERR: "throw",
+    });
+    expect(await scan()).toBe(
+      [
+        "market_scan: indicator=sma operator=gt threshold=100 (scanned 4)",
+        "  Matches (1):",
+        "    MAT: 150.00",
+        "  Skipped (2):",
+        "    THIN: insufficient bars",
+        "    ERR: provider down",
+        "  Newest bars: MAT 2026-05-30, UNM 2026-05-35, THIN 2026-05-10, ERR none",
+      ].join("\n"),
+    );
+  });
+
+  it("with a stale answer the Newest bars line sits directly before the STALE line, which stays last", async () => {
+    prime({ AAA: { close: 150 }, BBB: { close: 140, stale: true, n: 30 } });
+    expect(await scan()).toBe(
+      [
+        "market_scan: indicator=sma operator=gt threshold=100 (scanned 2)",
+        "  Matches (2):",
+        "    AAA: 150.00",
+        "    BBB: 140.00 [STALE]",
+        "  Newest bars: AAA 2026-05-40, BBB 2026-05-30",
+        "STALE (providers unreachable): BBB",
+      ].join("\n"),
+    );
+  });
+
+  it("a 60-minute scan gives each newest bar's date with hour and minute", async () => {
+    mockLayer.listWatchlist.mockReturnValue([entry("HRS")]);
+    mockLayer.getIntraday.mockResolvedValue({
+      bars: flatBars("HRS", 40, 150).map((b) => ({
+        ...b,
+        timestamp: b.timestamp.replace("T00:00:00", "T15:30:00"),
+        interval: "60min" as const,
+      })),
+      provider: "polygon",
+    });
+    const out = (await marketScanTool.execute({
+      indicator: "sma",
+      operator: "gt",
+      threshold: 100,
+      interval: "60min",
+    })) as string;
+    expect(out.split("\n").at(-1)).toBe("  Newest bars: HRS 2026-05-40T15:30");
+  });
+
+  it("a symbol whose fetch succeeded and whose indicator step then threw keeps its date on the Newest bars line and its error reason under Skipped", async () => {
+    const bad = flatBars("BAD", 40, 150);
+    Object.defineProperty(bad[0], "close", {
+      get() {
+        throw new Error("synthetic indicator failure");
+      },
+    });
+    mockLayer.listWatchlist.mockReturnValue([entry("BAD")]);
+    mockLayer.getDaily.mockResolvedValue({ bars: bad, provider: "polygon" });
+    expect(await scan()).toBe(
+      [
+        "market_scan: indicator=sma operator=gt threshold=100 (scanned 1)",
+        "  Matches (0):",
+        "    (none)",
+        "  Skipped (1):",
+        "    BAD: synthetic indicator failure",
+        "  Newest bars: BAD 2026-05-40",
+      ].join("\n"),
+    );
+  });
+
+  it("an answer with no bars shows none on the Newest bars line", async () => {
+    mockLayer.listWatchlist.mockReturnValue([entry("EMPTY")]);
+    mockLayer.getDaily.mockResolvedValue({ bars: [], provider: "polygon" });
+    expect(await scan()).toBe(
+      [
+        "market_scan: indicator=sma operator=gt threshold=100 (scanned 1)",
+        "  Matches (0):",
+        "    (none)",
+        "  Skipped (1):",
+        "    EMPTY: insufficient bars",
+        "  Newest bars: EMPTY none",
       ].join("\n"),
     );
   });
@@ -761,6 +857,137 @@ describe("macroRegimeTool", () => {
     mockLayer.getMacro.mockRejectedValue(new Error("FRED down"));
     const out = (await macroRegimeTool.execute({})) as string;
     expect(out).toMatch(/Regime: mixed/);
+  });
+
+  describe("the Unavailable series line", () => {
+    /** The expansion scenario above; a series named in `fail` throws or answers with no points. */
+    function primeMacro(fail: Record<string, "throw" | "empty"> = {}) {
+      mockLayer.getMacro.mockImplementation(async (series: string) => {
+        if (fail[series] === "throw") throw new Error("provider down");
+        if (fail[series] === "empty") return [];
+        switch (series) {
+          case "TREASURY_10Y":
+            return flatMacro("T10", 4.5);
+          case "TREASURY_2Y":
+            return flatMacro("T2", 3.0);
+          case "UNEMPLOYMENT":
+            return Array.from({ length: 10 }, (_, i) => ({
+              series: "UE",
+              date: `2025-${String(i + 1).padStart(2, "0")}-01`,
+              value: 5.0 - i * 0.1,
+              provider: "fred" as const,
+            }));
+          case "VIXCLS":
+            return flatMacro("VIX", 15);
+          case "FEDFUNDS":
+            return flatMacro("FF", 4.25);
+          case "CPI":
+            return flatMacro("CPI", 300);
+          case "M2SL":
+            return flatMacro("M2", 20_000);
+          case "ICSA":
+            return flatMacro("ICSA", 210_000);
+          default:
+            return [];
+        }
+      });
+    }
+    const regime = async () => (await macroRegimeTool.execute({})) as string;
+
+    // The newest synthetic point is 2025-10-01: a clock two weeks later keeps
+    // every series inside the classifier's staleness window.
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2025-10-15T12:00:00Z"));
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("with no series empty there is no Unavailable line and the reply is the classifier's lines alone", async () => {
+      primeMacro();
+      expect(await regime()).toBe(
+        [
+          "Regime: expansion (confidence 0.85)",
+          "  Yield curve (10Y-2Y): 1.50",
+          "  Fed funds: 4.25",
+          "  VIX: 15.0",
+          "  Unemployment: 4.1",
+          "  CPI YoY: 0.0%",
+          "  M2 YoY: 0.0%",
+          `  Initial claims: ${(210_000).toLocaleString()}`,
+          "  Reasons: yield curve positive (+1.50); unemployment falling; VIX low (15.0)",
+        ].join("\n"),
+      );
+    });
+
+    it("one series that throws is named on a new last line, with no NOTE line", async () => {
+      primeMacro({ VIXCLS: "throw" });
+      expect(await regime()).toBe(
+        [
+          "Regime: expansion (confidence 0.55)",
+          "  Yield curve (10Y-2Y): 1.50",
+          "  Fed funds: 4.25",
+          "  Unemployment: 4.1",
+          "  CPI YoY: 0.0%",
+          "  M2 YoY: 0.0%",
+          `  Initial claims: ${(210_000).toLocaleString()}`,
+          "  Reasons: yield curve positive (+1.50); unemployment falling",
+          "  Unavailable series: VIXCLS",
+        ].join("\n"),
+      );
+    });
+
+    it("one series that answers with no points, without a throw, is named too", async () => {
+      primeMacro({ ICSA: "empty" });
+      const lines = (await regime()).split("\n");
+      expect(lines[0]).toBe("Regime: expansion (confidence 0.85)");
+      expect(lines.at(-1)).toBe("  Unavailable series: ICSA");
+    });
+
+    it("three empty series keep the NOTE as line 1 and are named in request order", async () => {
+      primeMacro({ M2SL: "throw", TREASURY_2Y: "empty", CPI: "throw" });
+      const lines = (await regime()).split("\n");
+      expect(lines[0]).toBe(
+        "NOTE: 3 of 8 macro series unavailable — treat regime with caution.",
+      );
+      expect(lines.at(-1)).toBe(
+        "  Unavailable series: CPI, TREASURY_2Y, M2SL",
+      );
+    });
+
+    it("six empty series put the WARNING on line 1, the regime lines after it, and name the six in request order last", async () => {
+      primeMacro({
+        CPI: "throw",
+        UNEMPLOYMENT: "empty",
+        TREASURY_2Y: "throw",
+        TREASURY_10Y: "empty",
+        ICSA: "throw",
+        M2SL: "empty",
+      });
+      expect(await regime()).toBe(
+        [
+          "WARNING: 6 of 8 macro series unavailable — regime classification unreliable.",
+          "Regime: mixed (confidence 0.30)",
+          "  Fed funds: 4.25",
+          "  VIX: 15.0",
+          "  Reasons: no rule conditions met cleanly",
+          "  Unavailable series: CPI, UNEMPLOYMENT, TREASURY_2Y, TREASURY_10Y, ICSA, M2SL",
+        ].join("\n"),
+      );
+    });
+
+    it("the caught error's text never reaches the reply", async () => {
+      mockLayer.getMacro.mockRejectedValue(
+        new Error("synthetic-secret https://site.example/q?apikey=SYNTHETIC"),
+      );
+      const out = await regime();
+      expect(out).not.toContain("synthetic-secret");
+      expect(out).not.toContain("site.example");
+      expect(out.split("\n").at(-1)).toBe(
+        "  Unavailable series: FEDFUNDS, CPI, UNEMPLOYMENT, TREASURY_2Y, TREASURY_10Y, VIXCLS, ICSA, M2SL",
+      );
+    });
   });
 });
 
