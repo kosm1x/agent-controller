@@ -40,6 +40,7 @@ export const MC_CHECKOUT_ROOTS: readonly string[] = [MC_PRIMARY_ROOT, MC_WORKTRE
 const IMMUTABLE_FILES: string[] = [
   "src/index.ts",
   "src/optional-crons.ts", // optional scheduled jobs the entry point registers at boot
+  "src/stop-sequence.ts", // ordered stop steps the entry point registers for the stop signals
   "src/config.ts",
   "src/inference/adapter.ts",
   "src/dispatch/dispatcher.ts",

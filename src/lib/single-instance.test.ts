@@ -174,17 +174,47 @@ describe("src/index.ts boot order", () => {
   });
 });
 
-describe("src/index.ts stop sequence", () => {
-  /** The stop closure's body, comments stripped. */
-  function stopSequence(): string {
+describe("src/index.ts stop registration", () => {
+  it("builds the stop function once in main(), after the server, the reaction manager and the tool-source manager are created, with one registration line for each of the two signals after it", () => {
     const src = readFileSync(resolve(__dirname, "../index.ts"), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/(^|[^:])\/\/.*$/gm, "$1");
-    const start = src.indexOf("const shutdown = async () => {");
-    const end = src.indexOf('process.on("SIGTERM", shutdown)');
+    expect(src).toContain('import { buildStopSequence } from "./stop-sequence.js";');
+    expect(src.split("buildStopSequence(").length - 1).toBe(1);
+    const start = src.indexOf("async function main(");
+    const end = src.indexOf("\nmain().catch(");
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
-    return src.slice(start, end);
+    const main = src.slice(start, end);
+    const builds = [...main.matchAll(/const (\w+) = buildStopSequence\(\{/g)];
+    expect(builds).toHaveLength(1);
+    const [built, name] = [builds[0].index!, builds[0][1]];
+    for (const needle of [
+      "const httpServer = serve(",
+      "const reactionManager = new ReactionManager(",
+      "const sourceManager = new ToolSourceManager(",
+    ]) {
+      const at = main.indexOf(needle);
+      expect(at, needle).toBeGreaterThanOrEqual(0);
+      expect(at, needle).toBeLessThan(built);
+    }
+    for (const signal of ["SIGTERM", "SIGINT"]) {
+      const registration = `process.on("${signal}", ${name});`;
+      expect(main.split(registration).length - 1, registration).toBe(1);
+      expect(main.indexOf(registration), registration).toBeGreaterThan(built);
+    }
+  });
+});
+
+describe("src/stop-sequence.ts", () => {
+  /** The body of the stop function the builder returns, comments stripped. */
+  function stopSequence(): string {
+    const src = readFileSync(resolve(__dirname, "../stop-sequence.ts"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(^|[^:])\/\/.*$/gm, "$1");
+    const start = src.indexOf("return async () => {");
+    expect(start).toBeGreaterThanOrEqual(0);
+    return src.slice(start);
   }
 
   it("starts no dynamic import it does not await (process.exit would win the race)", () => {

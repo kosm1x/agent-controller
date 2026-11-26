@@ -1642,7 +1642,7 @@ export function getDatabase(): Database.Database {
  * Dim-4 R3 fix: reconcile tasks orphaned by a non-graceful shutdown.
  *
  * Graceful SIGTERM/SIGINT already marks running/pending/queued as failed
- * (see src/index.ts shutdown handler). SIGKILL / OOM / hard reboot skips
+ * (see src/stop-sequence.ts). SIGKILL / OOM / hard reboot skips
  * that path entirely — rows stay stuck forever. reactions/manager catches
  * 'running' tasks after 15 minutes, but 'pending'/'queued' rows never had
  * started_at set and slip past that check.
