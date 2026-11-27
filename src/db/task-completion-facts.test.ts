@@ -58,10 +58,10 @@ const row = (taskId: string) =>
     | undefined;
 
 describe("migration v18 — task_completion_facts", () => {
-  it("fresh DB: head is v18 with the four columns, task_id the primary key", () => {
+  it("fresh DB: head is v19 with the four columns, task_id the primary key", () => {
     initDatabase(":memory:");
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(18);
+    expect(db.pragma("user_version", { simple: true })).toBe(19);
     expect(columns(db)).toEqual(EXPECTED_COLUMNS);
   });
 
@@ -81,7 +81,7 @@ describe("migration v18 — task_completion_facts", () => {
 
     initDatabase(tmpDbPath);
     let db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(18);
+    expect(db.pragma("user_version", { simple: true })).toBe(19);
     expect(columns(db)).toEqual(EXPECTED_COLUMNS);
     expect(db.prepare("SELECT COUNT(*) AS n FROM conversations").get()).toEqual({ n: 1 });
     recordCompletionFacts("t-kept", { build: "abc1234", concernDetail: "nota" });
@@ -92,7 +92,7 @@ describe("migration v18 — task_completion_facts", () => {
     pin.close();
     expect(() => initDatabase(tmpDbPath!)).not.toThrow();
     db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(18);
+    expect(db.pragma("user_version", { simple: true })).toBe(19);
     expect(row("t-kept")).toMatchObject({ build: "abc1234", concern_detail: "nota" });
   });
 });

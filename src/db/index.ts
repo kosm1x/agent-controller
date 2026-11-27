@@ -1575,6 +1575,16 @@ function setUpDatabase(_db: Database.Database): void {
           );
         `),
     },
+    {
+      version: 19,
+      description:
+        "idx_tasks_spawn_created_cover — findPrecedents (spawn_type = 'root' AND created_at >= ? ORDER BY created_at DESC) searched idx_tasks_spawn_updated, read each root row's record past the long description column and sorted in a temp b-tree on each run; the covering index answers it from the index alone",
+      up: (db) => {
+        db.exec(
+          "CREATE INDEX IF NOT EXISTS idx_tasks_spawn_created_cover ON tasks(spawn_type, created_at, status, title, task_id)",
+        );
+      },
+    },
   ];
   for (const m of SCHEMA_MIGRATIONS) {
     if (schemaVersion < m.version) {
@@ -1592,7 +1602,7 @@ function setUpDatabase(_db: Database.Database): void {
  * database this code has fully set up. Bump it with every appended migration
  * (index-readonly.test.ts pins it against a fresh initDatabase).
  */
-export const SCHEMA_MIGRATION_HEAD = 18;
+export const SCHEMA_MIGRATION_HEAD = 19;
 
 /**
  * Opens an EXISTING database read-only for an operator script that runs next to

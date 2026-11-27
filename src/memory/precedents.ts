@@ -66,6 +66,17 @@ const SNIPPET_CHARS = 240;
 const DEFAULT_WINDOW_DAYS = 90;
 const CHAT_PREFIX_RE = /^Chat:\s*/i;
 
+/** findPrecedents' candidate statement; exported so its query plan is pinned. */
+export const PRECEDENT_CANDIDATES_SQL = `SELECT task_id, title, status, created_at
+         FROM tasks
+        WHERE spawn_type = 'root'
+          AND title LIKE 'Chat:%'
+          AND status IN ('completed','completed_with_concerns','failed','cancelled')
+          AND created_at >= ?
+          AND task_id <> ?
+        ORDER BY created_at DESC
+        LIMIT ?`;
+
 interface CandidateRow {
   task_id: string;
   title: string;
@@ -140,17 +151,7 @@ export function findPrecedents(
     .replace("T", " ");
 
   const rows = db
-    .prepare(
-      `SELECT task_id, title, status, created_at
-         FROM tasks
-        WHERE spawn_type = 'root'
-          AND title LIKE 'Chat:%'
-          AND status IN ('completed','completed_with_concerns','failed','cancelled')
-          AND created_at >= ?
-          AND task_id <> ?
-        ORDER BY created_at DESC
-        LIMIT ?`,
-    )
+    .prepare(PRECEDENT_CANDIDATES_SQL)
     .all(since, options.excludeTaskId ?? "", CANDIDATE_LIMIT) as CandidateRow[];
 
   // Newest completed task per normalized title — rows arrive newest-first,
@@ -253,10 +254,8 @@ export function precedentsToMemoryItems(precedents: Precedent[]): MemoryItem[] {
  * caller — scheduled off the enrichment hot path with `setImmediate`. The
  * work itself is synchronous better-sqlite3, so `setImmediate` only moves it
  * after the current tick: it still stalls the event loop for its duration.
- * Measured live 2026-09-16 (read-only, 2,134 candidate rows): ~55 ms median
- * per call, once per chat turn (avg turn 77 s). The cost is the unindexed
- * scan of `tasks` (no index on spawn_type/created_at); an index is a schema
- * change and waits for the readout.
+ * The candidate statement (`PRECEDENT_CANDIDATES_SQL`) is answered from the
+ * covering index of schema step 19 (`idx_tasks_spawn_created_cover`).
  * Writes nothing when there are no precedents: a zero-result row would
  * count as a "recall" the utility matcher can only ever score unused.
  */

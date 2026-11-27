@@ -252,7 +252,7 @@ describe("shadowLogPrecedents", () => {
       outcomeBreakdown: { success: 1, concerns: 0, failed: 1, unknown: 0 },
     });
     expect(input.results).toHaveLength(2);
-    expect(input.topKIds.sort()).toEqual(["a", "f"]);
+    expect([...input.topKIds].sort()).toEqual(["a", "f"]);
     expect(input.results[0].tags).toContain("task:" + input.topKIds[0]);
     // content = outcome text, never the (query-shaped) title (W-5)
     expect(input.results.map((r: { content: string }) => r.content).sort()).toEqual(["boom", "ok"]);

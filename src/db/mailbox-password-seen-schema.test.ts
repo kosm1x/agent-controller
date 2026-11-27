@@ -41,10 +41,10 @@ const columns = (db: Database.Database) =>
 const FP = "a".repeat(64);
 
 describe("migration v17 — mailbox_password_seen", () => {
-  it("fresh DB: head is v18 with the fingerprint primary key and a first-seen time", () => {
+  it("fresh DB: head is v19 with the fingerprint primary key and a first-seen time", () => {
     initDatabase(":memory:");
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(18);
+    expect(db.pragma("user_version", { simple: true })).toBe(19);
     expect(columns(db)).toEqual([
       ["fingerprint", 1, 1],
       ["first_seen", 0, 1],
@@ -75,7 +75,7 @@ describe("migration v17 — mailbox_password_seen", () => {
 
     initDatabase(tmpDbPath);
     let db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(18);
+    expect(db.pragma("user_version", { simple: true })).toBe(19);
     expect(columns(db).map((c) => c[0])).toEqual(["fingerprint", "first_seen"]);
     expect(db.prepare("SELECT COUNT(*) AS n FROM conversations").get()).toEqual({ n: 1 });
     db.prepare("INSERT INTO mailbox_password_seen (fingerprint) VALUES (?)").run(FP);
@@ -86,7 +86,7 @@ describe("migration v17 — mailbox_password_seen", () => {
     pin.close();
     expect(() => initDatabase(tmpDbPath!)).not.toThrow();
     db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(18);
+    expect(db.pragma("user_version", { simple: true })).toBe(19);
     expect(db.prepare("SELECT fingerprint FROM mailbox_password_seen").all()).toEqual([{ fingerprint: FP }]);
   });
 });
