@@ -3180,6 +3180,35 @@ function checkRepoSetup(command: string): string | null {
   return null;
 }
 
+const REPO_ENV_CONFIG_REASON =
+  "`GIT_CONFIG…` and `GIT_TEMPLATE_DIR` are not written out in a shell_exec command — git configuration carried by the environment is the operator's; to search files for this text use the `grep` tool, otherwise report the exact command instead";
+const REPO_ENV_SETUP_REASON =
+  "a command with an `init`, `init-db` or `clone` word is not run from shell_exec when it also writes out `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` or a name ending in `HOME` — creating or cloning a repository under a changed environment is the operator's; report the exact command instead";
+const LINE_CONTINUATION_RE = /\\\r?\n/g;
+const GIT_ENV_CONFIG_RE = /GIT_CONFIG|GIT_TEMPLATE_DIR/;
+const GIT_ENV_PLACE_RE = /(?:HOME|GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR)(?![A-Za-z0-9_])/;
+const GIT_ENV_CONFIG_DEFAULT_RE = /\$\{GIT_(?:CONFIG\w*|TEMPLATE_DIR):?=/;
+const GIT_ENV_PLACE_DEFAULT_RE = /\$\{(?:HOME|XDG_CONFIG_HOME|GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR):?=/;
+const GIT_SETUP_WORD_RE = /(?:^|[\s;&|()<>{}])(?:[^\s;&|()<>{}]*\/)?(?:git-)?(?:init|init-db|clone)(?=$|[\s;&|()<>{}])/;
+/**
+ * Git environment names in a command. Refused: the text `GIT_CONFIG` or `GIT_TEMPLATE_DIR` anywhere; and `HOME`,
+ * `GIT_DIR`, `GIT_WORK_TREE` or `GIT_COMMON_DIR` not followed by a letter, digit or `_` (a longer name ending in
+ * `HOME` included) in a command that also holds an `init`, `init-db` or `clone` word (with an optional `git-` and
+ * path before it). The names and the words are matched in `sanitized` followed by the quoted heredoc bodies fed to an
+ * interpreter, with line continuations removed and then normalized. The `${NAME=…}` and `${NAME:=…}` forms of a name
+ * starting `GIT_CONFIG` or of `GIT_TEMPLATE_DIR` (first rule), and of `HOME`, `XDG_CONFIG_HOME`, `GIT_DIR`,
+ * `GIT_WORK_TREE` or `GIT_COMMON_DIR` (second rule), are matched in the raw command with line continuations removed.
+ */
+function checkRepoEnv(command: string, sanitized: string): string | null {
+  const joined = command.replace(LINE_CONTINUATION_RE, "");
+  const text = normalizeShellText(`${sanitized}\n${interpreterHeredocBodies(command)}`.replace(LINE_CONTINUATION_RE, ""));
+  if (GIT_ENV_CONFIG_RE.test(text) || GIT_ENV_CONFIG_DEFAULT_RE.test(joined)) return REPO_ENV_CONFIG_REASON;
+  if ((GIT_ENV_PLACE_RE.test(text) || GIT_ENV_PLACE_DEFAULT_RE.test(joined)) && GIT_SETUP_WORD_RE.test(text)) {
+    return REPO_ENV_SETUP_REASON;
+  }
+  return null;
+}
+
 /**
  * Validate a shell command before execution.
  * Returns { allowed: true } or { allowed: false, reason }.
@@ -3452,6 +3481,10 @@ function validateCommandText(command: string, opts: { reentry?: boolean; cwd?: s
   const repoSetup = checkRepoSetup(sanitized);
   if (repoSetup) {
     return { allowed: false, reason: repoSetup };
+  }
+  const repoEnv = checkRepoEnv(command, sanitized);
+  if (repoEnv) {
+    return { allowed: false, reason: repoEnv };
   }
 
   return { allowed: true };
