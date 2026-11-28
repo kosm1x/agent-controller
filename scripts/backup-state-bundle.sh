@@ -10,6 +10,8 @@
 # Pull window: ~09:09 UTC daily, so 02:30 UTC gives a 6.5h buffer.
 
 set -euo pipefail
+# New files and folders are readable by their owner only (cp -a copies keep their source's mode).
+umask 077
 
 MC_DIR="/root/claude/mission-control"
 DEST_DIR="/opt/supabase/backups"

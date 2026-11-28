@@ -88,6 +88,7 @@ const IMMUTABLE_FILES: string[] = [
   "scripts/build-mc-image.sh", // sandbox image rebuild
   "scripts/validate-migration-runner.ts", // migration preflight
   "scripts/backup-db.sh", // pre-migration snapshot
+  "scripts/backup-state-bundle.sh", // daily state bundle (scheduler)
   "mc-ctl", // operator admin CLI
   "vitest.config.ts", // decides which tests run (the test gate itself)
 ];

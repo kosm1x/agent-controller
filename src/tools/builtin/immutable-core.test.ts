@@ -77,6 +77,7 @@ describe("isImmutableCorePath", () => {
       "scripts/build-mc-image.sh",
       "scripts/validate-migration-runner.ts",
       "scripts/backup-db.sh",
+      "scripts/backup-state-bundle.sh",
       "mc-ctl",
       "vitest.config.ts",
     ];
