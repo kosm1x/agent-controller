@@ -149,8 +149,9 @@ vi.mock("./system-prompt.js", async (importOriginal) => {
     buildJarvisSystemPrompt: vi.fn(actual.buildJarvisSystemPrompt),
   };
 });
-// Background extractor: real module; the two pure predicates call through to
-// the real ones and are observable.
+// Background extractor: real module; the two pure predicates and the two run
+// functions call through to the real ones; the crystallization step's import
+// receives the actual module, so its two calls are not observed here.
 vi.mock("../memory/background-extractor.js", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../memory/background-extractor.js")>();
@@ -158,7 +159,25 @@ vi.mock("../memory/background-extractor.js", async (importOriginal) => {
     ...actual,
     shouldExtract: vi.fn(actual.shouldExtract),
     shouldCrystallize: vi.fn(actual.shouldCrystallize),
+    runBackgroundExtraction: vi.fn(actual.runBackgroundExtraction),
+    runCrystallization: vi.fn(actual.runCrystallization),
   };
+});
+// The learning steps after the router has begun sending a reply: real modules,
+// each function the completion handler starts calls through to the real one and
+// is observable.
+vi.mock("../memory/auto-persist.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../memory/auto-persist.js")>();
+  return {
+    ...actual,
+    autoPersistConversation: vi.fn(actual.autoPersistConversation),
+  };
+});
+vi.mock("../memory/recall-utility.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../memory/recall-utility.js")>();
+  return { ...actual, markRecallUtility: vi.fn(actual.markRecallUtility) };
 });
 // Execution patterns: real module, extractPattern observable (the status gate
 // test pins the call site); defaults to the real implementation.
@@ -12215,6 +12234,108 @@ describe("non-owner turns", () => {
       patternSpy.mockReset().mockImplementation(patternActual.fn);
       userFactsMock.setUserFact.mockReset();
     }
+  });
+
+  describe("completion learning capture", () => {
+    it("an owner direct-chat completion with tools starts the pattern and auto-persist steps before the handler returns, and the recall mark and the extraction after it, each with its inputs", async () => {
+      const outcome = await outcomeSpy();
+      const extractor = await import("../memory/background-extractor.js");
+      const persist = vi.mocked(
+        (await import("../memory/auto-persist.js")).autoPersistConversation,
+      );
+      const recall = vi.mocked(
+        (await import("../memory/recall-utility.js")).markRecallUtility,
+      );
+      const actualExtractor = await vi.importActual<
+        typeof import("../memory/background-extractor.js")
+      >("../memory/background-extractor.js");
+      const extract = vi.mocked(extractor.shouldExtract);
+      const runExtract = vi.mocked(extractor.runBackgroundExtraction);
+      const { classifyScopeGroups } = await import("./scope-classifier.js");
+      const TOOLS = ["web_search", "web_search"];
+      const ASK = "resume el informe sintético de la cooperativa";
+      const REPLY = "Un resumen sintético del informe.";
+      dbStatusGet.mockReturnValue({
+        output: JSON.stringify({ toolCalls: TOOLS }),
+      });
+      dbGetBySql.mockImplementation((sql: string) =>
+        sql === "SELECT title, spawn_type, status FROM tasks WHERE task_id = ?"
+          ? { title: "Chat: cooperativa", spawn_type: "chat", status: "completed" }
+          : undefined,
+      );
+      patternSpy.mockClear().mockImplementation(async () => {});
+      persist.mockImplementationOnce(async () => {});
+      extract.mockReturnValueOnce(true);
+      runExtract.mockImplementationOnce(async () => {});
+      vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["finance"]));
+      try {
+        queueTask("cl-1");
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: OWNER,
+          text: ASK,
+          timestamp: new Date(),
+        });
+        outcome.mockClear();
+        complete("cl-1", REPLY);
+        // Synchronous part of the completion handler.
+        expect(patternSpy).toHaveBeenCalledTimes(1);
+        expect(persist).toHaveBeenCalledTimes(1);
+        expect(outcome).toHaveBeenCalledTimes(1);
+        expect(recall).not.toHaveBeenCalled();
+        expect(extract).not.toHaveBeenCalled();
+        await settle();
+        await vi.dynamicImportSettled();
+        await settle();
+        expect(patternSpy).toHaveBeenCalledWith({
+          taskId: "cl-1",
+          title: "Chat: cooperativa",
+          status: "completed",
+          toolsCalled: TOOLS,
+          scopeGroups: ["finance"],
+          userMessage: ASK,
+          result: REPLY,
+        });
+        expect(persist).toHaveBeenCalledWith({
+          userText: ASK,
+          responseText: REPLY,
+          toolCalls: TOOLS,
+          channel: "whatsapp",
+          taskId: "cl-1",
+        });
+        expect(recall).toHaveBeenCalledTimes(1);
+        expect(recall).toHaveBeenCalledWith({ taskId: "cl-1", responseText: REPLY });
+        expect(extract).toHaveBeenCalledTimes(1);
+        expect(extract).toHaveBeenCalledWith({
+          toolCalls: TOOLS,
+          responseLength: REPLY.length,
+          spawnType: undefined,
+          isRitual: false,
+          isProactive: false,
+        });
+        expect(runExtract).toHaveBeenCalledTimes(1);
+        expect(runExtract).toHaveBeenCalledWith(ASK, REPLY, TOOLS, "cl-1");
+        // The crystallization step's import of the extractor overlaps the fact
+        // step's, so in this runner it receives the actual module, not this file's
+        // wrappers; its inputs are pinned in the learning module's own test.
+        const order = (m: { mock: { invocationCallOrder: number[] } }) =>
+          m.mock.invocationCallOrder[0];
+        expect(order(patternSpy)).toBeLessThan(order(persist));
+        expect(order(persist)).toBeLessThan(order(outcome));
+        expect(order(outcome)).toBeLessThan(order(recall));
+        expect(order(outcome)).toBeLessThan(order(extract));
+        expect(order(extract)).toBeLessThan(order(runExtract));
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+        dbGetBySql.mockReset().mockImplementation(() => undefined);
+        patternSpy.mockReset().mockImplementation(patternActual.fn);
+        persist.mockReset();
+        extract.mockReset().mockImplementation(actualExtractor.shouldExtract);
+        runExtract
+          .mockReset()
+          .mockImplementation(actualExtractor.runBackgroundExtraction);
+      }
+    });
   });
 
   it("owner control: the owner's rating word in a direct chat stores the feedback exchange", async () => {

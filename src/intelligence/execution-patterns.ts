@@ -25,7 +25,7 @@ const PATTERN_MAX_CHARS = 500; // max chars per injected pattern
 
 /**
  * Extract execution patterns from a completed task.
- * Called by the router after successful task completion.
+ * Called by startCompletionLearning after successful task completion.
  * Uses a cheap LLM call to summarize the lesson.
  */
 export async function extractPattern(opts: {

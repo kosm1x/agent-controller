@@ -4,7 +4,7 @@
  * Workflow:
  *   1. logRecall() inserts a row at recall time with {bank, query, source,
  *      result_snippets, latency_ms}, was_used=NULL, task_id=NULL.
- *   2. markRecallUtility() runs at turn end (router auto-persist hook). Given
+ *   2. markRecallUtility() runs at turn end (startCompletionLearning). Given
  *      the final assistant text + taskId, it claims unmatched rows from the
  *      last MATCH_WINDOW_MS, substring-matches snippets against the text, and
  *      writes was_used + used_count + task_id + checked_at.

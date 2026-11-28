@@ -194,7 +194,7 @@ export async function storeFacts(
 
 /**
  * Run background extraction for a completed task.
- * Call this from handleTaskCompleted — it's async and non-blocking.
+ * Call this from startCompletionLearning — it's async and non-blocking.
  * The entire flow is wrapped in try/catch to never propagate errors.
  */
 export async function runBackgroundExtraction(

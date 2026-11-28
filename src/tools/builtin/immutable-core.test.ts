@@ -41,6 +41,7 @@ describe("isImmutableCorePath", () => {
       "src/runners/hallucination-guard.ts",
       "src/runners/denue-guard.ts",
       "src/messaging/router.ts",
+      "src/messaging/completion-learning.ts",
       "src/messaging/cache-marker.ts",
       "src/messaging/poisoned-exchange.ts",
       "src/messaging/confirmation-format.ts",

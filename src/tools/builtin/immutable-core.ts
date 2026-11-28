@@ -50,6 +50,7 @@ const IMMUTABLE_FILES: string[] = [
   "src/runners/hallucination-guard.ts", // claimed-action guard: write-tool names and the detector
   "src/runners/denue-guard.ts", // when the DENUE guard fires and which variant it gets
   "src/messaging/router.ts",
+  "src/messaging/completion-learning.ts", // learning steps started by the router
   "src/messaging/cache-marker.ts", // system-prompt cache-break marker
   "src/messaging/poisoned-exchange.ts", // patterns that keep a reply out of the thread context
   "src/messaging/confirmation-format.ts", // confirmation card texts and the failure rule of an approved call
