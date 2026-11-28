@@ -86,7 +86,7 @@ Considered and **not** recommended: asking before every call of the command tool
 No ruling needed. Each batch goes through the usual sequence: builder, separate review, docs, commit, CI.
 
 ### Batch S-A — Copies as protected as the originals
-Backup and bundle scripts write files that only the owner can read; the existing files are tightened by one operator line. The offsite pull logs in as the owner, so it is not affected (established by reading who collects the files).
+Backup and bundle scripts write files that only the owner can read; the existing files are tightened by one operator line. The offsite pull logs in as the owner, so it is not affected (established by reading who collects the files). Status 2026-11-28: the scripts part landed as `4437ea29`.
 
 ### Batch S-B — What the agent may write and what runs later
 The write rules are extended to the places whose content is executed later; files the approval and credential logic hinges on join the protected list; one limit that is stated to the model but not enforced is settled either way.
@@ -114,4 +114,4 @@ Workflows get a read-only permissions block and take actions by commit; containe
 
 ## Next
 
-Ruling 1 is with the operator. Batch S-A is next and does not wait for a ruling. The other rulings follow one at a time. The dimension is re-scored when its batches are built.
+Ruling 1 is with the operator. The scripts part of batch S-A is landed (`4437ea29`); batch S-B is next and does not wait for a ruling. The other rulings follow one at a time. The dimension is re-scored when its batches are built.
