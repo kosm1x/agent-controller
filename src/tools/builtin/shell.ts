@@ -13,7 +13,7 @@ import { isBlockedEnvFile, NORTHSTAR_DISK_REASON } from "./immutable-core.js";
 import { homedir } from "os";
 import { dirname, resolve as resolvePath } from "path";
 import { fileURLToPath } from "url";
-import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
+import { getJarvisKbRoot } from "../../db/kb-root.js";
 import { isPathError, realResolve, realResolveParent } from "./write-guard.js";
 import { checkWriteBoundary, RITUAL_WRITABLE_DOCS, type BoundaryVerdict, type WriteOp } from "./write-boundary.js";
 import {

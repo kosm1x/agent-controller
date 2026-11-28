@@ -60,6 +60,7 @@ const IMMUTABLE_FILES: string[] = [
   "src/messaging/system-prompt.ts", // system-prompt assembly, tier order and size budget
   "src/db/index.ts",
   "src/db/jarvis-fs.ts",
+  "src/db/kb-root.ts",
   "src/rituals/scheduler.ts",
   "src/rituals/ritual-failure.ts",
   "src/rituals/autonomous-improvement.ts",

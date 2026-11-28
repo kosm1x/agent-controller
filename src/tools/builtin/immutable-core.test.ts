@@ -51,6 +51,7 @@ describe("isImmutableCorePath", () => {
       "src/messaging/system-prompt.ts",
       "src/db/index.ts",
       "src/db/jarvis-fs.ts",
+      "src/db/kb-root.ts",
       "src/rituals/scheduler.ts",
       "src/rituals/ritual-failure.ts",
       "src/rituals/autonomous-improvement.ts",
