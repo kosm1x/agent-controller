@@ -252,7 +252,7 @@ What would move it: +1 = small-model id through the gate, the A2A 1.0 shim, the 
 | 3 Resilience | — | — | — | — | — |
 | 4 Memory | — | — | — | — | — |
 | 5 Tool use | — | — | — | — | — |
-| 6 Security and privacy | 2026-11-28 | done 2026-11-28 → `november-assesment-security-privacy-review-2026-11-28.md` (an inventory of 92 recorded items, then 6 sub-dimensions, each reviewed and re-checked by a second reader; opened ahead of dimensions 3 to 5 on the operator's instruction of 2026-11-26) | 12 on the list, put one at a time; the first put 2026-11-27 (Mexico time), not yet answered | in progress: the scripts part of the first batch (`4437ea29`) and the first four pieces of the second batch (`296802d3`, `39f99809`, `290575ef`, `75504dbc`) landed. State in queue 4kh | after the batches |
+| 6 Security and privacy | 2026-11-28 | done 2026-11-28 → `november-assesment-security-privacy-review-2026-11-28.md` (an inventory of 92 recorded items, then 6 sub-dimensions, each reviewed and re-checked by a second reader; opened ahead of dimensions 3 to 5 on the operator's instruction of 2026-11-26) | 12 on the list, put one at a time; the first put 2026-11-27 (Mexico time), not yet answered | in progress: the scripts part of the first batch (`4437ea29`) and the first five pieces of the second batch (`296802d3`, `39f99809`, `290575ef`, `75504dbc`, `79d0c1de`) landed. State in queue 4ki | after the batches |
 | 7 Usability | — | — | — | — | — |
 | 8 Currency | — | — | — | — | — |
 
