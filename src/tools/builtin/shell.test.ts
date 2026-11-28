@@ -2496,7 +2496,7 @@ describe("package-manager gate — shell_exec has no install authority (dependen
       "ls -l /usr/bin/npm", "file /usr/bin/npm", "readlink -f /usr/bin/npm", "which npm", "stat /usr/bin/npm",
       "echo look at this", "grep -rn 'at now' docs/", "env | grep -i path", "env CI=1 npm ls", "env -C /tmp ls",
       "grep -i x /tmp/y", "ls -l", "sh -c 'ls -l'", "bash -c 'ls -l' -x", "hash -r", "alias", "command -v npm",
-      "git config alias.co checkout", "echo $PATH", 'echo "$PATH"', "printenv PATH", "ln -s /tmp/a /tmp/b",
+      "echo $PATH", 'echo "$PATH"', "printenv PATH", "ln -s /tmp/a /tmp/b",
       "cp package.json /tmp/pkg.json", "tar cf x.tar docs/", "cat scripts/deploy.sh", "unset FOO; npm ls",
       "export FOO=1; npm ls", "batch_size=3 node x.js", "echo su casa", "npm run build", "npm run typecheck",
       // qa R5 W5-4: library files of a manager are reads, not binaries

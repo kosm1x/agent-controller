@@ -2992,7 +2992,8 @@ export function checkPrimaryMcGitMutation(
 const MERGE_AUTHORITY_REASON =
   "merging, approving and changing branch protection are the operator's actions — open or update the pull request and report its link instead";
 const MERGE_AUTHORITY_API_RE = /\/merge|\/protection|\/rulesets|\/collaborators|mergePullRequest|enablePullRequestAutoMerge|event=APPROVE/i;
-function checkMergeAuthority(command: string): string | null {
+/** The words of checkMergeAuthority and checkRepoConfigWrite, one array per segment of `command`. */
+function wordSegments(command: string): string[][] {
   let words: string[] = [];
   const segments = [words];
   // A line continuation, a tab and a carriage return separate words like a space.
@@ -3003,6 +3004,10 @@ function checkMergeAuthority(command: string): string | null {
       if (word) words.push(word);
     });
   }
+  return segments;
+}
+function checkMergeAuthority(command: string): string | null {
+  const segments = wordSegments(command);
   for (const w of segments) {
     const gh = w.findIndex((x) => x.replace(/^.*\//, "") === "gh");
     if (gh < 0) continue;
@@ -3019,6 +3024,58 @@ function checkMergeAuthority(command: string): string | null {
         i++;
       }
       if (x === "api") api = true;
+    }
+  }
+  return null;
+}
+
+const REPO_CONFIG_REASON =
+  "changing git configuration is not done from shell_exec — a read names its action first (`git config --get <key>`, `git config --list`; a scope option such as `--global` goes before the action, other options after it, none of them negated (`--no-…`)); when a change is needed, report the exact command for the operator instead";
+const GIT_ALIAS_OPTION_REASON =
+  "a git alias defined on the command line (`-c alias.…`, `--config-env alias.…`) is not run from shell_exec — spell the git command out";
+const GIT_GLOBAL_FLAGS = new Set([
+  "-p", "--paginate", "-P", "--no-pager", "--no-replace-objects", "--bare", "--literal-pathspecs", "--glob-pathspecs",
+  "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks", "--no-literal-pathspecs",
+]);
+const GIT_CONFIG_SCOPES = new Set(["--global", "--system", "--local", "--worktree"]);
+const GIT_CONFIG_READS = new Set(["--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list", "--get-color", "--get-colorbool"]);
+const isGitAlias = (value: string | undefined): boolean => value?.toLowerCase().startsWith("alias.") === true;
+/**
+ * Git configuration writes: a tripwire for plainly written forms, over the words of wordSegments. After a word
+ * whose basename is `git` it passes the global options: a word in GIT_GLOBAL_FLAGS or a word containing `=` is one
+ * word, and any other word starting with `-` takes the next word as its value unless that word is `config` (then
+ * judged as the verb) or starts with `-`. It refuses a `-c` or `--config-env` value that defines an alias, whatever the verb.
+ * When the verb is `config`, or the word's basename is `git-config`, it passes the scope options and refuses unless
+ * the next word is a read action, and refuses when a later word of the segment starts with `--no-`.
+ */
+function checkRepoConfigWrite(command: string): string | null {
+  for (const w of wordSegments(command)) {
+    let lastNo = -1;
+    w.forEach((x, k) => {
+      if (x.startsWith("--no-")) lastNo = k;
+    });
+    for (let i = 0; i < w.length; i++) {
+      const base = w[i]!.replace(/^.*\//, "");
+      if (base !== "git" && base !== "git-config") continue;
+      let j = i + 1;
+      if (base === "git") {
+        for (; j < w.length && w[j]!.startsWith("-"); j++) {
+          const x = w[j]!;
+          const value = x === "-c" || x === "--config-env" ? w[j + 1] : x.startsWith("--config-env=") ? x.slice("--config-env=".length) : undefined;
+          if (isGitAlias(value)) return GIT_ALIAS_OPTION_REASON;
+          if (!GIT_GLOBAL_FLAGS.has(x) && !x.includes("=") && w[j + 1] !== "config" && !(w[j + 1] ?? "").startsWith("-")) j++;
+        }
+        // The scan goes on from the verb: a word passed above is an option or its value, and a git word among
+        // the values would reach the same verb through the same words.
+        if (w[j] !== "config") {
+          i = j - 1;
+          continue;
+        }
+        j++;
+      }
+      while (j < w.length && GIT_CONFIG_SCOPES.has(w[j]!)) j++;
+      if (!GIT_CONFIG_READS.has(w[j] ?? "") || lastNo > j) return REPO_CONFIG_REASON;
+      i = j;
     }
   }
   return null;
@@ -3286,6 +3343,12 @@ function validateCommandText(command: string, opts: { reentry?: boolean; cwd?: s
         return { allowed: false, reason: deny.reason };
       }
     }
+  }
+
+  // After every other check, so a command they refuse keeps their reason.
+  const repoConfig = checkRepoConfigWrite(sanitized);
+  if (repoConfig) {
+    return { allowed: false, reason: repoConfig };
   }
 
   return { allowed: true };
