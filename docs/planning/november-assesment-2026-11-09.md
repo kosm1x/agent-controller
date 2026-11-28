@@ -252,7 +252,7 @@ What would move it: +1 = small-model id through the gate, the A2A 1.0 shim, the 
 | 3 Resilience | — | — | — | — | — |
 | 4 Memory | — | — | — | — | — |
 | 5 Tool use | — | — | — | — | — |
-| 6 Security and privacy | 2026-11-28 | in progress: an inventory of what is already on record, then six sub-dimensions, each reviewed and re-checked (opened ahead of dimensions 3 to 5 on the operator's instruction of 2026-11-26) | — | — | — |
+| 6 Security and privacy | 2026-11-28 | in progress: inventory done (92 items on record), six sub-dimension reports handed back, second-reader check running, first ruling question put to the operator (opened ahead of dimensions 3 to 5 on the operator's instruction of 2026-11-26) | — | — | — |
 | 7 Usability | — | — | — | — | — |
 | 8 Currency | — | — | — | — | — |
 
