@@ -128,6 +128,7 @@ import {
   extractPersistText,
   isPhantomZeroCostRow,
   registerRunner,
+  setMaxContainers,
   undeclaredRunFailure,
   gateContextFor,
   LONG_ANSWER_PERSIST_MIN_CHARS,
@@ -3389,5 +3390,233 @@ describe("dispatchTask persists a long root swarm/heavy answer (queue 4f B)", ()
     const { taskId } = await run({ agentType: "swarm", finalAnswer: "", output: { text: TEXT, content: "meta" } });
     const path = `workspace/reports/${taskId.slice(0, 8)}-${SLUG}-2026-10-17.md`;
     expect(upsertFileMock).toHaveBeenCalledWith(path, TITLE, TEXT, ["report", "swarm"], "workspace");
+  });
+});
+
+// The count of busy container slots is read through the queue: with a limit
+// of 2 and one task still holding a slot, a first probe is admitted and a
+// second one is queued. The count lives as long as the module, so these cases
+// come last in the file.
+describe("dispatchTask gives a container slot back once, whatever way the dispatch ends", () => {
+  const NANOCLAW = {
+    agentType: "nanoclaw",
+    score: 5,
+    reason: "coding",
+    explicit: false,
+    modelTier: "standard",
+  } as unknown as ReturnType<typeof classify>;
+  const TERMINAL = ["task.completed", "task.failed", "task.cancelled"];
+  const done = (): RunnerOutput => ({ success: true, status: "DONE", output: "x", durationMs: 0 });
+  let gates: Map<string, { promise: Promise<void>; open: () => void }>;
+  let allOpen: boolean;
+  let submitted: string[];
+  let started: Set<string>;
+
+  const gate = (title: string) => {
+    let g = gates.get(title);
+    if (!g) {
+      let open!: () => void;
+      const promise = new Promise<void>((resolve) => (open = resolve));
+      g = { promise, open };
+      gates.set(title, g);
+    }
+    return g;
+  };
+  const logged = (calls: unknown[][], line: string, taskId: string) =>
+    calls.some((c) => c[1] === line && (c[0] as { taskId?: string } | undefined)?.taskId === taskId);
+  const queued = (taskId: string) => logged(logMock.info.mock.calls, "task queued for container slot", taskId);
+  const dequeued = (taskId: string) =>
+    logged(logMock.info.mock.calls, "dequeued task — container slot acquired", taskId);
+  const failedBy = (line: string, taskId: string) => logged(logMock.error.mock.calls, line, taskId);
+  const ended = (taskId: string) =>
+    emitTraceMock.mock.calls.some((c) => c[0].taskId === taskId && TERMINAL.includes(c[0].name)) ||
+    failedBy("failed to dispatch task", taskId) ||
+    failedBy("queued task failed", taskId);
+
+  async function submitNano(
+    title: string,
+    extra: Partial<Parameters<typeof submitTask>[0]> = {},
+  ): Promise<string> {
+    vi.mocked(classify).mockReturnValueOnce(NANOCLAW);
+    const { taskId } = await submitTask({ title, description: "d", ...extra });
+    submitted.push(taskId);
+    return taskId;
+  }
+
+  /** The first holder is admitted under a limit of 1, so no slot was busy before the case. */
+  async function firstHolder(): Promise<string> {
+    setMaxContainers(1);
+    const x = await submitNano("hold-X");
+    expect(queued(x)).toBe(false);
+    setMaxContainers(2);
+    return x;
+  }
+
+  /** Under a limit of 2 with one holder left: exactly one slot is busy. */
+  async function expectOneSlotBusy(): Promise<void> {
+    const p1 = await submitNano("hold-P1");
+    expect(queued(p1)).toBe(false);
+    const p2 = await submitNano("hold-P2");
+    expect(queued(p2)).toBe(true);
+  }
+
+  /** Opens every hold, cancels what is still queued, waits for every started run, restores the limit. */
+  async function finish(): Promise<void> {
+    allOpen = true;
+    for (const g of gates.values()) g.open();
+    for (const t of submitted) {
+      if (queued(t) && !dequeued(t)) {
+        mockGet.mockReturnValueOnce({ task_id: t, status: "queued" });
+        cancelTask(t);
+      }
+    }
+    await vi.waitFor(() => {
+      if (![...started].every(ended)) throw new Error("a started run has not ended");
+    });
+    setMaxContainers(5); // the limit the dispatcher module starts with
+  }
+
+  beforeEach(() => {
+    gates = new Map();
+    allOpen = false;
+    submitted = [];
+    started = new Set();
+    registerRunner({ type: "fast", execute: async () => done() });
+    registerRunner({
+      type: "nanoclaw",
+      execute: async (input) => {
+        started.add(input.taskId);
+        if (input.title.startsWith("throws")) throw new Error("synthetic runner failure");
+        if (input.title.startsWith("no-op")) return { success: false } as RunnerOutput;
+        if (input.title.startsWith("hold") && !allOpen) await gate(input.title).promise;
+        return done();
+      },
+    });
+  });
+
+  it("direct path: a nanoclaw run that completes gives its slot back once", async () => {
+    try {
+      await firstHolder();
+      const a = await submitNano("done-A");
+      expect(queued(a)).toBe(false);
+      await vi.waitFor(() => {
+        if (!ended(a)) throw new Error("not ended yet");
+      });
+      expect(emitTraceMock).toHaveBeenCalledWith(expect.objectContaining({ taskId: a, name: "task.completed" }));
+      await expectOneSlotBusy();
+    } finally {
+      await finish();
+    }
+  });
+
+  it("direct path: a nanoclaw runner that throws gives its slot back once", async () => {
+    try {
+      await firstHolder();
+      const a = await submitNano("throws-A");
+      expect(queued(a)).toBe(false);
+      await vi.waitFor(() => {
+        if (!ended(a)) throw new Error("not ended yet");
+      });
+      expect(emitTraceMock).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: a, name: "task.failed", attrs: expect.objectContaining({ thrown: true }) }),
+      );
+      await expectOneSlotBusy();
+    } finally {
+      await finish();
+    }
+  });
+
+  it("a nanoclaw chat that fails without an error and falls back to the fast runner gives its slot back once", async () => {
+    try {
+      await firstHolder();
+      const a = await submitNano("no-op-A", { tags: ["messaging"] });
+      expect(queued(a)).toBe(false);
+      await vi.waitFor(() => {
+        if (!ended(a)) throw new Error("not ended yet");
+      });
+      expect(emitTraceMock).toHaveBeenCalledWith(expect.objectContaining({ taskId: a, name: "task.fallback" }));
+      expect(emitTraceMock).toHaveBeenCalledWith(expect.objectContaining({ taskId: a, name: "task.completed" }));
+      await expectOneSlotBusy();
+    } finally {
+      await finish();
+    }
+  });
+
+  it("queued path: a dequeued nanoclaw task that throws before the guarded run gives its slot back once", async () => {
+    try {
+      await firstHolder();
+      const h = await submitNano("hold-H");
+      expect(queued(h)).toBe(false);
+      const q = await submitNano("queued-Q");
+      expect(queued(q)).toBe(true);
+      // The task-row read for the model tier, outside the guarded section,
+      // throws for the queued task only.
+      mockGet.mockImplementation((id?: unknown) => {
+        if (id === q) throw new Error("synthetic row read failure");
+        return undefined;
+      });
+      gate("hold-H").open();
+      await vi.waitFor(() => {
+        if (!failedBy("queued task failed", q)) throw new Error("queued task not failed yet");
+      });
+      mockGet.mockReset();
+      expect(dequeued(q)).toBe(true);
+      expect(started.has(q)).toBe(false);
+      await expectOneSlotBusy();
+    } finally {
+      mockGet.mockReset();
+      await finish();
+    }
+  });
+
+  it("queued path: a dequeued nanoclaw task whose runner throws and whose failure close then throws gives its slot back once", async () => {
+    try {
+      await firstHolder();
+      const h = await submitNano("hold-H");
+      expect(queued(h)).toBe(false);
+      const q = await submitNano("throws-Q");
+      expect(queued(q)).toBe(true);
+      // The failure close's run-row write (the only write with exactly these
+      // three fields) throws.
+      mockRun.mockImplementation((params?: unknown) => {
+        if (params && typeof params === "object" && Object.keys(params).sort().join() === "error,runId,status") {
+          throw new Error("synthetic close failure");
+        }
+        return undefined;
+      });
+      gate("hold-H").open();
+      await vi.waitFor(() => {
+        if (!failedBy("queued task failed", q)) throw new Error("queued task not failed yet");
+      });
+      mockRun.mockReset();
+      expect(started.has(q)).toBe(true);
+      await expectOneSlotBusy();
+    } finally {
+      mockRun.mockReset();
+      await finish();
+    }
+  });
+
+  it("direct path: a nanoclaw dispatch that throws after its checkout, before the guarded run, gives its slot back", async () => {
+    try {
+      await firstHolder();
+      // Row reads made while this task's checkout is the latest one throw; the
+      // first is the task-row read for the model tier, outside the guarded section.
+      mockGet.mockImplementation(() => {
+        if (vi.mocked(checkoutTask).mock.calls.length === 2) throw new Error("synthetic row read failure");
+        return undefined;
+      });
+      const a = await submitNano("throw-before-run-A");
+      expect(queued(a)).toBe(false);
+      await vi.waitFor(() => {
+        if (!failedBy("failed to dispatch task", a)) throw new Error("dispatch not failed yet");
+      });
+      mockGet.mockReset();
+      expect(started.has(a)).toBe(false);
+      await expectOneSlotBusy();
+    } finally {
+      mockGet.mockReset();
+      await finish();
+    }
   });
 });

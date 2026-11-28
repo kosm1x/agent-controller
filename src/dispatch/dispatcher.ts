@@ -445,7 +445,7 @@ function drainContainerQueue(): void {
     // FINISHING run's async frame — exit its run-tool context so the dequeued
     // (unrelated) task neither inherits that run's prior nor leaks into it.
     outsideRunToolContext(() =>
-      dispatchWithSlot(
+      dispatchHoldingSlot(
         next.taskId,
         next.agentType,
         next.submission,
@@ -454,7 +454,6 @@ function drainContainerQueue(): void {
     ).catch((err) => {
       log.error({ err, taskId: next.taskId }, "queued task failed");
       updateTaskStatus(next.taskId, "failed", undefined, String(err));
-      releaseContainerSlot();
     });
   }
 }
@@ -777,7 +776,7 @@ async function dispatchTask(
     }
   }
 
-  await dispatchWithSlot(taskId, agentType, submission, gateContext);
+  await dispatchHoldingSlot(taskId, agentType, submission, gateContext);
 }
 
 /**
@@ -867,15 +866,43 @@ const TERMINAL_TASK_STATUSES = new Set([
   "failed",
 ]);
 
+/** Runs a dispatch; gives back its container slot once, however it ends. */
+async function dispatchHoldingSlot(
+  taskId: string,
+  agentType: AgentType,
+  submission: TaskSubmission,
+  gateContext: TaskExecutionContext,
+): Promise<void> {
+  let slotHeld = needsContainer(agentType);
+  const releaseSlot = (): void => {
+    if (!slotHeld) return;
+    slotHeld = false;
+    releaseContainerSlot();
+  };
+  try {
+    await dispatchWithSlot(
+      taskId,
+      agentType,
+      submission,
+      gateContext,
+      releaseSlot,
+    );
+  } finally {
+    releaseSlot();
+  }
+}
+
 /**
- * Execute a task that already has any required container slot acquired.
- * Releases the slot on completion.
+ * Execute a task whose container slot, if it needs one, its caller holds.
+ * `releaseSlot` gives the slot back early; the caller gives it back when this
+ * ends.
  */
 async function dispatchWithSlot(
   taskId: string,
   agentType: AgentType,
   submission: TaskSubmission,
   gateContext: TaskExecutionContext,
+  releaseSlot: () => void,
 ): Promise<void> {
   const runner = runners.get(agentType);
   if (!runner) {
@@ -917,7 +944,6 @@ async function dispatchWithSlot(
     log.info({ taskId, reason: checkout.reason }, "task checkout failed");
     // Roll back the run row we just created
     db.prepare("DELETE FROM runs WHERE run_id = ?").run(runId);
-    if (needsContainer(agentType)) releaseContainerSlot();
     return;
   }
 
@@ -937,10 +963,6 @@ async function dispatchWithSlot(
   // succeeds, so cost + outcome are attributed to the runner that actually ran
   // (not the sandbox that failed). See the fallback block for the rationale.
   let effectiveAgentType: AgentType = agentType;
-  // W2: the caller acquired a container slot for a container runner; normally the
-  // `finally` releases it. The fallback releases it EARLY (before the container-
-  // less fast re-run) and sets this so the `finally` doesn't double-release.
-  let containerSlotReleased = false;
   // Has this task been cancelled? The task row decides: a cancel written
   // there counts whoever wrote it (another process never reaches the
   // signal), and a signal that fires after the row is already completed or
@@ -1124,10 +1146,7 @@ async function dispatchWithSlot(
         // W2: the nanoclaw container already spawned + exited inside the runner;
         // free the scarce container slot before the container-less fast re-run so
         // other queued nanoclaw tasks aren't blocked by the extra round-trip.
-        if (needsContainer(agentType) && !containerSlotReleased) {
-          releaseContainerSlot();
-          containerSlotReleased = true;
-        }
+        releaseSlot();
         // W1: record the failed nanoclaw attempt's own token spend before `result`
         // is overwritten, so it isn't dropped from the cost ledger. Same phantom-
         // zero guard as the main cost block (skip aborted/zero-usage rows).
@@ -1403,11 +1422,6 @@ async function dispatchWithSlot(
     // consumer already took it on the normal path; this covers early returns
     // and thrown errors so the per-task buffer never outlives its run).
     takeToolEvidence(taskId);
-    // The fast-fallback may have already released the container slot early (W2);
-    // guard against a double-release.
-    if (needsContainer(agentType) && !containerSlotReleased) {
-      releaseContainerSlot();
-    }
   }
 }
 
@@ -2094,7 +2108,7 @@ export function cancelTask(taskId: string): boolean {
 
   // Stop the work, not just the bookkeeping: a queued container task must
   // never be dispatched, and a running one is aborted so the runner returns
-  // (releasing its container slot in dispatchWithSlot's finally).
+  // (its container slot is given back when its dispatch ends).
   const queued = containerQueue.findIndex((q) => q.taskId === taskId);
   if (queued >= 0) containerQueue.splice(queued, 1);
   const inFlight = activeAborts.get(taskId);
