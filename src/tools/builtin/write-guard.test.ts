@@ -59,6 +59,42 @@ describe("isOperatorConfigPath", () => {
       expect(isOperatorConfigPath(p)).toBe(false);
     }
   });
+
+  it.each([
+    ["a .claude folder directly inside a project", "/root/claude/proj-a/.claude/settings.json"],
+    ["a hook inside a project's .claude folder", "/root/claude/proj-a/.claude/hooks/pre.sh"],
+    ["a .claude folder three levels down", "/root/claude/proj-a/sub/deeper/.claude/settings.local.json"],
+    ["a final component .claude", "/root/claude/proj-a/.claude"],
+    ["a final component .mcp.json inside a project", "/root/claude/site-b/.mcp.json"],
+    ["a final component .mcp.json two levels down", "/root/claude/site-b/sub/.mcp.json"],
+  ])("is operator config: %s", (_label, p) => {
+    expect(isOperatorConfigPath(p)).toBe(true);
+  });
+
+  it.each([
+    ["a component that starts with .claude (.claudette)", "/root/claude/proj-a/.claudette/settings.json"],
+    ["a component that ends with .claude (my.claude)", "/root/claude/proj-a/my.claude/settings.json"],
+    ["a final component .mcp.json.bak", "/root/claude/site-b/.mcp.json.bak"],
+    ["a final component mcp.json without the dot", "/root/claude/site-b/mcp.json"],
+    ["a project's own CLAUDE.md at depth two", "/root/claude/proj-a/CLAUDE.md"],
+    ["a project's own CLAUDE.md deeper down", "/root/claude/proj-a/docs/CLAUDE.md"],
+    ["a component .Claude with a different letter case", "/root/claude/proj-a/.Claude/settings.json"],
+    ["a component claude without the dot", "/root/claude/proj-a/claude/settings.json"],
+  ])("is not operator config: %s", (_label, p) => {
+    expect(isOperatorConfigPath(p)).toBe(false);
+  });
+
+  it("does not cover a file below a folder named .mcp.json (only the final component is compared)", () => {
+    expect(isOperatorConfigPath("/root/claude/site-b/.mcp.json/notes.txt")).toBe(false);
+  });
+
+  it.each([
+    "/tmp/proj-a/.claude/settings.json",
+    "/tmp/proj-a/.mcp.json",
+    "/root/.claude/settings.json",
+  ])("answers false outside the projects root, also for a .claude component or a final .mcp.json: %s", (p) => {
+    expect(isOperatorConfigPath(p)).toBe(false);
+  });
 });
 
 describe("realResolve", () => {

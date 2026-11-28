@@ -6,8 +6,10 @@
  *     living inside an allowed dir but pointing OUTSIDE it smuggle a write past
  *     the deny/immutable/allow gates. `realResolve` follows symlinks first.
  *  2. operator config — a broad `/root/claude/` allow-list (every project repo
- *     lives there) also exposes the operator's OWN Claude Code config that sits
- *     directly under /root/claude/. `isOperatorConfigPath` re-denies that surface.
+ *     lives there) also exposes the operator's config under /root/claude/: the
+ *     top-level dot entries and umbrella CLAUDE.md, and the Claude Code
+ *     (`.claude`) and MCP (`.mcp.json`) config inside any project.
+ *     `isOperatorConfigPath` re-denies that surface.
  */
 
 import { resolve, dirname, join } from "path";
@@ -111,18 +113,27 @@ export function realResolveParent(p: string): string {
 }
 
 /**
- * The operator's own governance/config surface directly under /root/claude/:
- * the Claude Code config + hooks (.claude/), MCP server config (.mcp.json), env,
- * and the umbrella CLAUDE.md. These are NOT project content (which lives under a
- * named repo directory at depth >= 2, e.g. /root/claude/<repo>/…) and they govern
- * the operator's OWN sessions — a settings/hook rewrite is command execution on
- * the operator's next tool call. Any TOP-LEVEL dotfile/dotdir qualifies, so a
- * future one is protected without editing a list. A repo's own CLAUDE.md (depth
- * >= 2) is project content and stays writable; only the umbrella one is blocked.
+ * The operator's governance/config surface under /root/claude/:
+ *  - the umbrella CLAUDE.md;
+ *  - any entry whose first segment below /root/claude/ starts with a dot (the
+ *    umbrella .claude/, .mcp.json, .env), so a future top-level one is covered
+ *    without editing a list;
+ *  - at any depth, a path with a component equal to `.claude` (the folder
+ *    itself or anything in it) or whose final component equals `.mcp.json`:
+ *    a project's Claude Code settings/hooks and MCP server config.
+ * The `.claude` and `.mcp.json` rules compare a component by its exact name.
+ * These govern the Claude Code sessions run in those folders — a settings/hook
+ * rewrite is command execution on such a session's next tool call. A repo's
+ * own CLAUDE.md (depth >= 2) is project content, not operator config. The
+ * answer is true only below /root/claude/.
  */
 export function isOperatorConfigPath(resolved: string): boolean {
   if (resolved === "/root/claude/CLAUDE.md") return true;
   if (!resolved.startsWith(CLAUDE_HOME)) return false;
-  const firstSegment = resolved.slice(CLAUDE_HOME.length).split("/")[0];
-  return firstSegment.startsWith(".");
+  const segments = resolved.slice(CLAUDE_HOME.length).split("/");
+  return (
+    segments[0].startsWith(".") ||
+    segments.includes(".claude") ||
+    segments[segments.length - 1] === ".mcp.json"
+  );
 }
