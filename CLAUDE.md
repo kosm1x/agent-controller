@@ -98,7 +98,7 @@ Harness recipe, cutover/revert scripts, scope classifier, JME, Hindsight → §I
   ```bash
   ./scripts/deploy.sh          # check + build + restart + verify (preferred; OPERATOR-RUN — the mc-guard hook denies Claude executing it)
   # refuses BEFORE building on: uncommitted code (--allow-dirty), host node_modules ≠ lockfile, running tasks (--drain N / --force);
-  # snapshots data/mc.db to backups/pre-migrate-v<N>-<commit>-<epoch>.db when a migration will run (consumes that day's mc-<date>.db; never pruned, kept until removed by hand); FAILED on a restart loop, health ≠ 200 or a lost channel
+  # snapshots data/mc.db to backups/pre-migrate-v<N>-<commit>-<epoch>.db when a migration will run (consumes that day's mc-<date>.db; the deploy does not prune them; the backup tool's sweep, when that tool is called, deletes files older than 7 days in that folder); FAILED on a restart loop, health ≠ 200 or a lost channel
   npm run build && systemctl restart mission-control   # manual
   ```
   After deploy, always verify: `systemctl is-active mission-control` → `journalctl -u mission-control --since '30 sec ago'` → test one affected endpoint/workflow.
