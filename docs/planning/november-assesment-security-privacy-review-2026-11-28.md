@@ -89,7 +89,7 @@ No ruling needed. Each batch goes through the usual sequence: builder, separate 
 Backup and bundle scripts write files that only the owner can read; the existing files are tightened by one operator line. The offsite pull logs in as the owner, so it is not affected (established by reading who collects the files). Status 2026-11-28: the scripts part landed as `4437ea29`.
 
 ### Batch S-B — What the agent may write and what runs later
-The write rules are extended to the places whose content is executed later; files the approval and credential logic hinges on join the protected list; one limit that is stated to the model but not enforced is settled either way. Status 2026-11-28: the batch is split into pieces built one at a time; the first landed as `296802d3`. Two of its items need a decision each; they are put after the ruling list.
+The write rules are extended to the places whose content is executed later; files the approval and credential logic hinges on join the protected list; one limit that is stated to the model but not enforced is settled either way. Status 2026-11-28: the batch is split into pieces built one at a time; the first two landed as `296802d3` and `39f99809`. Two of its items need a decision each; they are put after the ruling list.
 
 ### Batch S-C — Outward plumbing
 How stored credentials travel with outward requests (bound to the destinations they were stored for); the same checks on mail fields on both model paths; what the confirmation card shows of long values.
@@ -114,4 +114,4 @@ Workflows get a read-only permissions block and take actions by commit; containe
 
 ## Next
 
-Ruling 1 is with the operator. The scripts part of batch S-A is landed (`4437ea29`); the first piece of batch S-B is landed (`296802d3`), and its other pieces follow; two items of that batch wait for a decision each. The other rulings follow one at a time. The dimension is re-scored when its batches are built.
+Ruling 1 is with the operator. The scripts part of batch S-A is landed (`4437ea29`); the first two pieces of batch S-B are landed (`296802d3`, `39f99809`), and its other pieces follow; two items of that batch wait for a decision each. The other rulings follow one at a time. The dimension is re-scored when its batches are built.
