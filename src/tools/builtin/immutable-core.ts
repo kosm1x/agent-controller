@@ -183,7 +183,11 @@ const DANGEROUS_FILES_EXACT = new Set([
 /** Prefix patterns — any file starting with these is dangerous. */
 const DANGEROUS_FILE_PREFIXES = [".env"]; // .env, .env.local, .env.production, .env.*, etc.
 
-/** Directories whose contents should not be auto-edited. */
+/**
+ * Directories whose contents should not be auto-edited. A write or delete of a
+ * path whose final component is `.git` (the folder itself, or a pointer file of
+ * that name) is refused too.
+ */
 const DANGEROUS_DIRECTORIES = [".git/", ".ssh/", ".gnupg/"];
 
 /**
@@ -389,6 +393,12 @@ export function validatePathSafety(
       reason: `'${matched}' is a protected directory — manual edit required`,
     };
   }
+  if (operation !== "read" && basename === ".git") {
+    return {
+      safe: false,
+      reason: "'.git' is a repository's metadata folder or pointer file — manual edit required",
+    };
+  }
 
   // 7. Read-path secret denylist — Sec2 round-1 + round-2 fix
   // Block reads of credential-bearing files regardless of whether the caller
@@ -466,6 +476,12 @@ export function validatePathSafety(
         return {
           safe: false,
           reason: `'${matched}' is a protected directory (via symlink) — manual edit required`,
+        };
+      }
+      if (realBase === ".git") {
+        return {
+          safe: false,
+          reason: `'${real}' is a repository's metadata folder or pointer file (via symlink) — manual edit required`,
         };
       }
       candidates.push(real);

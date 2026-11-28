@@ -863,6 +863,17 @@ function shellBoundaryReason(targetPath: string, verdict: Exclude<BoundaryVerdic
   }
 }
 
+/**
+ * A write target inside a folder named `.git` (or whose name ends in `.git`), or
+ * one whose final component is `.git` — the test the file tools' path check makes
+ * for write and delete. The ritual-doc exemption in the target loop does not apply to it.
+ */
+const REPO_METADATA_WRITE = {
+  pattern: /\.git\/|\/\.git$/,
+  reason:
+    "a repository's `.git` folder, anything inside it, and a `.git` pointer file are not written, moved or removed from shell_exec — git maintains them; when a manual change there is needed, report the exact command for the operator instead",
+};
+
 const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
   {
     // Standing orders on disk (audit R2-C2): the KB root is on the write
@@ -900,6 +911,7 @@ const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
     pattern: /\/root\/claude\/mission-control\//,
     reason: "Jarvis cannot modify its own source code via shell_exec",
   },
+  REPO_METADATA_WRITE,
 ];
 
 /** Shell operators at the start of an unquoted token, longest spelling first. */
@@ -3319,7 +3331,7 @@ function validateCommandText(command: string, opts: { reentry?: boolean; cwd?: s
         // the realistic ritual mistake (`>` vs `>>`); durable git persistence is
         // the only real backstop against truncation. See the write-target
         // hardening follow-up + memory feedback_evolution_log_truncation.
-        if (targetPath.includes("/mission-control/")) {
+        if (deny !== REPO_METADATA_WRITE && targetPath.includes("/mission-control/")) {
           const rel = targetPath.replace(/.*\/mission-control\//, "");
           if (RITUAL_WRITABLE_DOCS.includes(rel)) {
             // Match the RAW redirect target against the original command text —

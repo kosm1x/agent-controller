@@ -490,6 +490,69 @@ describe("validatePathSafety", () => {
       expect(result.reason).toContain(".gnupg/");
     });
 
+    it("blocks write and delete of a path whose final component is .git (metadata folder or pointer file)", () => {
+      for (const p of ["/root/claude/proj-a/.git", "/tmp/site-b/.git", ".git"]) {
+        for (const op of ["write", "delete"] as const) {
+          const result = validatePathSafety(p, op);
+          expect(result.safe, `${op} ${p}`).toBe(false);
+          expect(result.reason, `${op} ${p}`).toContain("metadata folder or pointer file");
+        }
+      }
+    });
+
+    it("blocks a final .git reached through `..` in the spelling", () => {
+      for (const op of ["write", "delete"] as const) {
+        const result = validatePathSafety("/tmp/site-b/sub/../.git", op);
+        expect(result.safe, op).toBe(false);
+        expect(result.reason, op).toContain("metadata folder or pointer file");
+      }
+    });
+
+    it("the delete check refuses a whole .git folder spelled without a trailing slash", () => {
+      const result = validatePathSafety("/root/claude/proj-a/.git", "delete");
+      expect(result.safe).toBe(false);
+      expect(result.reason).toContain("metadata folder or pointer file");
+    });
+
+    it("still allows reading a path whose final component is .git", () => {
+      expect(validatePathSafety("/root/claude/proj-a/.git", "read")).toEqual({ safe: true });
+      expect(validatePathSafety("/tmp/site-b/.git", "read")).toEqual({ safe: true });
+    });
+
+    it("allows writes to .gitignore, .gitattributes, .github/ files and a file named x.git", () => {
+      for (const p of [
+        "/tmp/site-b/.gitignore",
+        "/tmp/site-b/.gitattributes",
+        "/tmp/site-b/.github/w.yml",
+        "/tmp/site-b/x.git",
+      ]) {
+        expect(validatePathSafety(p, "write"), p).toEqual({ safe: true });
+      }
+    });
+
+    it("blocks a write through a symlink whose target is named .git; deleting the link itself stays allowed, and a delete through it (`lnk/.`) is refused", () => {
+      const dir = mkdtempSync(join(tmpdir(), "vps-gitlink-"));
+      try {
+        mkdirSync(join(dir, "repo", ".git"), { recursive: true });
+        mkdirSync(join(dir, "wt"));
+        writeFileSync(join(dir, "wt", ".git"), "gitdir: /tmp/site-b/.git\n");
+        symlinkSync(join(dir, "repo", ".git"), join(dir, "lnk"));
+        symlinkSync(join(dir, "wt", ".git"), join(dir, "ptr"));
+        for (const name of ["lnk", "ptr"]) {
+          const result = validatePathSafety(join(dir, name), "write");
+          expect(result.safe, name).toBe(false);
+          expect(result.reason, name).toContain("metadata folder or pointer file (via symlink)");
+          expect(validatePathSafety(join(dir, name), "delete"), name).toEqual({ safe: true });
+        }
+        const viaDot = `${join(dir, "lnk")}/.`;
+        const d = validatePathSafety(viaDot, "delete");
+        expect(d.safe).toBe(false);
+        expect(d.reason).toContain("metadata folder or pointer file (via symlink)");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     it("blocks reading from secret directories (Sec2 round-1 fix)", () => {
       // Reads of /root/.ssh/ are now blocked even in read mode — the
       // pre-audit behavior (reads permissive) was the vulnerability.
