@@ -209,7 +209,7 @@ export function readShellCommands(db: Database.Database, days: number): Populati
 
 // ------------------------------------------------------------------ verdicts
 
-/** The docker gate's refusal texts (dockerRefusal in shell.ts, and the API-socket path rule). */
+/** The docker gate's refusal texts (dockerRefusal in shell-check.ts, and the API-socket path rule). */
 const DOCKER_REASON_RE = /container file access and new containers are operator-only|Docker API socket/;
 /** A docker word anywhere (the CLI or a plugin binary, bare or by path). */
 const DOCKER_WORD_RE = /(?:^|[^\w-])docker(?:-compose|-buildx|-model)?(?![\w-])/;

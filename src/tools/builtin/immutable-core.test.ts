@@ -59,6 +59,7 @@ describe("isImmutableCorePath", () => {
       "src/tools/builtin/file.ts",
       "src/tools/builtin/code-editing.ts",
       "src/tools/builtin/shell.ts",
+      "src/tools/builtin/shell-check.ts",
       "src/tools/builtin/write-guard.ts",
       "src/tools/builtin/write-boundary.ts",
       "src/tools/builtin/git.ts",

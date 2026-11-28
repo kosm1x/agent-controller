@@ -68,6 +68,7 @@ const IMMUTABLE_FILES: string[] = [
   "src/tools/builtin/file.ts", // write guard
   "src/tools/builtin/code-editing.ts", // edit guard
   "src/tools/builtin/shell.ts", // shell guard
+  "src/tools/builtin/shell-check.ts", // shell guard: the command text check
   "src/tools/builtin/write-guard.ts", // symlink resolution + operator-config predicate
   "src/tools/builtin/write-boundary.ts", // shared positional write boundary
   // Files that hold a refusal or authority decision (operator ruling 2026-11-10).
