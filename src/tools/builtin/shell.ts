@@ -568,6 +568,8 @@ function mcCtlGlobDenied(normalized: string): boolean {
   );
 }
 
+const REMOTE_CHANGE_REASON =
+  "git remote modification blocked — use gh_repo_create(cwd) for a new repo or git_push(remote) for an existing one";
 const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
   {
     pattern: /rm\s+(-[a-zA-Z]*\s+)*\//,
@@ -595,8 +597,7 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
   { pattern: /\bdd\s+/, reason: "disk destroyer" },
   {
     pattern: /\bgit\s+(?:-C\s+\S+\s+)?remote\s+(set-url|add|remove|rename)\b/,
-    reason:
-      "git remote modification blocked — use gh_repo_create(cwd) for a new repo or git_push(remote) for an existing one",
+    reason: REMOTE_CHANGE_REASON,
   },
   {
     pattern: /\bgit\b[^|;&]*\b(push|commit|add)\b/,
@@ -3053,6 +3054,23 @@ const GIT_CONFIG_SCOPES = new Set(["--global", "--system", "--local", "--worktre
 const GIT_CONFIG_READS = new Set(["--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list", "--get-color", "--get-colorbool"]);
 const isGitAlias = (value: string | undefined): boolean => value?.toLowerCase().startsWith("alias.") === true;
 /**
+ * The global-option walk described below, from the git word at `i`: the index of the word it stops at, or
+ * GIT_ALIAS_OPTION_REASON. The index of each word it passes as an option's value is added to `values`.
+ */
+function gitVerbAt(w: string[], i: number, values?: number[]): number | string {
+  let j = i + 1;
+  for (; j < w.length && w[j]!.startsWith("-"); j++) {
+    const x = w[j]!;
+    const value = x === "-c" || x === "--config-env" ? w[j + 1] : x.startsWith("--config-env=") ? x.slice("--config-env=".length) : undefined;
+    if (isGitAlias(value)) return GIT_ALIAS_OPTION_REASON;
+    if (!GIT_GLOBAL_FLAGS.has(x) && !x.includes("=") && w[j + 1] !== "config" && !(w[j + 1] ?? "").startsWith("-")) {
+      values?.push(j + 1);
+      j++;
+    }
+  }
+  return j;
+}
+/**
  * Git configuration writes: a tripwire for plainly written forms, over the words of wordSegments. After a word
  * whose basename is `git` it passes the global options: a word in GIT_GLOBAL_FLAGS or a word containing `=` is one
  * word, and any other word starting with `-` takes the next word as its value unless that word is `config` (then
@@ -3071,12 +3089,9 @@ function checkRepoConfigWrite(command: string): string | null {
       if (base !== "git" && base !== "git-config") continue;
       let j = i + 1;
       if (base === "git") {
-        for (; j < w.length && w[j]!.startsWith("-"); j++) {
-          const x = w[j]!;
-          const value = x === "-c" || x === "--config-env" ? w[j + 1] : x.startsWith("--config-env=") ? x.slice("--config-env=".length) : undefined;
-          if (isGitAlias(value)) return GIT_ALIAS_OPTION_REASON;
-          if (!GIT_GLOBAL_FLAGS.has(x) && !x.includes("=") && w[j + 1] !== "config" && !(w[j + 1] ?? "").startsWith("-")) j++;
-        }
+        const verb = gitVerbAt(w, i);
+        if (typeof verb === "string") return verb;
+        j = verb;
         // The scan goes on from the verb: a word passed above is an option or its value, and a git word among
         // the values would reach the same verb through the same words.
         if (w[j] !== "config") {
@@ -3088,6 +3103,78 @@ function checkRepoConfigWrite(command: string): string | null {
       while (j < w.length && GIT_CONFIG_SCOPES.has(w[j]!)) j++;
       if (!GIT_CONFIG_READS.has(w[j] ?? "") || lastNo > j) return REPO_CONFIG_REASON;
       i = j;
+    }
+  }
+  return null;
+}
+
+const REPO_SETUP_REASON =
+  "`git init` / `git clone` is run from shell_exec only in its plain form — with a template, a separate git dir, configuration options or an option this check does not list, report the exact command for the operator instead";
+const GIT_MAINTENANCE_REASON =
+  "`git maintenance` is run from shell_exec only as `git maintenance run` — registration and scheduling are the operator's; report the exact command instead";
+const GIT_SETUP_VERBS = new Set(["init", "init-db", "clone", "maintenance", "remote"]);
+const GIT_INIT_OPTIONS = new Set(["--", "-q", "--quiet", "--bare", "-b", "--initial-branch", "--object-format"]);
+const GIT_CLONE_OPTIONS = new Set([
+  "--", "-q", "--quiet", "-v", "--verbose", "--progress", "--depth", "--branch", "-b", "--single-branch",
+  "--no-single-branch", "--no-tags", "--bare", "-o", "--origin", "--filter", "--shallow-since", "--no-checkout", "-n",
+]);
+const GIT_REMOTE_READS = new Set(["show", "get-url", "update", "prune"]);
+const PLAIN_TARGET_RE = /^[A-Za-z0-9_./-]*$/;
+/** The refusal for the setup verb `verb` judged at `w[k]`, with `w[git]` the git or dashed word. */
+function repoSetupRefusal(w: string[], git: number, k: number, verb: string): string | null {
+  if (verb === "maintenance") return w[k + 1] === "run" ? null : GIT_MAINTENANCE_REASON;
+  if (verb === "remote") {
+    let s = k + 1;
+    while (w[s] === "-v" || w[s] === "--verbose") s++;
+    const sub = w[s];
+    if (sub === undefined || GIT_REMOTE_READS.has(sub)) return null;
+    // A redirection with a plain target that ends the segment: one word, or an operator ending in < or > and its
+    // one target word.
+    const op = REDIRECTION_RE.exec(sub)?.[0];
+    if (op !== undefined && s === w.length - 1 && PLAIN_TARGET_RE.test(sub.slice(op.length))) return null;
+    if (op === sub && /[<>]$/.test(sub) && s === w.length - 2 && PLAIN_TARGET_RE.test(w[s + 1]!)) return null;
+    return REMOTE_CHANGE_REASON;
+  }
+  for (let m = git + 1; m < k; m++) {
+    if (w[m] === "-C") m++;
+    else if (!GIT_GLOBAL_FLAGS.has(w[m]!)) return REPO_SETUP_REASON;
+  }
+  const options = verb === "clone" ? GIT_CLONE_OPTIONS : GIT_INIT_OPTIONS;
+  for (const x of w.slice(k + 1)) {
+    const name = x.startsWith("--") && x.includes("=") ? x.slice(0, x.indexOf("=")) : x;
+    if (x.startsWith("-") && !options.has(name)) return REPO_SETUP_REASON;
+  }
+  return null;
+}
+/**
+ * Repository setup verbs: a tripwire for plainly written forms, over the words of wordSegments. After a word whose
+ * basename is `git` it runs the walk of checkRepoConfigWrite, and judges the word the walk stops at and each word
+ * it passes as an option's value when that word is `init`, `init-db`, `clone`, `maintenance` or `remote`; a word
+ * whose basename is `git-` and one of those is judged as that verb. `init`, `init-db` and `clone` are refused when
+ * a word between the git word and the verb is neither in GIT_GLOBAL_FLAGS nor a `-C` or the word that `-C` takes
+ * (paired left to right, as git pairs them), or when a later word of the segment starts with `-` and is not in the
+ * verb's option set (a `--name=value` word by its name).
+ * `maintenance` is refused unless the next word is `run`; `remote` is refused unless, after `-v`/`--verbose`, the
+ * next word is absent, in GIT_REMOTE_READS, or a redirection that ends the segment: one word made of an operator and
+ * a plain target, or an operator word ending in `<` or `>` followed by one plain target word.
+ */
+function checkRepoSetup(command: string): string | null {
+  for (const w of wordSegments(command)) {
+    for (let i = 0; i < w.length; i++) {
+      const base = w[i]!.replace(/^.*\//, "");
+      if (base !== "git") {
+        const refusal = base.startsWith("git-") && GIT_SETUP_VERBS.has(base.slice(4)) && repoSetupRefusal(w, i, i, base.slice(4));
+        if (refusal) return refusal;
+        continue;
+      }
+      const values: number[] = [];
+      const j = gitVerbAt(w, i, values);
+      if (typeof j === "string") return j;
+      for (const k of [j, ...values]) {
+        const refusal = GIT_SETUP_VERBS.has(w[k] ?? "") && repoSetupRefusal(w, i, k, w[k]!);
+        if (refusal) return refusal;
+      }
+      i = j - 1;
     }
   }
   return null;
@@ -3361,6 +3448,10 @@ function validateCommandText(command: string, opts: { reentry?: boolean; cwd?: s
   const repoConfig = checkRepoConfigWrite(sanitized);
   if (repoConfig) {
     return { allowed: false, reason: repoConfig };
+  }
+  const repoSetup = checkRepoSetup(sanitized);
+  if (repoSetup) {
+    return { allowed: false, reason: repoSetup };
   }
 
   return { allowed: true };
